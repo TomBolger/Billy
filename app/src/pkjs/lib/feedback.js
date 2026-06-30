@@ -18,7 +18,6 @@ var config = require('../config');
 var location = require('../location');
 var reminders = require('./reminders');
 var package_json = require('package.json');
-var urls = require('../urls');
 var session = require('../session');
 
 function constructFeedbackMetadata(request) {
@@ -72,27 +71,93 @@ function constructFeedbackMetadata(request) {
         'watchFirmware': watchFirmware,
         'watchModel': model,
         'watchPlatform': watchPlatform,
-        'timelineToken': session.userToken
+        'timelineToken': session.userToken,
+        'assistantRuntime': config.getAssistantRuntime(),
+        'geminiModel': config.getGeminiModel()
     };
 }
 
-function sendRequest(request, url, callback) {
+function encodeQuery(params) {
+    var pieces = [];
+    Object.keys(params).forEach(function(key) {
+        if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
+            pieces.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key]));
+        }
+    });
+    return pieces.join('&');
+}
+
+function metadataMarkdown(request) {
+    var lines = ['## Device metadata'];
+    Object.keys(request).sort().forEach(function(key) {
+        if (key === 'text' || key === 'thread_uuid') {
+            return;
+        }
+        lines.push('- ' + key + ': ' + request[key]);
+    });
+    return lines.join('\n');
+}
+
+function githubIssueUrl(request, kind) {
+    var base = config.getGithubIssuesUrl();
+    var separator = base.indexOf('?') === -1 ? '?' : '&';
+    var title = kind === 'report' ? 'Billy conversation report' : 'Billy feedback';
+    var body = '## ' + (kind === 'report' ? 'Report' : 'Feedback') + '\n\n' +
+        (request.text || 'Describe the issue here.') + '\n\n';
+    if (request.thread_uuid) {
+        body += 'Thread ID: `' + request.thread_uuid + '`\n\n';
+    }
+    body += metadataMarkdown(request);
+    return base + separator + encodeQuery({
+        title: title,
+        body: body,
+        labels: 'feedback'
+    });
+}
+
+function sendGithubFallback(request, kind, callback) {
+    var url = githubIssueUrl(request, kind);
+    console.log("Opening GitHub feedback URL: " + url);
+    try {
+        Pebble.openURL(url);
+        callback(true, 0);
+    } catch (e) {
+        console.log("Opening GitHub feedback URL failed: " + e.message);
+        callback(false, 0);
+    }
+}
+
+function sendPostRequest(request, url, callback) {
     var req = new XMLHttpRequest();
     req.open('POST', url, true);
     req.setRequestHeader('Content-Type', 'application/json');
-    req.onload = function(e) {
+    req.onload = function() {
         if (req.readyState === 4) {
-            if (req.status === 200) {
-                callback(true, req.status);
+            if (req.status >= 200 && req.status < 300) {
                 console.log("Feedback sent successfully");
+                callback(true, req.status);
             } else {
                 console.log("Feedback request returned error code " + req.status.toString());
                 callback(false, req.status);
             }
         }
-    }
+    };
+    req.onerror = function() {
+        console.log("Feedback request failed before a response was received");
+        callback(false, 0);
+    };
     console.log("Feedback request: " + JSON.stringify(request));
     req.send(JSON.stringify(request));
+}
+
+function sendRequest(request, kind, callback) {
+    request.kind = kind;
+    var postUrl = config.getFeedbackPostUrl();
+    if (postUrl) {
+        sendPostRequest(request, postUrl, callback);
+        return;
+    }
+    sendGithubFallback(request, kind, callback);
 }
 
 exports.sendFeedback = function(feedbackText, threadId, callback) {
@@ -103,13 +168,13 @@ exports.sendFeedback = function(feedbackText, threadId, callback) {
     if (threadId) {
         feedback['thread_uuid'] = threadId;
     }
-    sendRequest(feedback, urls.REPORT_URL, callback);
+    sendRequest(feedback, 'feedback', callback);
 }
 
 exports.handleFeedbackRequest = function(request) {
     var feedback = constructFeedbackMetadata(request);
     feedback['text'] = request['FEEDBACK_TEXT'];
-    sendRequest(feedback, urls.REPORT_URL, function(success, status) {
+    sendRequest(feedback, 'feedback', function(success, status) {
         Pebble.sendAppMessage({'FEEDBACK_SEND_RESULT': success ? 0 : 1});
     });
 }
@@ -117,7 +182,7 @@ exports.handleFeedbackRequest = function(request) {
 exports.handleReportRequest = function(request) {
     var report = constructFeedbackMetadata(request);
     report['thread_uuid'] = request['REPORT_THREAD_UUID'];
-    sendRequest(report, urls.REPORT_URL, function(success, status) {
+    sendRequest(report, 'report', function(success, status) {
         Pebble.sendAppMessage({'REPORT_SEND_RESULT': success ? 0 : 1});
     });
 }

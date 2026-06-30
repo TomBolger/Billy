@@ -1,8 +1,70 @@
 [
     {
         "type": "heading",
-        "defaultValue": "Bobby",
+        "defaultValue": "Billy",
         "size": 1
+    },
+    {
+        "type": "section",
+        "items": [
+            {
+                "type": "heading",
+                "defaultValue": "Assistant"
+            },
+            {
+                "type": "select",
+                "id": "ASSISTANT_RUNTIME",
+                "messageKey": "ASSISTANT_RUNTIME",
+                "label": "Runtime",
+                "description": "Automatic sends prompts to Billy Companion when it is installed. Choose Companionless when using only the PBW.",
+                "defaultValue": "automatic",
+                "options": [
+                    {"label": "Automatic", "value": "automatic"},
+                    {"label": "Companionless", "value": "companionless"},
+                    {"label": "Android companion", "value": "android"}
+                ]
+            },
+            {
+                "type": "input",
+                "id": "GEMINI_API_KEY",
+                "messageKey": "GEMINI_API_KEY",
+                "label": "Gemini API key",
+                "description": "Stored locally by the Pebble phone app. Required for companionless mode.",
+                "defaultValue": ""
+            },
+            {
+                "type": "input",
+                "id": "GEMINI_MODEL",
+                "messageKey": "GEMINI_MODEL",
+                "label": "Gemini model",
+                "description": "The Gemini API model used by the local assistant runtime.",
+                "defaultValue": "gemini-3.1-flash-lite"
+            },
+            {
+                "type": "input",
+                "id": "GEMINI_MONTHLY_BUDGET_USD",
+                "messageKey": "GEMINI_MONTHLY_BUDGET_USD",
+                "label": "Gemini monthly budget",
+                "description": "Used only for Billy's local estimate on the Quota screen. Google AI Studio billing is authoritative.",
+                "defaultValue": "10"
+            },
+            {
+                "type": "input",
+                "id": "GITHUB_ISSUES_URL",
+                "messageKey": "GITHUB_ISSUES_URL",
+                "label": "Feedback GitHub issues URL",
+                "description": "Feedback opens a prefilled issue here. Use your fork's /issues/new URL.",
+                "defaultValue": "https://github.com/tombolger/Billy/issues/new"
+            },
+            {
+                "type": "input",
+                "id": "FEEDBACK_POST_URL",
+                "messageKey": "FEEDBACK_POST_URL",
+                "label": "Feedback POST endpoint",
+                "description": "Optional. Bobby-style feedback posts JSON here and returns Sent/Error on the watch. Leave blank to open a prefilled GitHub issue instead.",
+                "defaultValue": ""
+            }
+        ]
     },
     {
         "type": "section",
@@ -16,7 +78,7 @@
                 "id": "languageCode",
                 "messageKey": "LANGUAGE_CODE",
                 "label": "Response language",
-                "description": "Controls the language of the Bobby's replies. Does not currently translate the rest of the UI. If 'automatic', Bobby will attempt to respond in the same language the question was asked.",
+                "description": "Controls the language of Billy's replies. Does not currently translate the rest of the UI. If 'automatic', Billy will attempt to respond in the same language the question was asked.",
                 "defaultValue": "",
                 "options": [
                     {"label": "Automatic", "value": ""},
@@ -106,7 +168,7 @@
                 "type": "select",
                 "messageKey": "QUICK_LAUNCH_BEHAVIOUR",
                 "label": "Quick launch behaviour",
-                "description": "What to do when Bobby is launched via Quick Launch. If 'start conversation' is selected, Bobby will start listening immediately. If 'stay open' is chosen, Bobby will quit after a minute of inactivity. If 'open home screen' is chosen, Bobby will behave the same as if launched from the app launcher.",
+                "description": "What to do when Billy is launched via Quick Launch. If 'start conversation' is selected, Billy will start listening immediately. If 'stay open' is chosen, Billy will quit after a minute of inactivity. If 'open home screen' is chosen, Billy will behave the same as if launched from the app launcher.",
                 "defaultValue": "1",
                 "options": [
                     {"label": "Start conversation and time out", "value": "1"},
@@ -119,7 +181,7 @@
                 "messageKey": "CONFIRM_TRANSCRIPTS",
                 "defaultValue": false,
                 "label": "Confirm prompts before responding",
-                "description": "When enabled, after dictating to the watch, you'll always be asked to confirm your input before Bobby takes action. When disabled, Bobby will respond immediately to whatever was recognised."
+                "description": "When enabled, after dictating to the watch, you'll always be asked to confirm your input before Billy takes action. When disabled, Billy will respond immediately to whatever was recognised."
             }
         ]
     },
@@ -135,7 +197,7 @@
                 "messageKey": "LOCATION_ENABLED",
                 "defaultValue": true,
                 "label": "Allow location access",
-                "description": "Bobby can use your location to provide contextually relevant information, including local weather and transit as well as more broadly understanding your local context."
+                "description": "Billy can use your location to provide contextually relevant information, including local weather and transit as well as more broadly understanding your local context."
             }
         ]
     },

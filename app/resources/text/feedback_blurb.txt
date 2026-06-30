@@ -1,6 +1,6 @@
 # Feedback
-You can give us your feedback on Bobby by dictating a message here. Feedback is not anonymous, and is linked to your Rebble account.
+You can give feedback on Billy by dictating a message here. Your phone will send it to the Billy feedback endpoint.
 
-To give feedback during a conversation, you can hold select on the conversation screen to send the content to us.
+To give feedback during a conversation, hold select on the conversation screen.
 
-You can also give us feedback on the Rebble discord at rebble.io/discord.
+If no endpoint is configured, your phone will open a prefilled GitHub issue instead. Feedback is not sent to Rebble or the original Bobby author.

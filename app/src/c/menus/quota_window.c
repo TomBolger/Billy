@@ -34,7 +34,7 @@ typedef struct {
   EventHandle app_message_handle;
   ScrollLayer* scroll_layer;
   StatusBarLayer* status_bar;
-  char explanation[164];
+  char explanation[620];
 } QuotaWindowData;
 
 static void prv_window_load(Window* window);
@@ -118,12 +118,22 @@ static void prv_app_message_received(DictionaryIterator* iter, void* context) {
   int remaining = tuple->value->int32;
   uint64_t percentage = PERCENTAGE_MAX;
   BOBBY_LOG(APP_LOG_LEVEL_INFO, "Quota: %d used, %d remaining", used, remaining);
-  if (used == 0 && remaining == 0) {
-    strncpy(data->explanation, "You need a Rebble subscription to use Bobby. You can sign up at auth.rebble.io.", sizeof(data->explanation));
+  Tuple *gemini_tuple = dict_find(iter, MESSAGE_KEY_QUOTA_IS_GEMINI_API);
+  Tuple *text_tuple = dict_find(iter, MESSAGE_KEY_QUOTA_RESPONSE_TEXT);
+  if (gemini_tuple && gemini_tuple->value->int32 && text_tuple && text_tuple->length > 0) {
+    if (used + remaining > 0) {
+      percentage = ((uint64_t)used * PERCENTAGE_MAX) / (used + remaining);
+    } else {
+      percentage = 0;
+    }
+    strncpy(data->explanation, text_tuple->value->cstring, sizeof(data->explanation));
+    data->explanation[sizeof(data->explanation) - 1] = '\0';
+  } else if (used == 0 && remaining == 0) {
+    strncpy(data->explanation, "You need a Rebble subscription to use Billy. You can sign up at auth.rebble.io.", sizeof(data->explanation));
   } else {
     int display_percent = (int)(((uint64_t)used * 100) / (used + remaining));
     percentage = ((uint64_t)used * PERCENTAGE_MAX) / (used + remaining);
-    snprintf(data->explanation, sizeof(data->explanation), "You've used %d%% of your Bobby quota for this month. Once you've used 100%%, Bobby will stop working until next month. Quota resets on the first day of each month.", display_percent);
+    snprintf(data->explanation, sizeof(data->explanation), "You've used %d%% of your Billy quota for this month. Once you've used 100%%, Billy will stop working until next month. Quota resets on the first day of each month.", display_percent);
   }
   text_layer_set_text(data->explanation_layer, data->explanation);
   GSize text_size = text_layer_get_content_size(data->explanation_layer);

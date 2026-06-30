@@ -14,31 +14,48 @@
  * limitations under the License.
  */
 
+var config = require('./config');
+
 var cachedLon = undefined;
 var cachedLat = undefined;
+var cachedAccuracy = undefined;
+var cachedUpdatedAt = undefined;
+
+var MAX_PROMPT_LOCATION_AGE_MS = 30 * 60 * 1000;
+var MAX_PROMPT_ACCURACY_METERS = 25000;
 
 exports.update = function() {
     // start with whatever we knew before, if anything.
     var oldLon = localStorage.getItem('oldLon');
     var oldLat = localStorage.getItem('oldLat');
-    if (oldLon && oldLat) {
+    var oldAccuracy = localStorage.getItem('oldAccuracy');
+    var oldUpdatedAt = parseInt(localStorage.getItem('oldLocationUpdatedAt'), 10);
+    if (oldLon && oldLat && oldUpdatedAt && Date.now() - oldUpdatedAt < MAX_PROMPT_LOCATION_AGE_MS) {
         cachedLon = parseFloat(oldLon);
         cachedLat = parseFloat(oldLat);
-        console.log("Cached location restored: (" + cachedLat + ", " + cachedLon + ")");
+        cachedAccuracy = oldAccuracy ? parseFloat(oldAccuracy) : undefined;
+        cachedUpdatedAt = oldUpdatedAt;
+        console.log("Recent cached location restored: (" + cachedLat + ", " + cachedLon + ")");
     }
     
     navigator.geolocation.getCurrentPosition(function(pos) {
         cachedLat = pos.coords.latitude;
         cachedLon = pos.coords.longitude;
-        console.log("position updated: (" + cachedLat + ", " + cachedLon + ")");
+        cachedAccuracy = pos.coords.accuracy;
+        cachedUpdatedAt = Date.now();
+        console.log("position updated: (" + cachedLat + ", " + cachedLon + "), accuracy=" + cachedAccuracy);
         localStorage.setItem('oldLon', cachedLon);
         localStorage.setItem('oldLat', cachedLat);
+        if (cachedAccuracy !== undefined) {
+            localStorage.setItem('oldAccuracy', cachedAccuracy);
+        }
+        localStorage.setItem('oldLocationUpdatedAt', cachedUpdatedAt);
     }, function (err) {
         console.log("Failed to update location: " + err);
     }, {
         enableHighAccuracy: true,
-        maximumAge: 300000,
-        timeout: 30000,
+        maximumAge: 60000,
+        timeout: 10000,
     });
 }
 
@@ -47,5 +64,23 @@ exports.isReady = function() {
 }
 
 exports.getPos = function() {
-    return {lon: cachedLon, lat: cachedLat};
+    return {lon: cachedLon, lat: cachedLat, accuracy: cachedAccuracy, updatedAt: cachedUpdatedAt};
+}
+
+exports.getPromptContextSentence = function() {
+    if (!config.isLocationEnabled() || !exports.isReady()) {
+        return '';
+    }
+    if (cachedUpdatedAt && Date.now() - cachedUpdatedAt > MAX_PROMPT_LOCATION_AGE_MS) {
+        return '';
+    }
+    if (cachedAccuracy && cachedAccuracy > MAX_PROMPT_ACCURACY_METERS) {
+        return '';
+    }
+
+    var ageText = cachedUpdatedAt ? Math.round((Date.now() - cachedUpdatedAt) / 60000) + ' minutes ago' : 'recently';
+    var accuracyText = cachedAccuracy ? 'accuracy about ' + Math.round(cachedAccuracy) + ' meters' : 'accuracy unknown';
+    return 'The user has granted location context. Current phone GPS location is latitude ' +
+        cachedLat.toFixed(5) + ', longitude ' + cachedLon.toFixed(5) + ' (' + accuracyText +
+        ', updated ' + ageText + '). For weather and local questions, use these coordinates instead of inferring location from IP address, account home, or network region.';
 }

@@ -38,6 +38,7 @@ typedef enum {
   ConversationWidgetTypeWeatherMultiDay,
   ConversationWidgetTypeTimer,
   ConversationWidgetTypeNumber,
+  ConversationWidgetTypeClarification,
 #if ENABLE_FEATURE_MAPS
   ConversationWidgetTypeMap,
 #endif
@@ -136,6 +137,15 @@ typedef struct {
 } ConversationWidgetNumber;
 
 typedef struct {
+  char *question;
+  char *context;
+  char *options[4];
+  int option_count;
+  int selected_index;
+  bool answered;
+} ConversationWidgetClarification;
+
+typedef struct {
   int image_id;
   GPoint user_location;
 } ConversationWidgetMap;
@@ -149,6 +159,7 @@ typedef struct {
     ConversationWidgetWeatherMultiDay weather_multi_day;
     ConversationWidgetTimer timer;
     ConversationWidgetNumber number;
+    ConversationWidgetClarification clarification;
     ConversationWidgetMap map;
   } widget;
 } ConversationWidget;
@@ -182,6 +193,7 @@ bool conversation_assistant_just_started(Conversation* conversation);
 ConversationEntry* conversation_entry_at_index(Conversation* conversation, int index);
 ConversationEntry* conversation_peek(Conversation* conversation);
 ConversationEntry* conversation_get_last_of_type(Conversation* conversation, EntryType type);
+ConversationEntry* conversation_get_last_unanswered_clarification(Conversation* conversation);
 EntryType conversation_entry_get_type(ConversationEntry* entry);
 void conversation_delete_first_entry(Conversation* conversation);
 void conversation_delete_last_thought(Conversation* conversation);

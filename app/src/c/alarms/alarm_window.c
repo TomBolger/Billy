@@ -228,7 +228,7 @@ static void prv_handle_snooze(ClickRecognizerRef recognizer, void *context) {
   }
   if (result == S_SUCCESS) {
     const char* text = data->is_timer ? "Snoozed for 1 minute" : "Snoozed for 10 minutes";
-    result_window_push("Snoozed", text, bgdraw_command_image_create_with_resource(RESOURCE_ID_SLEEPING_PONY), BRANDED_BACKGROUND_COLOUR);
+    result_window_push_bitmap("Snoozed", text, bgbitmap_create_with_resource(RESOURCE_ID_SLEEPING_PONY), BRANDED_BACKGROUND_COLOUR);
   } else {
     const char* text = data->is_timer ? "Failed to snooze. Timer dismissed." : "Failed to snooze. Alarm dismissed.";
     result_window_push("Failed", text, bgdraw_command_image_create_with_resource(RESOURCE_ID_FAILED_PONY), GColorSunsetOrange);

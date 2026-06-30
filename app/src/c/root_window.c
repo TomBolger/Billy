@@ -29,6 +29,8 @@
 #include "version/version.h"
 #include "vibes/haptic_feedback.h"
 
+#define BILLY_MESSAGE_KEY_WATCH_READY 10122
+
 struct RootWindow {
   Window* window;
   ActionBarLayer* action_bar;
@@ -59,6 +61,7 @@ static int prv_load_suggestions(char*** suggestions);
 static void prv_action_menu_closed(ActionMenu *action_menu, const ActionMenuItem *performed_action, void *context);
 static void prv_suggestion_clicked(ActionMenu *action_menu, const ActionMenuItem *action, void *context);
 static void prv_app_message_handler(DictionaryIterator *iter, void *context);
+static void prv_send_watch_ready(void);
 
 RootWindow* root_window_create() {
   RootWindow* rw = bmalloc(sizeof(RootWindow));
@@ -147,6 +150,7 @@ static void prv_window_appear(Window* window) {
   if (!rw->app_message_handle) {
     rw->app_message_handle = events_app_message_register_inbox_received(prv_app_message_handler, rw);
   }
+  prv_send_watch_ready();
   BOBBY_LOG(APP_LOG_LEVEL_DEBUG, "Window appeared. Heap usage increased %d bytes", heap_size - heap_bytes_free());
 }
 
@@ -178,10 +182,20 @@ static void prv_app_message_handler(DictionaryIterator *iter, void *context) {
   }
   if (tuple->value->int32 == 1) {
     rw->talking_horse_overridden = true;
-    talking_horse_layer_set_text(rw->talking_horse_layer, "Cobble has many Bobby bugs.");
+    talking_horse_layer_set_text(rw->talking_horse_layer, "Cobble has many Billy bugs.");
     window_set_background_color(rw->window, COLOR_FALLBACK(GColorRed, GColorDarkGray));
     vibe_haptic_feedback();
   }
+}
+
+static void prv_send_watch_ready(void) {
+  DictionaryIterator *iter;
+  AppMessageResult result = app_message_outbox_begin(&iter);
+  if (result != APP_MSG_OK || !iter) {
+    return;
+  }
+  dict_write_uint8(iter, BILLY_MESSAGE_KEY_WATCH_READY, 1);
+  app_message_outbox_send();
 }
 
 static void prv_time_changed(struct tm *tick_time, TimeUnits time_changed, void *context) {
@@ -240,7 +254,6 @@ static void prv_action_menu_closed(ActionMenu *action_menu, const ActionMenuItem
 }
 
 static void prv_suggestion_clicked(ActionMenu *action_menu, const ActionMenuItem *action, void *context) {
-  RootWindow* rw = context;
   char* suggestion = action_menu_item_get_label(action);
   session_window_push(0, suggestion);
 }

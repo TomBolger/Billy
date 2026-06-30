@@ -21,9 +21,28 @@
 #include "../util/memory/pressure.h"
 #include "../util/logging.h"
 #include "../util/strings.h"
+#include "../settings/settings.h"
 
 #include <pebble-events/pebble-events.h>
 #include <pebble.h>
+#include <stdio.h>
+
+#if defined(PBL_PLATFORM_EMERY)
+#define WATCH_MEDIA_WIDTH 198
+#define WATCH_MEDIA_HEIGHT 198
+#define WATCH_MEDIA_PBI_DEPTH 4
+#define WATCH_MEDIA_MAX_BYTES 40000
+#elif defined(PBL_PLATFORM_BASALT)
+#define WATCH_MEDIA_WIDTH 144
+#define WATCH_MEDIA_HEIGHT 100
+#define WATCH_MEDIA_PBI_DEPTH 2
+#define WATCH_MEDIA_MAX_BYTES 23000
+#else
+#define WATCH_MEDIA_WIDTH 144
+#define WATCH_MEDIA_HEIGHT 100
+#define WATCH_MEDIA_PBI_DEPTH 1
+#define WATCH_MEDIA_MAX_BYTES 8500
+#endif
 
 
 struct ConversationManager {
@@ -42,6 +61,7 @@ static void prv_handle_app_message_inbox_dropped(AppMessageResult result, void *
 static void prv_process_weather_widget(int widget_type, DictionaryIterator *iter, ConversationManager *manager);
 static void prv_process_timer_widget(int widget_type, DictionaryIterator *iter, ConversationManager *manager);
 static void prv_process_highlight_widget(int widget_type, DictionaryIterator *iter, ConversationManager *manager);
+static void prv_process_clarify_widget(int widget_type, DictionaryIterator *iter, ConversationManager *manager);
 #if ENABLE_FEATURE_MAPS
 static void prv_process_map_widget(int widget_type, DictionaryIterator *iter, ConversationManager *manager);
 #endif
@@ -97,9 +117,13 @@ void conversation_manager_set_deletion_handler(ConversationManager* manager, Con
 }
 
 void conversation_manager_add_input(ConversationManager* manager, const char* input) {
+  conversation_manager_add_input_with_display(manager, input, input);
+}
+
+void conversation_manager_add_input_with_display(ConversationManager* manager, const char* input, const char* display_text) {
   DictionaryIterator *iter;
   AppMessageResult result = app_message_outbox_begin(&iter);
-  conversation_add_prompt(manager->conversation, input);
+  conversation_add_prompt(manager->conversation, display_text ? display_text : input);
   prv_conversation_updated(manager, true);
   if (result != APP_MSG_OK) {
     BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Preparing outbox failed: %d.", result);
@@ -115,6 +139,10 @@ void conversation_manager_add_input(ConversationManager* manager, const char* in
   strings_fix_android_bridge_bodge(bridge_bodge);
   dict_write_cstring(iter, MESSAGE_KEY_PROMPT, bridge_bodge);
   free(bridge_bodge);
+  dict_write_cstring(iter, MESSAGE_KEY_ASSISTANT_RUNTIME, settings_get_assistant_runtime());
+  char prompt_context[48];
+  snprintf(prompt_context, sizeof(prompt_context), "media=%dx%d;pbi=%d;maxb=%d", WATCH_MEDIA_WIDTH, WATCH_MEDIA_HEIGHT, WATCH_MEDIA_PBI_DEPTH, WATCH_MEDIA_MAX_BYTES);
+  dict_write_cstring(iter, MESSAGE_KEY_PROMPT_CONTEXT, prompt_context);
 
   const char* thread_id = conversation_get_thread_id(manager->conversation);
   if (thread_id[0] != 0) {
@@ -235,6 +263,10 @@ static void prv_handle_app_message_inbox_received(DictionaryIterator *iter, void
       conversation_complete_response(manager->conversation);
       prv_conversation_updated(manager, false);
       prv_process_highlight_widget(tuple->value->int32, iter, manager);
+    } else if (tuple->key == MESSAGE_KEY_CLARIFY_WIDGET) {
+      conversation_complete_response(manager->conversation);
+      prv_conversation_updated(manager, false);
+      prv_process_clarify_widget(tuple->value->int32, iter, manager);
 #if ENABLE_FEATURE_MAPS
     } else if (tuple->key == MESSAGE_KEY_MAP_WIDGET) {
       conversation_complete_response(manager->conversation);
@@ -243,6 +275,46 @@ static void prv_handle_app_message_inbox_received(DictionaryIterator *iter, void
 #endif
     }
   }
+}
+
+static char* prv_copy_tuple_string(DictionaryIterator *iter, uint32_t key, const char *fallback) {
+  Tuple *tuple = dict_find(iter, key);
+  const char *value = tuple ? tuple->value->cstring : fallback;
+  char *stored = bmalloc(strlen(value) + 1);
+  strcpy(stored, value);
+  return stored;
+}
+
+static void prv_process_clarify_widget(int widget_type, DictionaryIterator *iter, ConversationManager *manager) {
+  if (widget_type != 1) {
+    return;
+  }
+  Tuple *count_tuple = dict_find(iter, MESSAGE_KEY_CLARIFY_OPTION_COUNT);
+  int option_count = count_tuple ? count_tuple->value->int32 : 0;
+  if (option_count < 1) {
+    return;
+  }
+  if (option_count > 4) {
+    option_count = 4;
+  }
+  ConversationWidget widget = {
+    .type = ConversationWidgetTypeClarification,
+    .locally_created = false,
+    .widget = {
+      .clarification = {
+        .question = prv_copy_tuple_string(iter, MESSAGE_KEY_CLARIFY_QUESTION, "Choose one:"),
+        .context = prv_copy_tuple_string(iter, MESSAGE_KEY_CLARIFY_CONTEXT, ""),
+        .option_count = option_count,
+        .selected_index = 0,
+        .answered = false,
+      },
+    },
+  };
+  for (int i = 0; i < option_count; ++i) {
+    widget.widget.clarification.options[i] = prv_copy_tuple_string(iter, MESSAGE_KEY_CLARIFY_OPTION_0 + i, "");
+  }
+  conversation_add_widget(manager->conversation, &widget);
+  prv_conversation_updated(manager, true);
 }
 
 static void prv_process_weather_widget(int widget_type, DictionaryIterator *iter, ConversationManager *manager) {

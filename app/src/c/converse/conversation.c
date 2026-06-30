@@ -132,6 +132,15 @@ void prv_destroy_entry(ConversationEntry *entry) {
             free(entry->content.widget->widget.number.unit);
           }
           break;
+        case ConversationWidgetTypeClarification:
+          free(entry->content.widget->widget.clarification.question);
+          free(entry->content.widget->widget.clarification.context);
+          for (int i = 0; i < entry->content.widget->widget.clarification.option_count; ++i) {
+            if (entry->content.widget->widget.clarification.options[i]) {
+              free(entry->content.widget->widget.clarification.options[i]);
+            }
+          }
+          break;
 #if ENABLE_FEATURE_MAPS
         case ConversationWidgetTypeMap:
           image_manager_destroy_image(entry->content.widget->widget.map.image_id);
@@ -321,6 +330,20 @@ ConversationEntry* conversation_get_last_of_type(Conversation* conversation, Ent
   return NULL;
 }
 
+ConversationEntry* conversation_get_last_unanswered_clarification(Conversation* conversation) {
+  for (int i = conversation->entry_count - 1; i >= conversation->deleted_entries; --i) {
+    ConversationEntry* entry = &conversation->entries[i];
+    if (entry->type != EntryTypeWidget) {
+      continue;
+    }
+    ConversationWidget *widget = entry->content.widget;
+    if (widget->type == ConversationWidgetTypeClarification && !widget->widget.clarification.answered) {
+      return entry;
+    }
+  }
+  return NULL;
+}
+
 const char* prv_type_to_string(EntryType type) {
   switch(type) {
     case EntryTypeDeleted:
@@ -407,6 +430,9 @@ int conversation_length(Conversation* conversation) {
 }
 
 bool conversation_is_idle(Conversation* conversation) {
+  if (conversation_get_last_unanswered_clarification(conversation) != NULL) {
+    return false;
+  }
   ConversationEntry* entry = conversation_peek(conversation);
   if (entry == NULL) {
     return true;
@@ -418,6 +444,9 @@ bool conversation_is_idle(Conversation* conversation) {
     return entry->content.response->complete;
   }
   if (entry->type == EntryTypeWidget) {
+    if (entry->content.widget->type == ConversationWidgetTypeClarification) {
+      return entry->content.widget->widget.clarification.answered;
+    }
     return true;
   }
   return false;

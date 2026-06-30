@@ -70,6 +70,7 @@ add_executable(tiny_assistant_app
         src/c/util/time.c
         src/c/converse/segments/widgets/timer.c
         src/c/converse/segments/widgets/number.c
+        src/c/converse/segments/widgets/clarification.c
         src/c/menus/feedback_window.c
         src/c/settings/settings.c
         src/c/vibes/sad_vibe_score.c

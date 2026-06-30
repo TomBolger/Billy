@@ -42,6 +42,7 @@ MapWidget* map_widget_create(GRect rect, ConversationEntry* entry) {
   MapWidgetData* data = layer_get_data(layer);
   data->entry = entry;
   data->bitmap = NULL;
+  data->skull_image = NULL;
   data->loading_layer = thinking_layer_create(GRect(rect.size.w / 2 - THINKING_LAYER_WIDTH / 2, image_size.h / 2 - THINKING_LAYER_HEIGHT / 2, THINKING_LAYER_WIDTH, THINKING_LAYER_HEIGHT));
   layer_add_child(layer, data->loading_layer);
   image_manager_register_callback(image_id, prv_image_updated, layer);
@@ -103,14 +104,25 @@ static void prv_layer_update(Layer *layer, GContext *ctx) {
   MapWidgetData *data = layer_get_data(layer);
   GRect bounds = layer_get_bounds(layer);
   GPoint user_location = conversation_entry_get_widget(data->entry)->widget.map.user_location;
-  GRect image_rect = grect_inset(bounds, GEdgeInsets(1, 0));
+  GSize image_size = image_manager_get_size(prv_get_image_id(data));
+  GRect image_rect = GRect(
+      bounds.origin.x + (bounds.size.w - image_size.w) / 2,
+      bounds.origin.y + 1,
+      image_size.w,
+      image_size.h);
   graphics_context_set_stroke_color(ctx, GColorBlack);
-  graphics_draw_line(ctx, GPoint(0, 0), GPoint(bounds.size.w, 0));
-  graphics_draw_line(ctx, GPoint(0, bounds.size.h - 1), GPoint(bounds.size.w, bounds.size.h - 1));
+  graphics_draw_line(ctx, GPoint(image_rect.origin.x, 0), GPoint(image_rect.origin.x + image_rect.size.w, 0));
+  graphics_draw_line(ctx, GPoint(image_rect.origin.x, bounds.size.h - 1), GPoint(image_rect.origin.x + image_rect.size.w, bounds.size.h - 1));
   if (data->bitmap) {
-    graphics_draw_bitmap_in_rect(ctx, data->bitmap, image_rect);
+    GRect bitmap_bounds = gbitmap_get_bounds(data->bitmap);
+    GRect draw_rect = GRect(
+        bounds.origin.x + (bounds.size.w - bitmap_bounds.size.w) / 2,
+        bounds.origin.y + 1,
+        bitmap_bounds.size.w,
+        bitmap_bounds.size.h);
+    graphics_draw_bitmap_in_rect(ctx, data->bitmap, draw_rect);
     if (user_location.x > 0 && user_location.y > 0) {
-      GPoint center = GPoint(user_location.x + image_rect.origin.x, user_location.y + image_rect.origin.y);
+      GPoint center = GPoint(user_location.x + draw_rect.origin.x, user_location.y + draw_rect.origin.y);
       graphics_context_set_fill_color(ctx, GColorWhite);
       graphics_fill_circle(ctx, center, 6);
       graphics_context_set_stroke_color(ctx, COLOR_FALLBACK(GColorDarkGray, GColorBlack));

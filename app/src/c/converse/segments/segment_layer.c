@@ -23,6 +23,7 @@
 #include "widgets/weather_multi_day.h"
 #include "widgets/number.h"
 #include "widgets/timer.h"
+#include "widgets/clarification.h"
 #include "widgets/map.h"
 #include "../../util/fonts.h"
 #include "../../util/memory/sdk.h"
@@ -41,6 +42,7 @@ typedef enum {
   SegmentTypeWeatherMultiDayWidget,
   SegmentTypeTimerWidget,
   SegmentTypeNumberWidget,
+  SegmentTypeClarificationWidget,
 #if ENABLE_FEATURE_MAPS
   SegmentTypeMapWidget,
 #endif
@@ -62,6 +64,7 @@ typedef struct {
     WeatherMultiDayWidget* weather_multi_day_widget;
     TimerWidget* timer_widget;
     NumberWidget* number_widget;
+    ClarificationWidget* clarification_widget;
 #if ENABLE_FEATURE_MAPS
     MapWidget* map_widget;
 #endif
@@ -81,7 +84,7 @@ SegmentLayer* segment_layer_create(GRect rect, ConversationEntry* entry, bool as
     data->assistant_label_layer = btext_layer_create(GRect(5, 0, rect.size.w, fonts->small_font_cap * 2.25));
     text_layer_set_font(data->assistant_label_layer, fonts->small_font);
     layer_add_child(layer, text_layer_get_layer(data->assistant_label_layer));
-    text_layer_set_text(data->assistant_label_layer, "Bobby");
+    text_layer_set_text(data->assistant_label_layer, "Billy");
     child_frame = GRect(0, fonts->small_font_cap * 2.25, rect.size.w, rect.size.h - fonts->small_font_cap * 2.25);
   } else {
     data->assistant_label_layer = NULL;
@@ -109,6 +112,9 @@ SegmentLayer* segment_layer_create(GRect rect, ConversationEntry* entry, bool as
       break;
     case SegmentTypeNumberWidget:
       data->number_widget = number_widget_create(child_frame, entry);
+      break;
+    case SegmentTypeClarificationWidget:
+      data->clarification_widget = clarification_widget_create(child_frame, entry);
       break;
 #if ENABLE_FEATURE_MAPS
     case SegmentTypeMapWidget:
@@ -152,6 +158,9 @@ void segment_layer_destroy(SegmentLayer* layer) {
       break;
     case SegmentTypeNumberWidget:
       number_widget_destroy(data->number_widget);
+      break;
+    case SegmentTypeClarificationWidget:
+      clarification_widget_destroy(data->clarification_widget);
       break;
 #if ENABLE_FEATURE_MAPS
     case SegmentTypeMapWidget:
@@ -197,6 +206,9 @@ void segment_layer_update(SegmentLayer* layer) {
     case SegmentTypeNumberWidget:
       number_widget_update(data->number_widget);
       break;
+    case SegmentTypeClarificationWidget:
+      clarification_widget_update(data->clarification_widget);
+      break;
 #if ENABLE_FEATURE_MAPS
     case SegmentTypeMapWidget:
       map_widget_update(data->map_widget);
@@ -235,6 +247,8 @@ static SegmentType prv_get_segment_type(ConversationEntry* entry) {
           return SegmentTypeTimerWidget;
         case ConversationWidgetTypeNumber:
           return SegmentTypeNumberWidget;
+        case ConversationWidgetTypeClarification:
+          return SegmentTypeClarificationWidget;
 #if ENABLE_FEATURE_MAPS
         case ConversationWidgetTypeMap:
           return SegmentTypeMapWidget;

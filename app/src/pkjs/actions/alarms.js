@@ -41,11 +41,11 @@ function setAlarm(session, message, callback) {
     }
     console.log("Trying to set " + (isTimer ? "timer" : "alarm") + " for " + unixTime + " (" + time + ")");
     
-    var timeout = setTimeout(2000, function() {
+    var timeout = setTimeout(function() {
         console.log("Timed out, returning error message.");
         callback({"error": "Timed out waiting for a response from the watch."});
         cleanup();
-    });
+    }, 2000);
     
     var cleanup = function() {
         console.log("Cleaning up alarm handling.");
@@ -114,11 +114,11 @@ function getAlarm(session, message, callback) {
     console.log("Getting " + (isTimer ? "timers" : "alarms") + "...");
 
 
-    var timeout = setTimeout(2000, function() {
+    var timeout = setTimeout(function() {
         console.log("Timed out, returning error message.");
         callback({"error": "Timed out waiting for a response from the watch."});
         cleanup();
-    });
+    }, 2000);
 
     var cleanup = function() {
         console.log("Cleaning up alarm handling.");

@@ -21,6 +21,7 @@
 #include "../util/persist_keys.h"
 
 static EventHandle s_event_handle;
+static char s_assistant_runtime[16];
 
 static void prv_app_message_handler(DictionaryIterator *iter, void *context);
 
@@ -61,6 +62,15 @@ bool settings_get_should_confirm_transcripts() {
   return persist_read_bool(PERSIST_KEY_CONFIRM_TRANSCRIPTS);
 }
 
+const char* settings_get_assistant_runtime() {
+  if (persist_exists(PERSIST_KEY_ASSISTANT_RUNTIME)) {
+    persist_read_string(PERSIST_KEY_ASSISTANT_RUNTIME, s_assistant_runtime, sizeof(s_assistant_runtime));
+    s_assistant_runtime[sizeof(s_assistant_runtime) - 1] = '\0';
+    return s_assistant_runtime;
+  }
+  return "automatic";
+}
+
 static void prv_app_message_handler(DictionaryIterator *iter, void *context) {
   for (Tuple *tuple = dict_read_first(iter); tuple; tuple = dict_read_next(iter)) {
     if (tuple->key == MESSAGE_KEY_QUICK_LAUNCH_BEHAVIOUR) {
@@ -72,6 +82,8 @@ static void prv_app_message_handler(DictionaryIterator *iter, void *context) {
       persist_write_int(PERSIST_KEY_TIMER_VIBE_PATTERN, atoi(tuple->value->cstring));
     } else if (tuple->key == MESSAGE_KEY_CONFIRM_TRANSCRIPTS) {
       persist_write_bool(PERSIST_KEY_CONFIRM_TRANSCRIPTS, tuple->value->int8);
+    } else if (tuple->key == MESSAGE_KEY_ASSISTANT_RUNTIME) {
+      persist_write_string(PERSIST_KEY_ASSISTANT_RUNTIME, tuple->value->cstring);
     }
   }
 }

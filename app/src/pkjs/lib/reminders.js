@@ -17,7 +17,7 @@
 var timeline = require('../actions/timeline');
 
 // Store reminders in localStorage
-var REMINDERS_STORAGE_KEY = 'bobby_reminders';
+var REMINDERS_STORAGE_KEY = 'billy_reminders';
 // Keep expired reminders for 24 hours before cleanup
 var EXPIRED_REMINDER_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
@@ -56,7 +56,7 @@ function addReminder(text, time) {
   
   var date = (new Date(time)).toISOString();
   console.log("Setting a reminder: \"" + text + "\" at " + date);
-  var reminderId = "bobby-reminder-" + Math.random();
+  var reminderId = "billy-reminder-" + Math.random();
   
   var pin = {
     "id": reminderId,

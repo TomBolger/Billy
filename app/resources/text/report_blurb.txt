@@ -1,4 +1,6 @@
 # Report thread
-If something is wrong, you can report this conversation thread to Rebble. The entire conversation will be sent to Rebble, including your queries, Bobby's responses, and any internal tool usage.
+If something is wrong, you can report this conversation thread to the Billy feedback endpoint.
 
-Reports are tied to your Rebble account. Consider whether this conversation contains personal information you would not wish to share with Rebble's developers before continuing.
+If no endpoint is configured, your phone will open a prefilled GitHub issue instead.
+
+Reports are not sent to Rebble or the original Bobby author.

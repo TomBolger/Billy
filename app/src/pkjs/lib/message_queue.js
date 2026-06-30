@@ -95,7 +95,9 @@ MessageQueue.prototype.dequeue = function() {
         this.bytesInFlight -= mSize;
         console.log('failed, message lost. carrying on shortly.');
         setTimeout(function() {
-            this.dequeue();
+            if (this.queue.length > 0) {
+                this.dequeue();
+            }
         }.bind(this), 10);
     }).bind(this));
 }

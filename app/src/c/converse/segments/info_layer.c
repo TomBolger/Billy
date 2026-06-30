@@ -114,7 +114,7 @@ static char *prv_get_content_text(InfoLayer *layer) {
       }
       return data->content_text;
     default:
-      return "(Bobby bug)";
+      return "(Billy bug)";
   }
 }
 
@@ -254,7 +254,7 @@ static GColor prv_get_stripe_color(ConversationEntry* entry) {
     case EntryTypeError:
       return GColorRed;
     case EntryTypeAction:
-      return GColorShockingPink;
+      return GColorCeleste;
     default:
       return GColorOrange;
   }

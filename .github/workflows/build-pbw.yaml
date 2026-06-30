@@ -54,19 +54,19 @@ jobs:
         run: if [ ! -f ~/sdk/sdk-core-4.3.tar.bz2 ]; then wget https://github.com/aveao/PebbleArchive/raw/master/SDKCores/sdk-core-4.3.tar.bz2 -O ~/sdk/sdk-core-4.3.tar.bz2; fi
       - name: install sdk
         run: if [ ! -d ~/.pebble-sdk ]; then mkdir -p ~/.pebble-sdk && touch ~/.pebble-sdk/NO_TRACKING && ~/sdk/bin/pebble sdk install ~/sdk/sdk-core-4.3.tar.bz2; fi
-      - name: fix whatever this git nonsense is
-        run: git config --global --add safe.directory /__w/bobby-assistant/bobby-assistant;
+      - name: configure git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE";
       - name: pebble-build
         run: cd app/ && yes | ~/sdk/bin/pebble build
       - name: rename-app
-        run: cp app/build/app.pbw Bobby-g${{ env.COMMIT_SHORT_SHA }}.pbw
+        run: cp app/build/app.pbw Billy-g${{ env.COMMIT_SHORT_SHA }}.pbw
       - name: generate elf bundle
-        run: mkdir elfs && cp app/build/basalt/pebble-app.elf elfs/pebble-app-basalt.elf && cp app/build/diorite/pebble-app.elf elfs/pebble-app-diorite.elf && zip -r elfs.zip elfs
+        run: mkdir elfs && cp app/build/emery/pebble-app.elf elfs/pebble-app-emery.elf && zip -r elfs.zip elfs
       - name: Upload PBW
         uses: actions/upload-artifact@v4
         with:
-          name: Bobby PBW
-          path: Bobby-g${{ env.COMMIT_SHORT_SHA }}.pbw
+          name: Billy PBW
+          path: Billy-g${{ env.COMMIT_SHORT_SHA }}.pbw
           if-no-files-found: error
       - name: Upload ELFs
         uses: actions/upload-artifact@v4

@@ -67,6 +67,9 @@ void image_manager_register_callback(int image_id, ImageManagerCallback callback
   }
   image->callback = callback;
   image->context = context;
+  if (image->status == ImageStatusCompleted && image->callback) {
+    image->callback(image->image_id, ImageStatusCompleted, image->context);
+  }
 }
 
 void image_manager_unregister_callback(int image_id) {
@@ -241,7 +244,15 @@ static void prv_handle_image_complete(int image_id) {
   if (!image->bitmap) {
     image->bitmap = gbitmap_create_with_data(image->data);
     if (!image->bitmap) {
-      BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Failed to create bitmap from data");
+      BOBBY_LOG(APP_LOG_LEVEL_INFO, "Image data is not a raw Pebble bitmap; trying PNG decoder");
+      image->bitmap = gbitmap_create_from_png_data(image->data, image->size);
+      if (image->bitmap) {
+        free(image->data);
+        image->data = NULL;
+      }
+    }
+    if (!image->bitmap) {
+      BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Failed to create bitmap from image data");
       return;
     }
     GRect bounds = gbitmap_get_bounds(image->bitmap);

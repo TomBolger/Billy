@@ -20,5 +20,6 @@
 #include <pebble.h>
 
 void result_window_push(const char* title, const char* text, GDrawCommandImage *image, GColor background_color);
+void result_window_push_bitmap(const char* title, const char* text, GBitmap *image, GColor background_color);
 
 #endif //RESULT_WINDOW_H

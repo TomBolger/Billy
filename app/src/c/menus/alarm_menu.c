@@ -32,8 +32,8 @@ typedef struct {
   TextLayer *empty_text_layer;
   bool for_timers;
   EventHandle tick_handle;
-  GDrawCommandImage *sleeping_horse_image;
-  VectorLayer *sleeping_horse_layer;
+  GBitmap *sleeping_horse_image;
+  BitmapLayer *sleeping_horse_layer;
 } AlarmMenuWindowData;
 
 static void prv_window_load(Window* window);
@@ -84,7 +84,7 @@ static void prv_window_load(Window* window) {
   text_layer_set_background_color(data->empty_text_layer, GColorClear);
   text_layer_set_font(data->empty_text_layer, fonts->title_font);
   text_layer_set_text_alignment(data->empty_text_layer, GTextAlignmentCenter);
-  text_layer_set_text(data->empty_text_layer, data->for_timers ? "No timers set. Ask Bobby to set some." : "No alarms set. Ask Bobby to set some.");
+  text_layer_set_text(data->empty_text_layer, data->for_timers ? "No timers set. Ask Billy to set some." : "No alarms set. Ask Billy to set some.");
   if (prv_get_num_rows(data->menu_layer, 0, window) == 0) {
     prv_show_empty(window);
   } else {
@@ -105,13 +105,15 @@ static void prv_show_empty(Window *window) {
   layer_remove_from_parent(menu_layer_get_layer(data->menu_layer));
   window_set_click_config_provider(window, NULL);
 
-  data->sleeping_horse_image = bgdraw_command_image_create_with_resource(RESOURCE_ID_SLEEPING_PONY);
-  data->sleeping_horse_layer = vector_layer_create(GRect(window_bounds.size.w / 2 - 25, window_bounds.size.h - 55, 50, 50));
-  vector_layer_set_vector(data->sleeping_horse_layer, data->sleeping_horse_image);
+  data->sleeping_horse_image = bgbitmap_create_with_resource(RESOURCE_ID_SLEEPING_PONY);
+  data->sleeping_horse_layer = bbitmap_layer_create(GRect(window_bounds.size.w / 2 - 25, window_bounds.size.h - 55, 50, 50));
+  bitmap_layer_set_bitmap(data->sleeping_horse_layer, data->sleeping_horse_image);
+  bitmap_layer_set_background_color(data->sleeping_horse_layer, GColorClear);
+  bitmap_layer_set_compositing_mode(data->sleeping_horse_layer, GCompOpSet);
   window_set_background_color(window, BRANDED_BACKGROUND_COLOUR);
   bobby_status_bar_result_pane_config(data->status_bar);
   layer_add_child(root_layer, text_layer_get_layer(data->empty_text_layer));
-  layer_add_child(root_layer, vector_layer_get_layer(data->sleeping_horse_layer));
+  layer_add_child(root_layer, bitmap_layer_get_layer(data->sleeping_horse_layer));
 
 }
 
@@ -121,10 +123,10 @@ static void prv_window_unload(Window* window) {
   status_bar_layer_destroy(data->status_bar);
   text_layer_destroy(data->empty_text_layer);
   if (data->sleeping_horse_layer != NULL) {
-    vector_layer_destroy(data->sleeping_horse_layer);
+    bitmap_layer_destroy(data->sleeping_horse_layer);
   }
   if (data->sleeping_horse_image != NULL) {
-    gdraw_command_image_destroy(data->sleeping_horse_image);
+    gbitmap_destroy(data->sleeping_horse_image);
   }
   window_destroy(window);
   free(data);

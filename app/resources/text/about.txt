@@ -1,8 +1,12 @@
-# Bobby
+# Billy
 ## Version %d.%d
-The Rebble AI Assistant Pony
+A local Gemini assistant for Pebble.
+Uses your Gemini API key. No Billy helper service.
+Android enhanced mode is optional when available.
 
 ## Programming
+Thomas Bolger
 Katharine Berry
 ## Iconography
+Sarah Bolger
 Stasia Michalska <lcp.world>

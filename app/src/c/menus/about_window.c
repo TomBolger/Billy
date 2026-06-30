@@ -89,6 +89,8 @@ static void prv_window_load(Window* window) {
   data->bitmap_layer = bitmap_layer_create(GRect((window_bounds.size.w - image_size.w) / 2, text_size.h, image_size.w, image_size.h));
   bitmap_layer_set_bitmap(data->bitmap_layer, data->bobby_image);
   bitmap_layer_set_alignment(data->bitmap_layer, GAlignBottom);
+  bitmap_layer_set_background_color(data->bitmap_layer, GColorClear);
+  bitmap_layer_set_compositing_mode(data->bitmap_layer, GCompOpSet);
 
   scroll_layer_set_content_size(data->scroll_layer, GSize(window_bounds.size.w, text_size.h + image_size.h));
   scroll_layer_add_child(data->scroll_layer, formatted_text_layer_get_layer(data->text_layer));

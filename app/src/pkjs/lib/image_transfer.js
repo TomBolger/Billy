@@ -16,7 +16,7 @@
 
 var messageQueue = require('./message_queue').Queue;
 
-var CHUNK_SIZE = 200;
+var CHUNK_SIZE = 500;
 
 function ImageManager() {
     this.nextImageId = 1;

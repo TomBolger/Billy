@@ -1,14 +1,44 @@
-What's the weather like?
+What's the weather?
+Ask me which API test to run: Calendar, Gmail, Photos, or Maps.
+Show me directions to the nearest train station on a map.
+Search Google Places for pizza nearby.
+How long would it take to drive to London?
+What time zone is Frankfurt in?
+Show me a public web image of the Eiffel Tower.
+Show me a zoomed-in public web image of the Eiffel Tower.
+Show me my latest camera roll photo.
+What is in my latest photo?
+Show me a camera roll photo of a dog.
+Show me a photo from this time last year.
+Show the first photo from my Google Photos picker selection.
+Try the Google Photos API for a pet photo.
+What's on my calendar today?
+Create a calendar event tomorrow at 3 PM called Billy API test for 30 minutes.
+Am I free tomorrow afternoon?
+Find a 30 minute opening on my calendar tomorrow.
+Create a Google Meet tomorrow at 4 PM called Billy Meet test.
+Find emails from Google about Gemini.
+Search my contacts for Sarah.
+Send myself an email about Billy setup with the body This is a watch test.
+What tasks are due today in Google Tasks?
+Create a Google Task called Billy task API test.
+Mark my Billy task API test complete.
+Show my recent Google Drive files.
+Find my latest Google Drive document about Billy.
+Summarize my latest Google Doc about Billy.
+Create a Google Doc called Billy setup note with the text API test from my watch.
+Read the first rows of my latest Google Sheet about Billy.
+Create a Google Sheet called Billy API test.
+Summarize my latest Google Slides deck about Billy.
+Create a Google Slides deck called Billy API test.
+Summarize my latest Google Form about Billy.
+Can Billy use Google Keep to create a note?
+Which Google services can the companion use?
+Open Drive search for Billy notes.
 Set a baking timer for five minutes.
-Will I need an umbrella tomorrow?
-At 5pm, remind me to go grocery shopping.
+Get a reminder to take out the trash at 8 PM.
+Set an alarm for 11 AM tomorrow.
 Who was the 22nd president of the United States?
-Set an alarm for 11am.
+What is 47 squared?
 What is 50 dollars in pounds?
 How do you say 'good morning' in German?
-How long would it take to drive to McDonald's?
-What is 47 squared?
-Where is the nearest bar that's open?
-What is the capital of Burkina Faso?
-What is the population of Germany?
-What is the speed of light?

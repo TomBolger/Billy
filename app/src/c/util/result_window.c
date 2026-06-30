@@ -28,12 +28,14 @@ typedef struct {
   TextLayer* title_layer;
   TextLayer* text_layer;
   VectorLayer* image_layer;
+  BitmapLayer* bitmap_image_layer;
 #ifdef PBL_COLOR
   GColor background_color;
 #endif
   char* title_text;
   char* text_text;
   GDrawCommandImage* image;
+  GBitmap* bitmap_image;
   AppTimer* timer;
 } ResultWindowData;
 
@@ -45,12 +47,38 @@ static void prv_timer_expired(void* context);
 void result_window_push(const char* title, const char* text, GDrawCommandImage *image, GColor background_color) {
   Window* window = bwindow_create();
   ResultWindowData* data = bmalloc(sizeof(ResultWindowData));
+  memset(data, 0, sizeof(ResultWindowData));
   // Only bother setting the background colour if we're on a colour device.
 #ifdef PBL_COLOR
   window_set_background_color(window, background_color);
   data->background_color = background_color;
 #endif
   data->image = image;
+  data->bitmap_image = NULL;
+  data->title_text = bmalloc(strlen(title) + 1);
+  strncpy(data->title_text, title, strlen(title) + 1);
+  data->text_text = bmalloc(strlen(text) + 1);
+  strncpy(data->text_text, text, strlen(text) + 1);
+  window_set_user_data(window, data);
+  window_set_window_handlers(window, (WindowHandlers) {
+    .load = prv_window_load,
+    .unload = prv_window_unload,
+    .appear = prv_window_appear,
+  });
+  window_stack_push(window, true);
+}
+
+void result_window_push_bitmap(const char* title, const char* text, GBitmap *image, GColor background_color) {
+  Window* window = bwindow_create();
+  ResultWindowData* data = bmalloc(sizeof(ResultWindowData));
+  memset(data, 0, sizeof(ResultWindowData));
+  // Only bother setting the background colour if we're on a colour device.
+#ifdef PBL_COLOR
+  window_set_background_color(window, background_color);
+  data->background_color = background_color;
+#endif
+  data->image = NULL;
+  data->bitmap_image = image;
   data->title_text = bmalloc(strlen(title) + 1);
   strncpy(data->title_text, title, strlen(title) + 1);
   data->text_text = bmalloc(strlen(text) + 1);
@@ -91,21 +119,41 @@ static void prv_window_load(Window* window) {
   text_layer_set_text(data->text_layer, data->text_text);
   layer_add_child(root_layer, text_layer_get_layer(data->text_layer));
 
-  GSize image_size = gdraw_command_image_get_bounds_size(data->image);
-
-  data->image_layer = vector_layer_create(GRect(bounds.size.w / 2 - image_size.w / 2, bounds.size.h - image_size.h - 5, image_size.w, image_size.h));
-  vector_layer_set_vector(data->image_layer, data->image);
-  layer_add_child(root_layer, vector_layer_get_layer(data->image_layer));
+  if (data->bitmap_image) {
+    GSize image_size = gbitmap_get_bounds(data->bitmap_image).size;
+    data->bitmap_image_layer = bbitmap_layer_create(GRect(bounds.size.w / 2 - image_size.w / 2, bounds.size.h - image_size.h - 5, image_size.w, image_size.h));
+    bitmap_layer_set_bitmap(data->bitmap_image_layer, data->bitmap_image);
+    bitmap_layer_set_background_color(data->bitmap_image_layer, GColorClear);
+    bitmap_layer_set_compositing_mode(data->bitmap_image_layer, GCompOpSet);
+    layer_add_child(root_layer, bitmap_layer_get_layer(data->bitmap_image_layer));
+  } else {
+    GSize image_size = gdraw_command_image_get_bounds_size(data->image);
+    data->image_layer = vector_layer_create(GRect(bounds.size.w / 2 - image_size.w / 2, bounds.size.h - image_size.h - 5, image_size.w, image_size.h));
+    vector_layer_set_vector(data->image_layer, data->image);
+    layer_add_child(root_layer, vector_layer_get_layer(data->image_layer));
+  }
 }
 
 static void prv_window_unload(Window* window) {
   ResultWindowData* data = window_get_user_data(window);
   text_layer_destroy(data->title_layer);
   text_layer_destroy(data->text_layer);
-  vector_layer_destroy(data->image_layer);
+  if (data->image_layer) {
+    vector_layer_destroy(data->image_layer);
+  }
+  if (data->bitmap_image_layer) {
+    bitmap_layer_destroy(data->bitmap_image_layer);
+  }
   status_bar_layer_destroy(data->status_bar);
-  app_timer_cancel(data->timer);
-  gdraw_command_image_destroy(data->image);
+  if (data->timer) {
+    app_timer_cancel(data->timer);
+  }
+  if (data->image) {
+    gdraw_command_image_destroy(data->image);
+  }
+  if (data->bitmap_image) {
+    gbitmap_destroy(data->bitmap_image);
+  }
   free(data->title_text);
   free(data->text_text);
   free(data);

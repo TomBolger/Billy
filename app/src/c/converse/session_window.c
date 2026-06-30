@@ -34,6 +34,7 @@
 #include "report_window.h"
 
 #define PADDING 5
+#define CLARIFICATION_DICTATE_OPTION "Dictate..."
 
 struct SessionWindow {
   Window* window;
@@ -50,6 +51,7 @@ struct SessionWindow {
   int segment_count;
   int segments_deleted;
   bool dictation_pending;
+  bool dictating_clarification;
   int content_height;
   int last_prompt_end_offset;
   time_t query_time;
@@ -70,6 +72,8 @@ static void prv_conversation_entry_deleted_handler(int index, void* context);
 static void prv_click_config_provider(void *context);
 static void prv_select_clicked(ClickRecognizerRef recognizer, void *context);
 static void prv_select_long_pressed(ClickRecognizerRef recognizer, void *context);
+static void prv_up_clicked(ClickRecognizerRef recognizer, void *context);
+static void prv_down_clicked(ClickRecognizerRef recognizer, void *context);
 static void prv_update_thinking_layer(SessionWindow* sw);
 static int16_t prv_content_height(const SessionWindow* sw);
 static void prv_scrolled_handler(ScrollLayer* scroll_layer, void* context);
@@ -80,6 +84,8 @@ static void prv_action_menu_query(ActionMenu *action_menu, const ActionMenuItem 
 static void prv_action_menu_input(ActionMenu *action_menu, const ActionMenuItem *action, void *context);
 static void prv_action_menu_report_thread(ActionMenu *action_menu, const ActionMenuItem *action, void *context);
 static void prv_start_dictation(SessionWindow *sw);
+static SessionWindow* prv_active_session_window(void);
+static bool prv_submit_clarification_answer(SessionWindow *sw, const char *answer_text, const char *display_override);
 
 void session_window_push(int timeout, char *starting_prompt) {
   Window *window = bwindow_create();
@@ -226,10 +232,18 @@ static void prv_dictation_status_callback(DictationSession *session, DictationSe
   SessionWindow *sw = context;
   switch (status) {
   case DictationSessionStatusSuccess:
-    conversation_manager_add_input(sw->manager, transcript);
+    if (sw->dictating_clarification) {
+      sw->dictating_clarification = false;
+      if (!prv_submit_clarification_answer(sw, transcript, transcript)) {
+        conversation_manager_add_input(sw->manager, transcript);
+      }
+    } else {
+      conversation_manager_add_input(sw->manager, transcript);
+    }
     sw->query_time = time(NULL);
     break;
   default:
+    sw->dictating_clarification = false;
     if (conversation_peek(conversation_manager_get_conversation(sw->manager)) == NULL) {
       window_stack_pop(true);
     }
@@ -423,15 +437,149 @@ static void prv_conversation_entry_deleted_handler(int index, void* context) {
 }
 
 static void prv_click_config_provider(void *context) {
+  window_single_click_subscribe(BUTTON_ID_UP, prv_up_clicked);
+  window_single_repeating_click_subscribe(BUTTON_ID_UP, 150, prv_up_clicked);
   window_single_click_subscribe(BUTTON_ID_SELECT, prv_select_clicked);
   window_long_click_subscribe(BUTTON_ID_SELECT, 0, prv_select_long_pressed, NULL);
+  window_single_click_subscribe(BUTTON_ID_DOWN, prv_down_clicked);
+  window_single_repeating_click_subscribe(BUTTON_ID_DOWN, 150, prv_down_clicked);
+}
+
+static SessionWindow* prv_active_session_window(void) {
+  Window *window = window_stack_get_top_window();
+  if (window == NULL) {
+    return NULL;
+  }
+  return window_get_user_data(window);
+}
+
+static ConversationEntry* prv_active_clarification_entry(SessionWindow *sw) {
+  if (!sw) {
+    return NULL;
+  }
+  ConversationEntry *entry = conversation_get_last_unanswered_clarification(conversation_manager_get_conversation(sw->manager));
+  if (!entry || conversation_entry_get_type(entry) != EntryTypeWidget) {
+    return NULL;
+  }
+  ConversationWidget *widget = conversation_entry_get_widget(entry);
+  if (!widget || widget->type != ConversationWidgetTypeClarification) {
+    return NULL;
+  }
+  if (widget->widget.clarification.answered) {
+    return NULL;
+  }
+  return entry;
+}
+
+static ConversationWidgetClarification* prv_active_clarification(SessionWindow *sw) {
+  ConversationEntry *entry = prv_active_clarification_entry(sw);
+  if (!entry) {
+    return NULL;
+  }
+  ConversationWidget *widget = conversation_entry_get_widget(entry);
+  return &widget->widget.clarification;
+}
+
+static void prv_update_segment_for_entry(SessionWindow *sw, ConversationEntry *entry) {
+  if (!entry || sw->segment_count <= sw->segments_deleted) {
+    return;
+  }
+  for (int i = sw->segment_count - 1; i >= sw->segments_deleted; --i) {
+    if (segment_layer_get_entry(sw->segment_layers[i]) == entry) {
+      segment_layer_update(sw->segment_layers[i]);
+      return;
+    }
+  }
+}
+
+static bool prv_move_clarification_selection(SessionWindow *sw, int delta) {
+  ConversationEntry *entry = prv_active_clarification_entry(sw);
+  if (!entry) {
+    return false;
+  }
+  ConversationWidget *widget = conversation_entry_get_widget(entry);
+  ConversationWidgetClarification *clarification = &widget->widget.clarification;
+  clarification->selected_index += delta;
+  if (clarification->selected_index < 0) {
+    clarification->selected_index = clarification->option_count - 1;
+  } else if (clarification->selected_index >= clarification->option_count) {
+    clarification->selected_index = 0;
+  }
+  prv_update_segment_for_entry(sw, entry);
+  light_enable_interaction();
+  return true;
+}
+
+static void prv_up_clicked(ClickRecognizerRef recognizer, void *context) {
+  SessionWindow* sw = prv_active_session_window();
+  if (!sw) {
+    return;
+  }
+  if (!prv_move_clarification_selection(sw, -1)) {
+    scroll_layer_scroll_up_click_handler(recognizer, sw->scroll_layer);
+  }
+}
+
+static void prv_down_clicked(ClickRecognizerRef recognizer, void *context) {
+  SessionWindow* sw = prv_active_session_window();
+  if (!sw) {
+    return;
+  }
+  if (!prv_move_clarification_selection(sw, 1)) {
+    scroll_layer_scroll_down_click_handler(recognizer, sw->scroll_layer);
+  }
 }
 
 static void prv_select_clicked(ClickRecognizerRef recognizer, void *context) {
-  SessionWindow* sw = context;
+  SessionWindow* sw = prv_active_session_window();
+  if (!sw) {
+    return;
+  }
+  ConversationWidgetClarification *clarification = prv_active_clarification(sw);
+  if (clarification) {
+    const char *option = clarification->options[clarification->selected_index];
+    if (strcmp(option, CLARIFICATION_DICTATE_OPTION) == 0) {
+      sw->dictating_clarification = true;
+      prv_start_dictation(sw);
+      return;
+    }
+    prv_submit_clarification_answer(sw, option, NULL);
+    return;
+  }
   if (conversation_is_idle(conversation_manager_get_conversation(sw->manager))) {
     prv_start_dictation(sw);
   }
+}
+
+static bool prv_submit_clarification_answer(SessionWindow *sw, const char *answer_text, const char *display_override) {
+  ConversationEntry *entry = prv_active_clarification_entry(sw);
+  if (!entry || !answer_text || strlen(answer_text) == 0) {
+    return false;
+  }
+  ConversationWidget *widget = conversation_entry_get_widget(entry);
+  ConversationWidgetClarification *clarification = &widget->widget.clarification;
+  size_t display_len = strlen(display_override ? display_override : answer_text) + 1;
+  char *display_text = bmalloc(display_len);
+  strcpy(display_text, display_override ? display_override : answer_text);
+  if (!display_override) {
+    char *separator = strchr(display_text, '|');
+    if (separator) {
+      *separator = '\0';
+      while (separator > display_text && *(separator - 1) == ' ') {
+        *(--separator) = '\0';
+      }
+    }
+  }
+  size_t len = strlen(clarification->context) + strlen(clarification->question) + strlen(answer_text) + 96;
+  char *answer = bmalloc(len);
+  snprintf(answer, len, "BILLY_CLARIFICATION_ANSWER\ncontext=%s\nquestion=%s\nanswer=%s", clarification->context, clarification->question, answer_text);
+  clarification->answered = true;
+  prv_update_segment_for_entry(sw, entry);
+  conversation_manager_add_input_with_display(sw->manager, answer, display_text);
+  sw->query_time = time(NULL);
+  free(display_text);
+  free(answer);
+  return true;
 }
 
 static void prv_destroy_action_menu(ActionMenu *action_menu, const ActionMenuItem *item, void *context) {
@@ -444,7 +592,10 @@ static void prv_destroy_action_menu(ActionMenu *action_menu, const ActionMenuIte
 }
 
 static void prv_select_long_pressed(ClickRecognizerRef recognizer, void *context) {
-  SessionWindow* sw = context;
+  SessionWindow* sw = prv_active_session_window();
+  if (!sw) {
+    return;
+  }
   if (!conversation_is_idle(conversation_manager_get_conversation(sw->manager))) {
     return;
   }

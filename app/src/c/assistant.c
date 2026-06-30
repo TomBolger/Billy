@@ -33,8 +33,39 @@
 
 
 #define QUICK_LAUNCH_TIMEOUT_MS 60000
+#define BILLY_MESSAGE_KEY_WATCH_PROMPT 10121
+#define BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY 10123
 
 static RootWindow* s_root_window = NULL;
+static EventHandle s_prompt_inbox_handle = NULL;
+
+static void prv_forward_android_companion_ready(void) {
+  DictionaryIterator *out;
+  AppMessageResult result = app_message_outbox_begin(&out);
+  if (result != APP_MSG_OK || !out) {
+    BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Could not forward Android companion heartbeat: %d.", result);
+    return;
+  }
+  dict_write_uint8(out, BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY, 1);
+  app_message_outbox_send();
+}
+
+static void prv_prompt_inbox_received(DictionaryIterator *iter, void *context) {
+  Tuple *android_ready_tuple = dict_find(iter, BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY);
+  if (android_ready_tuple) {
+    prv_forward_android_companion_ready();
+    return;
+  }
+  Tuple *prompt_tuple = dict_find(iter, BILLY_MESSAGE_KEY_WATCH_PROMPT);
+  if (!prompt_tuple) {
+    prompt_tuple = dict_find(iter, MESSAGE_KEY_PROMPT);
+  }
+  if (!prompt_tuple || prompt_tuple->length <= 1) {
+    return;
+  }
+  BOBBY_LOG(APP_LOG_LEVEL_INFO, "Launching session from typed phone prompt.");
+  session_window_push(0, prompt_tuple->value->cstring);
+}
 
 static void prv_init(void) {
   memory_pressure_init();
@@ -46,11 +77,16 @@ static void prv_init(void) {
   image_manager_init();
 #endif
   events_app_message_open();
+  s_prompt_inbox_handle = events_app_message_register_inbox_received(prv_prompt_inbox_received, NULL);
   alarm_manager_init();
   fonts_load();
 }
 
 static void prv_deinit(void) {
+  if (s_prompt_inbox_handle) {
+    events_app_message_unsubscribe(s_prompt_inbox_handle);
+    s_prompt_inbox_handle = NULL;
+  }
   if (s_root_window) {
     root_window_destroy(s_root_window);
   }
@@ -62,7 +98,7 @@ static void prv_deinit(void) {
 
 int main(void) {
   VersionInfo version_info = version_get_current();
-  BOBBY_LOG(APP_LOG_LEVEL_INFO, "Bobby %d.%d", version_info.major, version_info.minor);
+  BOBBY_LOG(APP_LOG_LEVEL_INFO, "Billy %d.%d", version_info.major, version_info.minor);
   prv_init();
   
   if (alarm_manager_maybe_alarm()) {

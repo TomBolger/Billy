@@ -1,7 +1,7 @@
 {
-  "name": "Bobby",
-  "author": "Rebble",
-  "version": "1.5.0",
+  "name": "Billy",
+  "author": "Thomas Bolger",
+  "version": "0.1",
   "keywords": [
     "pebble-app"
   ],
@@ -11,8 +11,8 @@
     "pebble-events": "^1.2.0"
   },
   "pebble": {
-    "displayName": "Bobby",
-    "uuid": "1d272bb4-cf00-4e3e-a7f3-7394309e0341",
+    "displayName": "Billy",
+    "uuid": "f74b42bb-3473-444f-9722-dd34136d9b02",
     "sdkVersion": "3",
     "enableMultiJS": true,
     "capabilities": [
@@ -20,12 +20,20 @@
       "location"
     ],
     "targetPlatforms": [
-      "basalt",
-      "diorite",
       "emery"
     ],
     "watchapp": {
       "watchface": false
+    },
+    "companionApp": {
+      "android": {
+        "url": "https://github.com/tombolger/Billy",
+        "apps": [
+          {
+            "package": "com.tombo.billyassistant.companion"
+          }
+        ]
+      }
     },
     "messageKeys": [
       "CHAT",
@@ -51,6 +59,7 @@
       "QUOTA_REQUEST",
       "QUOTA_RESPONSE_USED",
       "QUOTA_RESPONSE_REMAINING",
+      "QUOTA_RESPONSE_TEXT",
       "LOCATION_ENABLED",
       "WARNING",
       "WEATHER_WIDGET",
@@ -85,6 +94,7 @@
       "HIGHLIGHT_WIDGET_PRIMARY",
       "HIGHLIGHT_WIDGET_SECONDARY",
       "QUOTA_HAS_SUBSCRIPTION",
+      "QUOTA_IS_GEMINI_API",
       "FEEDBACK_TEXT",
       "FEEDBACK_APP_MAJOR",
       "FEEDBACK_APP_MINOR",
@@ -107,13 +117,30 @@
       "MAP_WIDGET",
       "MAP_WIDGET_IMAGE_ID",
       "MAP_WIDGET_USER_LOCATION",
-      "CONFIRM_TRANSCRIPTS",
-      "ACTION_SETTINGS_UPDATED"
+      "CLARIFY_WIDGET",
+      "CLARIFY_QUESTION",
+      "CLARIFY_CONTEXT",
+      "CLARIFY_OPTION_COUNT",
+      "CLARIFY_OPTION_0",
+      "CLARIFY_OPTION_1",
+      "CLARIFY_OPTION_2",
+      "CLARIFY_OPTION_3",
+        "CONFIRM_TRANSCRIPTS",
+        "ACTION_SETTINGS_UPDATED",
+        "ASSISTANT_RUNTIME",
+      "GEMINI_API_KEY",
+      "GEMINI_MODEL",
+      "GEMINI_MONTHLY_BUDGET_USD",
+      "GITHUB_ISSUES_URL",
+      "FEEDBACK_POST_URL",
+      "WATCH_PROMPT",
+      "WATCH_READY",
+      "ANDROID_COMPANION_READY"
     ],
     "resources": {
       "media": [
         {
-          "file": "icons/menu_icon_default.png",
+          "file": "icons/billy_general_menu.png",
           "menuIcon": true,
           "name": "IMAGE_MENU_ICON",
           "type": "bitmap"
@@ -139,14 +166,14 @@
           "type": "bitmap"
         },
         {
-          "file": "images/root_screen/pony.pdc",
+          "file": "images/root_screen/pony.png",
           "name": "ROOT_SCREEN_PONY",
-          "type": "raw"
+          "type": "bitmap"
         },
         {
-          "file": "images/sleeping_pony.pdc",
+          "file": "images/sleeping_pony.png",
           "name": "SLEEPING_PONY",
-          "type": "raw"
+          "type": "bitmap"
         },
         {
           "file": "icons/clock.pdc",
@@ -488,7 +515,6 @@
           "file": "images/fence_pony_color.png",
           "name": "FENCE_PONY_BITMAP",
           "type": "bitmap",
-          "memoryFormat": "2BitPalette",
           "targetPlatforms": [
             "basalt",
             "emery"
@@ -511,6 +537,11 @@
         {
           "file": "text/changelog/1.4.txt",
           "name": "CHANGELOG_1_4",
+          "type": "raw"
+        },
+        {
+          "file": "text/changelog/1.5.txt",
+          "name": "CHANGELOG_1_5",
           "type": "raw"
         },
         {
