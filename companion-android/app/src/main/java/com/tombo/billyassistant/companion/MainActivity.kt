@@ -791,6 +791,7 @@ class MainActivity : ComponentActivity() {
                 googleApiAccessState = "$tokenState; ${scopesToSave.size} scopes saved"
                 pendingGoogleScopes = emptyList()
                 renderStatus()
+                hydrateGoogleProfileAfterGrant()
             }
             is GoogleApiAuthorizationResult.NeedsUserConsent -> {
                 if (!allowConsentUi) {
@@ -814,6 +815,36 @@ class MainActivity : ComponentActivity() {
                 renderStatus()
             }
         }
+    }
+
+    private fun hydrateGoogleProfileAfterGrant() {
+        if (!googleAuthStore.hasScopes(GoogleApiScopes.identity)) {
+            return
+        }
+        profileStatusText.text = "Loading Google profile..."
+        profileStatusText.setTextColor(COLOR_MUTED)
+        Thread {
+            val result = GooglePeopleApiTools(GoogleAccessTokenProvider(this)).fetchOwnProfile(includePeopleEnrichment = false)
+            runOnUiThread {
+                when (result) {
+                    is GooglePeopleResult.Success -> {
+                        val profile = userProfileStore.mergeGoogleProfile(result.payload)
+                        profileStatusText.text = "Loaded Google profile.\n${profile.statusSummary()}"
+                        profileStatusText.setTextColor(COLOR_SUCCESS)
+                    }
+                    is GooglePeopleResult.NeedsScope -> renderStatus()
+                    is GooglePeopleResult.Rejected -> renderStatus()
+                    is GooglePeopleResult.Failed -> {
+                        if (!userProfileStore.load().hasPromptContext()) {
+                            profileStatusText.text = result.reason
+                            profileStatusText.setTextColor(COLOR_WARNING)
+                        } else {
+                            renderStatus()
+                        }
+                    }
+                }
+            }
+        }.start()
     }
 
     private fun handleGoogleAuthorizationActivityResult(resultCode: Int, data: Intent?) {

@@ -13,6 +13,25 @@ class BillyUserProfileStore(context: Context) {
         return runCatching { BillyUserProfile.fromJson(JSONObject(raw)) }.getOrDefault(BillyUserProfile())
     }
 
+    fun shouldAttemptGoogleProfileHydration(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        val profile = load()
+        val lastAttemptAtMillis = preferences.getLong(KEY_GOOGLE_PROFILE_ATTEMPT_AT, 0L)
+        val lastSuccessfulAtMillis = profile.googleProfileUpdatedAtMillis
+        val newestAttemptAtMillis = maxOf(lastAttemptAtMillis, lastSuccessfulAtMillis)
+        val retryIntervalMillis = if (profile.displayName.isBlank() && profile.email.isBlank()) {
+            EMPTY_PROFILE_RETRY_INTERVAL_MILLIS
+        } else {
+            LOADED_PROFILE_REFRESH_INTERVAL_MILLIS
+        }
+        return newestAttemptAtMillis <= 0L || nowMillis - newestAttemptAtMillis >= retryIntervalMillis
+    }
+
+    fun markGoogleProfileHydrationAttempt(nowMillis: Long = System.currentTimeMillis()) {
+        preferences.edit()
+            .putLong(KEY_GOOGLE_PROFILE_ATTEMPT_AT, nowMillis)
+            .apply()
+    }
+
     fun mergeGoogleProfile(payload: JSONObject): BillyUserProfile {
         val incoming = payload.optJSONObject("profile") ?: payload
         val current = load()
@@ -104,10 +123,13 @@ class BillyUserProfileStore(context: Context) {
     companion object {
         private const val PREFERENCES_NAME = "billy_user_profile"
         private const val KEY_PROFILE = "profile_json"
+        private const val KEY_GOOGLE_PROFILE_ATTEMPT_AT = "google_profile_attempt_at_millis"
         private const val MAX_MEMORY_LENGTH = 180
         private const val MAX_MEMORIES = 40
         private const val MAX_PROMPT_MEMORIES = 18
         private const val MAX_PROMPT_CONTEXT_LENGTH = 1800
+        private const val EMPTY_PROFILE_RETRY_INTERVAL_MILLIS = 10 * 60 * 1000L
+        private const val LOADED_PROFILE_REFRESH_INTERVAL_MILLIS = 7 * 24 * 60 * 60 * 1000L
     }
 }
 

@@ -12,9 +12,9 @@ class GooglePeopleApiTools(
     private val tokenProvider: GoogleAccessTokenProvider,
     private val http: GoogleApiHttp = GoogleApiHttp(),
 ) {
-    fun fetchOwnProfile(): GooglePeopleResult {
+    fun fetchOwnProfile(includePeopleEnrichment: Boolean = true): GooglePeopleResult {
         return when (val token = tokenProvider.getAccessToken(GoogleApiScopes.identity)) {
-            is GoogleAccessTokenResult.Authorized -> fetchOwnProfile(token.accessToken)
+            is GoogleAccessTokenResult.Authorized -> fetchOwnProfile(token.accessToken, includePeopleEnrichment)
             is GoogleAccessTokenResult.NeedsUserGrant -> GooglePeopleResult.NeedsScope(token.scopes)
             is GoogleAccessTokenResult.Failed -> GooglePeopleResult.Failed(token.reason)
         }
@@ -111,7 +111,7 @@ class GooglePeopleApiTools(
         }
     }
 
-    private fun fetchOwnProfile(identityToken: String): GooglePeopleResult {
+    private fun fetchOwnProfile(identityToken: String, includePeopleEnrichment: Boolean): GooglePeopleResult {
         val profile = JSONObject()
         when (val userInfo = http.get(OAUTH_USERINFO_URL, identityToken)) {
             is GoogleHttpResult.Success -> {
@@ -126,10 +126,12 @@ class GooglePeopleApiTools(
             is GoogleHttpResult.Failed -> return GooglePeopleResult.Failed("Google profile failed: ${userInfo.reason}")
         }
 
-        when (val peopleToken = tokenProvider.getAccessToken(GoogleApiScopes.people)) {
-            is GoogleAccessTokenResult.Authorized -> mergePeopleMeProfile(profile, peopleToken.accessToken)
-            is GoogleAccessTokenResult.NeedsUserGrant -> Unit
-            is GoogleAccessTokenResult.Failed -> Unit
+        if (includePeopleEnrichment) {
+            when (val peopleToken = tokenProvider.getAccessToken(GoogleApiScopes.people)) {
+                is GoogleAccessTokenResult.Authorized -> mergePeopleMeProfile(profile, peopleToken.accessToken)
+                is GoogleAccessTokenResult.NeedsUserGrant -> Unit
+                is GoogleAccessTokenResult.Failed -> Unit
+            }
         }
 
         val summaryName = profile.optString("display_name").ifBlank { profile.optString("email") }.ifBlank { "Google profile" }

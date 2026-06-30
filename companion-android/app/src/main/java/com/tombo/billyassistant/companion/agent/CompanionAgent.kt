@@ -25,6 +25,8 @@ import com.tombo.billyassistant.companion.agent.tools.WebImageCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WatchMediaSpec
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
+import com.tombo.billyassistant.companion.auth.GoogleApiScopes
+import com.tombo.billyassistant.companion.auth.GoogleAuthStore
 import com.tombo.billyassistant.companion.auth.GoogleAccessTokenProvider
 import com.tombo.billyassistant.companion.calendar.AndroidCalendarTools
 import com.tombo.billyassistant.companion.google.GoogleCalendarApiTools
@@ -35,6 +37,7 @@ import com.tombo.billyassistant.companion.google.GoogleGmailResult
 import com.tombo.billyassistant.companion.google.GoogleKeepApiTools
 import com.tombo.billyassistant.companion.google.GoogleMapsPlatformApiTools
 import com.tombo.billyassistant.companion.google.GooglePeopleApiTools
+import com.tombo.billyassistant.companion.google.GooglePeopleResult
 import com.tombo.billyassistant.companion.google.GooglePhotosApiTools
 import com.tombo.billyassistant.companion.google.GooglePhotosPickerStore
 import com.tombo.billyassistant.companion.google.GoogleTasksApiTools
@@ -53,6 +56,8 @@ class CompanionAgent(
     private val threadId: String? = null,
 ) {
     private val googleAccessTokenProvider = GoogleAccessTokenProvider(context)
+    private val googleAuthStore = GoogleAuthStore(context)
+    private val googlePeopleApiTools = GooglePeopleApiTools(googleAccessTokenProvider)
     private val recentContextStore = RecentAgentContextStore(context)
     private val userProfileStore = BillyUserProfileStore(context)
     private val photoTool = PhotoCompanionTool(
@@ -91,7 +96,7 @@ class CompanionAgent(
             GoogleWorkspaceCompanionTool(
                 driveApiTools = GoogleDriveApiTools(googleAccessTokenProvider),
                 gmailApiTools = GoogleGmailApiTools(googleAccessTokenProvider),
-                peopleApiTools = GooglePeopleApiTools(googleAccessTokenProvider),
+                peopleApiTools = googlePeopleApiTools,
             ),
             GooglePhotosCompanionTool(
                 photosApiTools = GooglePhotosApiTools(googleAccessTokenProvider),
@@ -117,6 +122,7 @@ class CompanionAgent(
         }
         activePrompt = prompt
         directClarificationAnswer(prompt)?.let { return rememberTurn(prompt, it) }
+        hydrateGoogleProfileIfAvailable()
 
         val contextualPrompt = buildContextualPrompt(prompt)
         val result = geminiClient.generateWithTools(
@@ -141,6 +147,22 @@ class CompanionAgent(
             return prompt
         }
         return summaries.joinToString(separator = "\n") + "\nCurrent user request: $prompt"
+    }
+
+    private fun hydrateGoogleProfileIfAvailable() {
+        if (!googleAuthStore.hasScopes(GoogleApiScopes.identity)) {
+            return
+        }
+        if (!userProfileStore.shouldAttemptGoogleProfileHydration()) {
+            return
+        }
+        userProfileStore.markGoogleProfileHydrationAttempt()
+        when (val result = googlePeopleApiTools.fetchOwnProfile(includePeopleEnrichment = false)) {
+            is GooglePeopleResult.Success -> userProfileStore.mergeGoogleProfile(result.payload)
+            is GooglePeopleResult.NeedsScope,
+            is GooglePeopleResult.Rejected,
+            is GooglePeopleResult.Failed -> Unit
+        }
     }
 
     private fun directClarificationAnswer(prompt: String): CompanionAgentResult? {

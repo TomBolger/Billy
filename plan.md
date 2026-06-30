@@ -659,3 +659,15 @@ Status on 2026-06-29, Billy profile and memory layer:
   or Gemini Connected Apps context. The Gemini API key only authenticates model
   API usage; Billy's personal context must come from Billy memory, explicit
   prompt context, OAuth-backed Google APIs, or current tool results.
+
+Status on 2026-06-29, automatic profile identity hydration:
+
+- Fixed the first-use gap where Billy could have Google OAuth access but still
+  not know the user's name until `Load Google profile` was tapped manually.
+- After Google OAuth succeeds, the companion now stores the lightweight Google
+  identity profile immediately.
+- Before each companion-mode Gemini request, Billy now refreshes missing/stale
+  Google identity profile data if identity scopes are already granted.
+- The automatic path uses only the lightweight OAuth userinfo profile to keep
+  latency low; the manual `Load Google profile` button remains available for
+  deeper People API enrichment.
