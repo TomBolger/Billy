@@ -9,6 +9,8 @@ The app is intentionally conservative:
 - it can verify the configured Gemini API key with a direct phone-to-Gemini request
 - it can request Google API OAuth consent directly on device through Google
   Identity Services
+- it can load basic Google profile information into Billy's local profile store
+- it can store explicit Billy memories locally for future watch prompts
 - it receives enhanced assistant requests from the Pebble bridge when enabled
 - it exposes API-backed Google Calendar, Tasks, Gmail, Drive, Contacts, Docs,
   Sheets, Slides, Forms, and experimental Google Photos tools to Gemini
@@ -26,6 +28,12 @@ The Gemini API key is separate from Google OAuth. OAuth grants access to your
 Google account data, such as Calendar, Tasks, Gmail, Drive, Contacts, Docs,
 Sheets, Slides, Forms, and experimental Photos API paths. The Gemini API key pays for and authorizes model calls to
 `generativelanguage.googleapis.com`.
+
+The Gemini API key does not include the user's consumer Gemini app memories,
+Gemini app chat history, or Gemini Connected Apps context. Billy Companion has
+its own local profile/memory store instead. Users can load basic Google profile
+data, add a memory in the companion app, or ask the watch to remember/forget
+durable facts.
 
 If you create the Gemini API key in Google Cloud Console, make sure the Gemini
 API / Generative Language API is enabled in that project and that the key's API

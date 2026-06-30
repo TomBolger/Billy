@@ -63,6 +63,14 @@
                 "label": "Feedback POST endpoint",
                 "description": "Optional. Bobby-style feedback posts JSON here and returns Sent/Error on the watch. Leave blank to open a prefilled GitHub issue instead.",
                 "defaultValue": ""
+            },
+            {
+                "type": "input",
+                "id": "USER_PROFILE_CONTEXT",
+                "messageKey": "USER_PROFILE_CONTEXT",
+                "label": "Billy profile context",
+                "description": "Optional companionless memory/profile notes Billy should use, such as preferred name, home timezone, family names, pets, or preferences. Stored locally by the Pebble phone app.",
+                "defaultValue": ""
             }
         ]
     },

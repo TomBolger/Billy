@@ -38,12 +38,15 @@ import com.tombo.billyassistant.companion.google.GoogleCalendarApiTools
 import com.tombo.billyassistant.companion.google.GooglePhotosApiTools
 import com.tombo.billyassistant.companion.google.GooglePhotosPickerCreateResult
 import com.tombo.billyassistant.companion.google.GooglePhotosPickerStore
+import com.tombo.billyassistant.companion.google.GooglePeopleApiTools
+import com.tombo.billyassistant.companion.google.GooglePeopleResult
 import com.tombo.billyassistant.companion.media.AndroidPhotoTools
 import com.tombo.billyassistant.companion.media.PhotoAccessLevel
 import com.tombo.billyassistant.companion.media.PhotoPermissionStatus
 import com.tombo.billyassistant.companion.pebble.BillyPebbleProtocol
 import com.tombo.billyassistant.companion.pebble.PendingWatchPromptStore
 import com.tombo.billyassistant.companion.pebble.PebbleWatchStore
+import com.tombo.billyassistant.companion.profile.BillyUserProfileStore
 import com.tombo.billyassistant.companion.settings.CompanionSettings
 import com.tombo.billyassistant.companion.settings.SettingsStore
 import io.rebble.pebblekit2.client.DefaultPebbleSender
@@ -76,6 +79,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var oauthIdentityText: TextView
     private lateinit var watchPromptInput: EditText
     private lateinit var watchPromptStatusText: TextView
+    private lateinit var userProfileStore: BillyUserProfileStore
+    private lateinit var profileStatusText: TextView
 
     private var googleApiAccessState = "not requested"
     private var pendingGoogleScopes: List<String> = emptyList()
@@ -88,6 +93,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settingsStore = SettingsStore(this)
+        userProfileStore = BillyUserProfileStore(this)
         googleApiAuthorization = GoogleApiAuthorization(this)
         googleAuthStore = GoogleAuthStore(this)
         forceBridgeEnabled()
@@ -121,6 +127,8 @@ class MainActivity : ComponentActivity() {
         panel.addView(buildAndroidAccessSection())
         panel.addView(sectionDivider())
         panel.addView(buildGoogleAccessSection())
+        panel.addView(sectionDivider())
+        panel.addView(buildProfileSection())
         panel.addView(sectionDivider())
         panel.addView(buildDiagnosticsSection())
 
@@ -314,6 +322,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun buildProfileSection(): View {
+        return section("Billy profile and memory").apply {
+            addView(body("Stored locally on this phone and included with Billy Companion requests when relevant."))
+            profileStatusText = muted("")
+            addView(profileStatusText)
+            addView(horizontalActions().apply {
+                addView(actionButton("Load Google profile") {
+                    loadGoogleProfile()
+                })
+                addView(actionButton("Add memory", emphasis = false) {
+                    showAddMemoryDialog()
+                })
+                addView(actionButton("Clear", emphasis = false) {
+                    confirmClearProfile()
+                })
+            })
+        }
+    }
+
     private fun buildDiagnosticsSection(): View {
         return section("OAuth setup").apply {
             oauthIdentityText = TextView(this@MainActivity).apply {
@@ -365,7 +392,15 @@ class MainActivity : ComponentActivity() {
         bridgeStateText.setTextColor(COLOR_SUCCESS)
         renderAndroidPermissionRows()
         renderGoogleAccessRows()
+        renderProfileStatus()
         oauthIdentityText.text = oauthClientIdentity()
+    }
+
+    private fun renderProfileStatus() {
+        profileStatusText.text = userProfileStore.load().statusSummary()
+        profileStatusText.setTextColor(
+            if (userProfileStore.load().hasPromptContext()) COLOR_SUCCESS else COLOR_MUTED,
+        )
     }
 
     private fun renderAndroidPermissionRows() {
@@ -533,6 +568,82 @@ class MainActivity : ComponentActivity() {
                 renderStatus()
             }
         }.start()
+    }
+
+    private fun loadGoogleProfile() {
+        profileStatusText.text = "Loading Google profile..."
+        profileStatusText.setTextColor(COLOR_MUTED)
+        Thread {
+            val result = GooglePeopleApiTools(GoogleAccessTokenProvider(this)).fetchOwnProfile()
+            runOnUiThread {
+                when (result) {
+                    is GooglePeopleResult.Success -> {
+                        val profile = userProfileStore.mergeGoogleProfile(result.payload)
+                        profileStatusText.text = "Loaded Google profile.\n${profile.statusSummary()}"
+                        profileStatusText.setTextColor(COLOR_SUCCESS)
+                    }
+                    is GooglePeopleResult.NeedsScope -> {
+                        profileStatusText.text = "Google profile access needs consent. Grant it, then tap Load Google profile again."
+                        profileStatusText.setTextColor(COLOR_WARNING)
+                        authorizeGoogleApiAccess(result.scopes)
+                        profileStatusText.text = "Google profile access needs consent. Grant it, then tap Load Google profile again."
+                        profileStatusText.setTextColor(COLOR_WARNING)
+                    }
+                    is GooglePeopleResult.Rejected -> {
+                        profileStatusText.text = result.reason
+                        profileStatusText.setTextColor(COLOR_WARNING)
+                    }
+                    is GooglePeopleResult.Failed -> {
+                        profileStatusText.text = result.reason
+                        profileStatusText.setTextColor(COLOR_WARNING)
+                    }
+                }
+                renderStatus()
+            }
+        }.start()
+    }
+
+    private fun showAddMemoryDialog() {
+        val input = EditText(this).apply {
+            hint = "Example: My dog is named Scout."
+            textSize = 16f
+            minLines = 3
+            maxLines = 6
+            isSingleLine = false
+            setHorizontallyScrolling(false)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setTextColor(COLOR_TEXT)
+            setHintTextColor(COLOR_MUTED)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = rounded(COLOR_FIELD, dp(10).toFloat(), COLOR_STROKE)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Add Billy memory")
+            .setMessage("Save a short durable fact or preference Billy should use in future answers.")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val memory = userProfileStore.addMemory(input.text.toString(), source = "companion")
+                profileStatusText.text = if (memory == null) {
+                    "No memory saved."
+                } else {
+                    "Remembered: ${memory.fact}\n${userProfileStore.load().statusSummary()}"
+                }
+                profileStatusText.setTextColor(if (memory == null) COLOR_WARNING else COLOR_SUCCESS)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun confirmClearProfile() {
+        AlertDialog.Builder(this)
+            .setTitle("Clear Billy profile?")
+            .setMessage("This removes the local Google profile summary and Billy memories stored by the companion.")
+            .setPositiveButton("Clear") { _, _ ->
+                userProfileStore.clear()
+                renderStatus()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun sendTypedPromptToWatch() {

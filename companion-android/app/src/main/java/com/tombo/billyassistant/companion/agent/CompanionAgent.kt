@@ -19,6 +19,7 @@ import com.tombo.billyassistant.companion.agent.tools.PendingGmailSends
 import com.tombo.billyassistant.companion.agent.tools.PendingGmailRecipientChoices
 import com.tombo.billyassistant.companion.agent.tools.PendingTaskCompletions
 import com.tombo.billyassistant.companion.agent.tools.PhotoCompanionTool
+import com.tombo.billyassistant.companion.agent.tools.UserProfileCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WeatherCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WebImageCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
@@ -37,6 +38,7 @@ import com.tombo.billyassistant.companion.google.GooglePeopleApiTools
 import com.tombo.billyassistant.companion.google.GooglePhotosApiTools
 import com.tombo.billyassistant.companion.google.GooglePhotosPickerStore
 import com.tombo.billyassistant.companion.google.GoogleTasksApiTools
+import com.tombo.billyassistant.companion.profile.BillyUserProfileStore
 import com.tombo.billyassistant.companion.settings.SettingsStore
 import org.json.JSONObject
 import java.time.Instant
@@ -52,6 +54,7 @@ class CompanionAgent(
 ) {
     private val googleAccessTokenProvider = GoogleAccessTokenProvider(context)
     private val recentContextStore = RecentAgentContextStore(context)
+    private val userProfileStore = BillyUserProfileStore(context)
     private val photoTool = PhotoCompanionTool(
         context = context,
         watchMediaSpec = watchMediaSpec,
@@ -71,6 +74,7 @@ class CompanionAgent(
     private val toolRegistry = CompanionToolRegistry(
         listOf(
             ClarificationCompanionTool { activePrompt },
+            UserProfileCompanionTool(userProfileStore),
             CalendarCompanionTool(
                 calendarTools = calendarTools,
                 googleCalendarApiTools = GoogleCalendarApiTools(googleAccessTokenProvider),
@@ -129,6 +133,7 @@ class CompanionAgent(
             return prompt
         }
         val summaries = buildList {
+            userProfileStore.promptContext()?.let { add(it) }
             recentContextStore.conversationContext(threadId)?.let { add(it) }
             recentContextStore.lastPhotoContext(threadId)?.humanSummary()?.let { add(it) }
         }

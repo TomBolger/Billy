@@ -10,6 +10,7 @@ Billy is designed to be a drop-in Pebble app. It does not require a hosted helpe
 - Preserves Bobby's watch-local features: alarms, timers, timeline reminders, settings, feedback, sample prompts, and weather cards.
 - Supports a companionless mode that runs through the Pebble phone app JavaScript runtime.
 - Supports an optional Android companion for richer Google account and phone tools.
+- Stores a local Billy profile/memory layer so user-approved facts can persist across prompts.
 - Displays Pebble-style cards for weather, maps, clarification choices, and transferred media.
 - Transfers selected photos and web images to the watch instead of only describing them.
 - Uses brief smartwatch-focused responses instead of long desktop-chat output.
@@ -48,6 +49,14 @@ Google OAuth:
 - Identifies the app by Android package name and signing certificate SHA-1.
 - Does not pay for Gemini model usage and does not replace the Gemini API key.
 
+Billy profile/memory:
+
+- Stored locally on the user's phone.
+- Can be bootstrapped from Google OAuth identity/profile data.
+- Can be edited through Billy Companion or explicit watch requests such as "remember that my dog is named Scout."
+- Is included as compact prompt context for Billy requests.
+- Does not inherit consumer Gemini app memories, Gemini app chat history, or Gemini Connected Apps context.
+
 ## Optional Android Companion
 
 The Android companion lives in `companion-android/`.
@@ -57,6 +66,8 @@ It can:
 - receive watch prompts through PebbleKit,
 - verify the user's Gemini API key,
 - request Google account consent on device,
+- load basic Google profile information into Billy's local profile store,
+- remember or forget explicit user-approved facts for future Billy prompts,
 - read and create Google Calendar events,
 - read and manage Google Tasks,
 - draft and send Gmail with confirmation,

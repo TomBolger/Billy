@@ -641,3 +641,21 @@ Status on 2026-06-29, Bobby/Billy feature parity review:
 - Fixed message queue send-failure handling so an empty queue is not dequeued.
 - Release notes now load the 1.5 changelog resource.
 - Watch app version `1.5.27` and Android companion version `0.1.49` identify this review build.
+
+Status on 2026-06-29, Billy profile and memory layer:
+
+- Added a durable local Billy profile store in the Android companion. It stores
+  Google profile basics, People API profile fields where available, and explicit
+  Billy memories.
+- Added `Load Google profile` to the companion UI. It uses OAuth identity
+  profile data first, then enriches from the People API when granted.
+- Added local `remember`, `forget`, and `what do you know about me` tools for
+  both Android companion mode and companionless mode.
+- Companion mode injects a compact Billy profile/memory block into each Gemini
+  request before recent conversation context.
+- Companionless mode adds a `Billy profile context` Clay setting and local
+  storage-backed profile tools.
+- This still does not grant consumer Gemini app memory, Gemini app chat history,
+  or Gemini Connected Apps context. The Gemini API key only authenticates model
+  API usage; Billy's personal context must come from Billy memory, explicit
+  prompt context, OAuth-backed Google APIs, or current tool results.

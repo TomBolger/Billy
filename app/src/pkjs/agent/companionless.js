@@ -17,6 +17,7 @@
 var gemini = require('./gemini');
 var formatting = require('./formatting');
 var localHistory = require('./local_history');
+var profileTools = require('./profile_tools');
 var promptBuilder = require('./prompt');
 var usage = require('./usage');
 var watchTools = require('./watch_tools');
@@ -34,6 +35,9 @@ function runCompanionlessModel(session) {
     var threadId = localHistory.ensureThreadId(session);
     var searchGrounding = true;
     var tools = uiTools.getDeclarations();
+    if (profileTools.shouldExpose(session.prompt)) {
+        tools = tools.concat(profileTools.getDeclarations());
+    }
     if (watchTools.shouldExpose(session.prompt)) {
         tools = tools.concat(watchTools.getDeclarations());
     }
@@ -168,6 +172,21 @@ function executeFunctionCalls(session, history, calls, callback) {
             next();
         });
         if (handledByUi) {
+            return;
+        }
+        var handledByProfile = profileTools.execute(session, call, function(result) {
+            history.push({
+                type: 'function_result',
+                name: call.name,
+                call_id: call.id,
+                result: [{
+                    type: 'text',
+                    text: JSON.stringify(result)
+                }]
+            });
+            next();
+        });
+        if (handledByProfile) {
             return;
         }
         watchTools.execute(session, call, function(result) {

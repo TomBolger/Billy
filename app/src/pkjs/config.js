@@ -67,3 +67,11 @@ exports.getGithubIssuesUrl = function() {
 exports.getFeedbackPostUrl = function() {
     return String(exports.getSetting('FEEDBACK_POST_URL', '') || '').replace(/^\s+|\s+$/g, '');
 }
+
+exports.getUserProfileContext = function() {
+    return String(exports.getSetting('USER_PROFILE_CONTEXT', '') || '')
+        .replace(/[\r\n]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/^\s+|\s+$/g, '')
+        .substring(0, 1200);
+}

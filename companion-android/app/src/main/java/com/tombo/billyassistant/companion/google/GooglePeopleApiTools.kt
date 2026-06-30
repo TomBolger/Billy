@@ -12,6 +12,14 @@ class GooglePeopleApiTools(
     private val tokenProvider: GoogleAccessTokenProvider,
     private val http: GoogleApiHttp = GoogleApiHttp(),
 ) {
+    fun fetchOwnProfile(): GooglePeopleResult {
+        return when (val token = tokenProvider.getAccessToken(GoogleApiScopes.identity)) {
+            is GoogleAccessTokenResult.Authorized -> fetchOwnProfile(token.accessToken)
+            is GoogleAccessTokenResult.NeedsUserGrant -> GooglePeopleResult.NeedsScope(token.scopes)
+            is GoogleAccessTokenResult.Failed -> GooglePeopleResult.Failed(token.reason)
+        }
+    }
+
     fun searchContacts(query: String, maxResults: Int = 10): GooglePeopleResult {
         val cleanQuery = query.trim()
         return withToken { token ->
@@ -103,6 +111,57 @@ class GooglePeopleApiTools(
         }
     }
 
+    private fun fetchOwnProfile(identityToken: String): GooglePeopleResult {
+        val profile = JSONObject()
+        when (val userInfo = http.get(OAUTH_USERINFO_URL, identityToken)) {
+            is GoogleHttpResult.Success -> {
+                val json = JSONObject(userInfo.body)
+                profile
+                    .put("display_name", json.optString("name"))
+                    .put("email", json.optString("email"))
+                    .put("locale", json.optString("locale"))
+                    .put("photo_url", json.optString("picture"))
+            }
+            is GoogleHttpResult.HttpError -> return GooglePeopleResult.Failed("Google profile HTTP ${userInfo.responseCode}: ${userInfo.reason}")
+            is GoogleHttpResult.Failed -> return GooglePeopleResult.Failed("Google profile failed: ${userInfo.reason}")
+        }
+
+        when (val peopleToken = tokenProvider.getAccessToken(GoogleApiScopes.people)) {
+            is GoogleAccessTokenResult.Authorized -> mergePeopleMeProfile(profile, peopleToken.accessToken)
+            is GoogleAccessTokenResult.NeedsUserGrant -> Unit
+            is GoogleAccessTokenResult.Failed -> Unit
+        }
+
+        val summaryName = profile.optString("display_name").ifBlank { profile.optString("email") }.ifBlank { "Google profile" }
+        return GooglePeopleResult.Success(
+            summary = "Loaded $summaryName.",
+            payload = JSONObject()
+                .put("status", "ok")
+                .put("summary", "Loaded $summaryName.")
+                .put("profile", profile),
+        )
+    }
+
+    private fun mergePeopleMeProfile(profile: JSONObject, accessToken: String) {
+        val url = "$API_BASE/people/me?personFields=${encode(PEOPLE_ME_FIELDS)}"
+        when (val result = http.get(url, accessToken)) {
+            is GoogleHttpResult.Success -> {
+                val person = JSONObject(result.body)
+                profile.putIfBlank("display_name", firstName(person))
+                profile.putIfBlank("email", firstEmail(person))
+                profile.putIfBlank("photo_url", firstPhotoUrl(person))
+                firstLocale(person)?.let { profile.putIfBlank("locale", it) }
+                profile.put("organizations", organizations(person))
+                profile.put("occupations", occupations(person))
+                profile.put("locations", locations(person))
+                profile.put("relations", relations(person))
+                profile.put("biographies", biographies(person))
+            }
+            is GoogleHttpResult.HttpError -> Unit
+            is GoogleHttpResult.Failed -> Unit
+        }
+    }
+
     private fun fetchContacts(token: String): List<ContactSummary>? {
         val contacts = mutableListOf<ContactSummary>()
         var pageToken: String? = null
@@ -141,6 +200,108 @@ class GooglePeopleApiTools(
 
     private fun encode(value: String): String {
         return URLEncoder.encode(value, Charsets.UTF_8.name())
+    }
+
+    private fun firstName(person: JSONObject): String {
+        val names = person.optJSONArray("names") ?: JSONArray()
+        return (0 until names.length())
+            .asSequence()
+            .mapNotNull { names.optJSONObject(it)?.optString("displayName")?.takeIf { name -> name.isNotBlank() } }
+            .firstOrNull()
+            .orEmpty()
+    }
+
+    private fun firstEmail(person: JSONObject): String {
+        val emails = person.optJSONArray("emailAddresses") ?: JSONArray()
+        return (0 until emails.length())
+            .asSequence()
+            .mapNotNull { emails.optJSONObject(it)?.optString("value")?.takeIf { value -> value.isValidEmailAddress() } }
+            .firstOrNull()
+            .orEmpty()
+    }
+
+    private fun firstPhotoUrl(person: JSONObject): String {
+        val photos = person.optJSONArray("photos") ?: JSONArray()
+        return (0 until photos.length())
+            .asSequence()
+            .mapNotNull { photos.optJSONObject(it)?.optString("url")?.takeIf { value -> value.isNotBlank() } }
+            .firstOrNull()
+            .orEmpty()
+    }
+
+    private fun firstLocale(person: JSONObject): String? {
+        val locales = person.optJSONArray("locales") ?: return null
+        return (0 until locales.length())
+            .asSequence()
+            .mapNotNull { locales.optJSONObject(it)?.optString("value")?.takeIf { value -> value.isNotBlank() } }
+            .firstOrNull()
+    }
+
+    private fun organizations(person: JSONObject): JSONArray {
+        val organizations = person.optJSONArray("organizations") ?: JSONArray()
+        return JSONArray().also { array ->
+            for (i in 0 until organizations.length()) {
+                val org = organizations.optJSONObject(i) ?: continue
+                val parts = listOf(
+                    org.optString("name"),
+                    org.optString("title"),
+                    org.optString("department"),
+                ).filter { it.isNotBlank() }
+                if (parts.isNotEmpty()) {
+                    array.put(parts.joinToString(" | ").take(120))
+                }
+            }
+        }
+    }
+
+    private fun occupations(person: JSONObject): JSONArray {
+        val occupations = person.optJSONArray("occupations") ?: JSONArray()
+        return JSONArray().also { array ->
+            for (i in 0 until occupations.length()) {
+                occupations.optJSONObject(i)?.optString("value")?.takeIf { it.isNotBlank() }?.let { array.put(it.take(120)) }
+            }
+        }
+    }
+
+    private fun locations(person: JSONObject): JSONArray {
+        val locations = person.optJSONArray("locations") ?: JSONArray()
+        return JSONArray().also { array ->
+            for (i in 0 until locations.length()) {
+                val location = locations.optJSONObject(i) ?: continue
+                val value = location.optString("value").ifBlank {
+                    listOf(location.optString("city"), location.optString("region"), location.optString("country"))
+                        .filter { it.isNotBlank() }
+                        .joinToString(", ")
+                }
+                if (value.isNotBlank()) {
+                    array.put(value.take(120))
+                }
+            }
+        }
+    }
+
+    private fun relations(person: JSONObject): JSONArray {
+        val relations = person.optJSONArray("relations") ?: JSONArray()
+        return JSONArray().also { array ->
+            for (i in 0 until relations.length()) {
+                val relation = relations.optJSONObject(i) ?: continue
+                val personName = relation.optString("person")
+                val type = relation.optString("type").ifBlank { relation.optString("formattedType") }
+                val label = listOf(personName, type).filter { it.isNotBlank() }.joinToString(" | ")
+                if (label.isNotBlank()) {
+                    array.put(label.take(120))
+                }
+            }
+        }
+    }
+
+    private fun biographies(person: JSONObject): JSONArray {
+        val biographies = person.optJSONArray("biographies") ?: JSONArray()
+        return JSONArray().also { array ->
+            for (i in 0 until biographies.length()) {
+                biographies.optJSONObject(i)?.optString("value")?.takeIf { it.isNotBlank() }?.let { array.put(it.take(220)) }
+            }
+        }
     }
 
     private data class ContactSummary(
@@ -230,6 +391,8 @@ class GooglePeopleApiTools(
 
     private companion object {
         private const val API_BASE = "https://people.googleapis.com/v1"
+        private const val OAUTH_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+        private const val PEOPLE_ME_FIELDS = "names,emailAddresses,photos,locales,organizations,occupations,locations,relations,biographies"
         private const val PAGE_SIZE = 500
         private const val MAX_RESULTS = 30
         private const val MAX_FETCHED_CONTACTS = 2_000
@@ -237,6 +400,12 @@ class GooglePeopleApiTools(
         private const val SCORE_CONFIDENT = 65
         private const val SCORE_AMBIGUITY_WINDOW = 15
         private val EMAIL_REGEX = Regex("""[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}""", RegexOption.IGNORE_CASE)
+    }
+}
+
+private fun JSONObject.putIfBlank(name: String, value: String) {
+    if (optString(name).isBlank() && value.isNotBlank()) {
+        put(name, value)
     }
 }
 

@@ -114,3 +114,22 @@ Optional Google Maps API key:
 - pays for Maps Platform web-service calls
 - is pasted by each user only if they want richer Maps behavior
 - should be restricted to the Maps APIs listed above
+
+## Billy profile and memory
+
+Billy does not inherit the user's consumer Gemini app memories or Gemini
+Connected Apps context from the Gemini API key.
+
+Billy Companion has its own local profile/memory store:
+
+- `Load Google profile` uses Google OAuth identity/profile data and People API
+  fields where available.
+- `Add memory` stores a durable local fact or preference.
+- Watch requests such as "remember that my dog is named Scout" can store a
+  Billy memory.
+- Watch requests such as "forget my dog memory" can remove matching Billy
+  memories.
+
+The companionless PBW path has a manual `Billy profile context` Clay setting
+and local remember/forget tools backed by that setting. It cannot read Google
+profile data without the Android companion.
