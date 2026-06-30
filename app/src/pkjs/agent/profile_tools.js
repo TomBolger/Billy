@@ -66,7 +66,8 @@ exports.getDeclarations = function() {
         {
             type: 'function',
             name: 'get_billy_user_profile',
-            description: 'Read Billy companionless local profile/memory notes. Use when the user asks what Billy knows or remembers about them.'
+            description: 'Read Billy companionless local profile/memory notes. Use when the user asks what Billy knows or remembers about them.',
+            parameters: schema({}, [])
         },
         {
             type: 'function',

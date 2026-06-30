@@ -20,7 +20,7 @@ var watchTools = require('./watch_tools');
 
 var COMPANION_SEEN_KEY = 'androidCompanionSeenAt';
 var COMPANION_RECENT_MS = 15000;
-var AUTOMATIC_COMPANION_WAIT_MS = 1200;
+var AUTOMATIC_COMPANION_WAIT_MS = 5000;
 
 function isAndroidCompanionAvailable() {
     var seenAt = parseInt(localStorage.getItem(COMPANION_SEEN_KEY), 10);

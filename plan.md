@@ -671,3 +671,12 @@ Status on 2026-06-29, automatic profile identity hydration:
 - The automatic path uses only the lightweight OAuth userinfo profile to keep
   latency low; the manual `Load Google profile` button remains available for
   deeper People API enrichment.
+
+Status on 2026-06-29, companionless schema/runtime fix:
+
+- Fixed Gemini companionless tool schema failures by normalizing missing
+  function parameters to an empty object schema and adding explicit empty
+  schemas to zero-argument profile/alarm/timer/reminder tools.
+- Increased automatic-mode Android companion wait from 1.2s to 5s so cold
+  companion wakeups are less likely to race with companionless fallback and
+  produce duplicate error/answer messages.

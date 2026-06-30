@@ -76,7 +76,8 @@ exports.getDeclarations = function() {
         {
             type: 'function',
             name: 'get_alarms',
-            description: 'Get any existing alarms.'
+            description: 'Get any existing alarms.',
+            parameters: schema({}, [])
         },
         {
             type: 'function',
@@ -98,7 +99,8 @@ exports.getDeclarations = function() {
         {
             type: 'function',
             name: 'get_timers',
-            description: 'Get any existing timers.'
+            description: 'Get any existing timers.',
+            parameters: schema({}, [])
         },
         {
             type: 'function',
@@ -121,7 +123,8 @@ exports.getDeclarations = function() {
         {
             type: 'function',
             name: 'get_reminders',
-            description: 'Get a list of all active reminders.'
+            description: 'Get a list of all active reminders.',
+            parameters: schema({}, [])
         },
         {
             type: 'function',

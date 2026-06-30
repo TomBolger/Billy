@@ -223,7 +223,7 @@ function buildGenerateContentTools(options) {
                 declarations.push({
                     name: tool.name,
                     description: tool.description,
-                    parameters: tool.parameters
+                    parameters: normalizeFunctionParameters(tool.parameters)
                 });
             }
         });
@@ -232,6 +232,28 @@ function buildGenerateContentTools(options) {
         }
     }
     return tools;
+}
+
+function normalizeFunctionParameters(parameters) {
+    if (parameters && typeof parameters === 'object' && !Array.isArray(parameters)) {
+        return parameters;
+    }
+    return {
+        type: 'object',
+        properties: {}
+    };
+}
+
+function normalizeInteractionTool(tool) {
+    if (!tool || tool.type !== 'function') {
+        return tool;
+    }
+    var normalized = {};
+    Object.keys(tool).forEach(function(key) {
+        normalized[key] = tool[key];
+    });
+    normalized.parameters = normalizeFunctionParameters(normalized.parameters);
+    return normalized;
 }
 
 function extractFunctionCalls(response) {
@@ -322,7 +344,7 @@ function generateInteractionsWithInput(apiKey, model, interactionInput, options,
     }
 
     if (options.tools) {
-        body.tools = body.tools.concat(options.tools);
+        body.tools = body.tools.concat(options.tools.map(normalizeInteractionTool));
     }
 
     if (body.tools.length === 0) {
