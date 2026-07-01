@@ -83,9 +83,15 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
             }
             when (result) {
                 is CompanionAgentResult.Passed -> {
+                    if (result.clarificationCard != null) {
+                        result.watchImage?.let { image -> sender.sendWatchImage(image, watch) }
+                        result.watchWeatherCurrent?.let { weather -> sender.sendWeatherCurrent(weather, watch) }
+                        sender.sendClarificationCard(result.clarificationCard, watch)
+                        sender.sendDone(watch)
+                        return ReceiveResult.Ack
+                    }
                     result.watchImage?.let { image -> sender.sendWatchImage(image, watch) }
                     result.watchWeatherCurrent?.let { weather -> sender.sendWeatherCurrent(weather, watch) }
-                    result.clarificationCard?.let { card -> sender.sendClarificationCard(card, watch) }
                     if (result.text.isNotBlank()) {
                         sender.sendChunks(result.text, watch)
                     }

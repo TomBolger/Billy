@@ -253,21 +253,37 @@ class GeminiClient {
             .distinct()
             .take(3)
             .toList()
+        val options = when {
+            optionLines.size >= 2 -> optionLines
+            question.lowercase().contains("direction") ||
+                question.lowercase().contains("navigate") ||
+                question.lowercase().contains("map") -> listOf("Directions", "Not now")
+            question.lowercase().startsWith("do ") ||
+                question.lowercase().startsWith("would ") ||
+                question.lowercase().startsWith("should ") ||
+                question.lowercase().startsWith("can ") -> listOf("Yes", "No")
+            else -> optionLines
+        }
         return ClarificationCard(
             question = question,
             context = prompt.trim().take(180),
-            options = optionLines.takeIf { it.size >= 2 }.orEmpty(),
+            options = options,
         )
     }
 
     private fun extractUserFacingQuestion(text: String): String? {
-        val questionLine = text
-            .lineSequence()
-            .map { it.trim() }
-            .filter { it.contains("?") }
-            .lastOrNull()
+        val lines = text.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
+        val questionLine = lines.filter { it.contains("?") }.lastOrNull()
+            ?: lines.lastOrNull { line ->
+                Regex("""\b(do you want|would you like|want me to|should i|can i|need directions|ask for directions)\b""", RegexOption.IGNORE_CASE)
+                    .containsMatchIn(line)
+            }
             ?: return null
-        val question = questionLine.substringBeforeLast("?").trim().plus("?").take(120)
+        val question = if (questionLine.contains("?")) {
+            questionLine.substringBeforeLast("?").trim().plus("?")
+        } else {
+            questionLine.trim().trimEnd('.', ':').plus("?")
+        }.take(120)
         val lower = question.lowercase()
         val directQuestion = listOf(
             "which ",
@@ -756,7 +772,7 @@ class GeminiClient {
                 "When the request is ambiguous and a wrong guess could create, change, delete, message, navigate, spend time, or use private data incorrectly, call ask_clarifying_question instead of guessing. Prefer clarification for missing event time, calendar/account, reminder date, contact/person, destination, app/service, or which private result the user means. Do not ask if a safe default is obvious. Do not offer notes as a clarification option unless the user explicitly asks for Keep or notes. " +
                 "For weather, local forecast, umbrella, temperature, wind, or weather-card requests, call get_weather; do not claim Billy lacks local weather data unless the tool says location permission is missing. Translate numbers into plain human guidance. For Calendar and Tasks, list useful names and times, not just counts. For photo analysis, mention concrete visible details. " +
                 "Silently correct likely dictation errors. " +
-                "For open-web image requests, use show_web_image_search; do not search Drive unless the user asks for their Drive files. For nearest, nearby, near me, closest, local, or around me place requests, call find_nearby_google_places first. Use included_type when clear, such as train_station for train/Amtrak stations, transit_station for transit stops, airport for airports, restaurant for restaurants, cafe for coffee, gas_station for gas, pharmacy for pharmacies, and hotel for hotels. Before any Maps tool call, infer the user's intended travel mode semantically and pass the canonical travel_mode enum: DRIVE, WALK, BICYCLE, TRANSIT, or TWO_WHEELER. Do not omit travel_mode when the user implies a non-driving mode. For navigation to a nearby place, pass the selected nearby result label/name/address and travel_mode to open_maps_directions, then pass the same result name/address, destination_latitude, destination_longitude, and travel_mode to show_map_directions; do not geocode a selected result when coordinates are already available. For a specific destination navigation request, call open_maps_directions with the user's destination text and travel_mode first, then call show_map_directions with the same travel_mode and the destination coordinates if known or destination text if not. For route summaries, travel-time questions, or how-to-get-there reasoning, call get_google_route with the same travel_mode. For map-card-only or preview-map requests, call show_map_directions and do not open phone navigation. `show_map_directions` can create an OpenStreetMap card when no Maps key is configured. Google Maps Platform tools such as nearby search, routes, geocoding, and time-zone lookup require a Maps key; if one of those returns needs_api_key, say that briefly instead of pretending. If a Maps key is configured and a Google Maps Platform call fails, report the failure instead of substituting OpenStreetMap. " +
+                "For open-web image requests, use show_web_image_search; do not search Drive unless the user asks for their Drive files. For nearest, nearby, near me, closest, local, or around me place requests, call find_nearby_google_places first. For requests near home, my house, work, a hotel, an address, or another origin that is not the phone's current location, use find_google_places_near_address with the saved/profile origin text; if no concrete origin is available, ask one picker question for current location or dictated address. For simple place discovery such as 'coffee shop near my house', find places first; do not ask travel mode until the user asks for directions, navigation, route, travel time, or a map preview. Use included_type when clear, such as train_station for train/Amtrak stations, transit_station for transit stops, airport for airports, restaurant for restaurants, cafe for coffee, gas_station for gas, pharmacy for pharmacies, and hotel for hotels. Before any Maps route, directions, or navigation tool call, infer the user's intended travel mode semantically and pass the canonical travel_mode enum: DRIVE, WALK, BICYCLE, TRANSIT, or TWO_WHEELER. Do not omit travel_mode when the user implies a non-driving mode. For navigation to a nearby place, pass the selected nearby result label/name/address and travel_mode to open_maps_directions, then pass the same result name/address, destination_latitude, destination_longitude, and travel_mode to show_map_directions; do not geocode a selected result when coordinates are already available. For a specific destination navigation request, call open_maps_directions with the user's destination text and travel_mode first, then call show_map_directions with the same travel_mode and the destination coordinates if known or destination text if not. For route summaries, travel-time questions, or how-to-get-there reasoning, call get_google_route with the same travel_mode. For map-card-only or preview-map requests, call show_map_directions and do not open phone navigation. `show_map_directions` can create an OpenStreetMap card when no Maps key is configured. Google Maps Platform tools such as nearby search, routes, geocoding, and time-zone lookup require a Maps key; if one of those returns needs_api_key, say that briefly instead of pretending. If a Maps key is configured and a Google Maps Platform call fails, report the failure instead of substituting OpenStreetMap. " +
                 "Use the provided companion tools for private phone or Google-synced data when relevant. " +
                 "Calendar reads should prefer Google Calendar API results when available; Android Calendar Provider is fallback and may contain local ghosts. For calendar creation, call create_calendar_event with title/start/end. If the user names a calendar in words such as personal, primary, work, family, or an account email, pass that phrase as calendar_hint; do not list calendars first. If the destination calendar is unclear, omit calendar_id and calendar_hint so the tool can ask with a picker. Set create_meet_link=true when the user asks for a meeting link, video call, Google Meet, or conference call. For availability, free/busy, or scheduling options, use query_calendar_freebusy or find_calendar_availability before answering. Do not answer a create-event request by merely listing calendars. If the user asks to remove Billy/Bobby ghost calendar events, use delete_billy_calendar_ghosts. Photo tools access local/selected Android photos when permission is granted. For photo requests with dates like yesterday, Tuesday, last week, last month, or this day last year, pass both taken_after_millis and taken_before_millis as a closed local-time range; never represent a day/week/month request with only a lower bound. Use media_type=photo for camera-roll photos and screenshot only when explicitly requested. " +
                 "For explicit Google Photos, Google Photos API, Photos Library, cloud/account photos, or Photos Picker requests, use search_google_photos_library or show_google_photos_picker_selection instead of local camera-roll tools. If using Google Photos Library categories, pass explicit supported category names in content_categories. Be honest: the current Google Photos Library API is generally app-created-only and cannot perform full consumer Google Photos semantic/person/place search; the Picker API only exposes photos the user selected in Google Photos. " +

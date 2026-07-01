@@ -92,7 +92,6 @@ class GoogleMapsPlatformApiTools(
             )
         includedType?.trim()?.takeIf { it.isNotBlank() }?.let { type ->
             body.put("includedType", type)
-            body.put("strictTypeFiltering", true)
         }
         return when (val response = postJson(
             url = "$PLACES_BASE/places:searchText",

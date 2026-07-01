@@ -688,3 +688,22 @@ Status on 2026-07-01, watch AppMessage send retry:
 - Conversation prompt sends now retry internally before surfacing an error.
 - Prompt outbox failure callbacks now retry the prompt instead of immediately
   adding a visible chat error.
+
+Status on 2026-07-01, maps home-search and picker correction:
+
+- Fixed the coffee-shop-near-home failure mode by making home-based place
+  searches require a concrete saved/dictated home location. If Billy only has a
+  vague profile location, it asks whether to use current location or a dictated
+  address instead of pretending it knows the user's home.
+- Added `find_google_places_near_address` so Gemini can search places near a
+  home, work, hotel, or other explicit origin without misusing current-location
+  tools.
+- Tuned the Maps prompt so simple place discovery finds places first. It should
+  not ask walk/drive/bike until the user asks for directions, navigation, route,
+  travel time, or map preview.
+- Stopped sending text underneath clarification cards. When a picker card is
+  present, the Android bridge now sends the card and ends that turn.
+- Hardened final-answer question detection so yes/no and navigation follow-up
+  questions become picker cards instead of plain bullet text.
+- Relaxed Places type filtering to avoid false empty results when Google labels
+  a nearby business with a neighboring category.

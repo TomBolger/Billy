@@ -28,6 +28,22 @@ class GoogleMapsCompanionTool(
                 ),
             ),
         JSONObject()
+            .put("name", "find_google_places_near_address")
+            .put("description", "Find places near a specific origin address, saved home/work address, named area, or geocoded place. Use this for requests near the user's home, house, work, hotel, an address, or any origin that is not the phone's current location.")
+            .put(
+                "parameters",
+                objectSchema(
+                    required = listOf("origin_query", "query"),
+                    properties = mapOf(
+                        "origin_query" to stringSchema("Origin address, saved home/work location text, hotel, city area, landmark, or coordinates to search around."),
+                        "query" to stringSchema("Place category or search text, such as coffee, cafe, restaurant, pizza, pharmacy, grocery store, or gas station."),
+                        "included_type" to stringSchema("Optional Places type when known. Examples: cafe, restaurant, train_station, transit_station, pharmacy, grocery_store."),
+                        "radius_meters" to numberSchema("Optional search radius around origin. Defaults to 5000 and cannot exceed 50000."),
+                        "max_results" to integerSchema("Maximum number of places to return. Defaults to 5."),
+                    ),
+                ),
+            ),
+        JSONObject()
             .put("name", "search_google_places")
             .put("description", "Search Google Maps Places by text when the user supplied an explicit city, address, or named area. Do not use for nearest, nearby, near me, closest, local, or around me requests; use find_nearby_google_places for those. Requires a Google Maps API key in Billy Companion.")
             .put(
@@ -87,6 +103,7 @@ class GoogleMapsCompanionTool(
     override fun execute(name: String, args: JSONObject): CompanionToolExecution? {
         return when (name) {
             "find_nearby_google_places" -> findNearbyPlaces(args)
+            "find_google_places_near_address" -> findPlacesNearAddress(args)
             "search_google_places" -> mapsApiTools.searchPlaces(
                 query = args.optString("query"),
                 maxResults = args.optionalInt("max_results") ?: 5,
@@ -146,6 +163,41 @@ class GoogleMapsCompanionTool(
             originLongitude = location.longitude,
             destination = destination,
             travelMode = travelMode,
+        ).toExecution(finalOnSuccess = false)
+    }
+
+    private fun findPlacesNearAddress(args: JSONObject): CompanionToolExecution {
+        val originQuery = args.optString("origin_query").trim()
+        if (originQuery.isBlank()) {
+            return CompanionToolExecution(
+                response = JSONObject()
+                    .put("status", "rejected")
+                    .put("summary", "Origin address is required for this Maps search."),
+                finalText = "I need the address or place to search around.",
+            )
+        }
+        val geocodeResult = mapsApiTools.geocodeAddress(originQuery, maxResults = 1)
+        val geocodeResponse = geocodeResult.toJson()
+        if (geocodeResponse.optString("status") != "ok") {
+            return CompanionToolExecution(
+                response = geocodeResponse,
+                finalText = mapsWatchSummary(geocodeResponse, geocodeResult.summary),
+            )
+        }
+        val origin = geocodeResponse.optJSONArray("results")?.optJSONObject(0)
+            ?: return CompanionToolExecution(
+                response = JSONObject()
+                    .put("status", "not_found")
+                    .put("summary", "No Google Maps result found for $originQuery."),
+                finalText = "No Google Maps result found for that origin.",
+            )
+        return mapsApiTools.findNearbyPlaces(
+            query = args.optString("query"),
+            latitude = origin.optDouble("latitude"),
+            longitude = origin.optDouble("longitude"),
+            radiusMeters = args.optionalDouble("radius_meters") ?: 5_000.0,
+            maxResults = args.optionalInt("max_results") ?: 5,
+            includedType = args.optString("included_type"),
         ).toExecution(finalOnSuccess = false)
     }
 }

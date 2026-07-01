@@ -120,6 +120,17 @@ class BillyUserProfileStore(context: Context) {
         }.trim().take(MAX_PROMPT_CONTEXT_LENGTH)
     }
 
+    fun homeLocationHint(): String? {
+        val profile = load()
+        val candidates = profile.locations +
+            profile.memories.map { it.fact } +
+            profile.biographies
+        return candidates
+            .map { it.memoryClean() }
+            .firstOrNull { it.looksLikeConcreteHomeLocation() }
+            ?.take(180)
+    }
+
     companion object {
         private const val PREFERENCES_NAME = "billy_user_profile"
         private const val KEY_PROFILE = "profile_json"
@@ -246,6 +257,15 @@ private fun String.memoryClean(): String {
     return replace(Regex("[\\r\\n]+"), " ")
         .replace(Regex("\\s+"), " ")
         .trim()
+}
+
+private fun String.looksLikeConcreteHomeLocation(): Boolean {
+    val lower = lowercase()
+    val hasHomeWord = Regex("""\b(home|house|address|live|living|place)\b""").containsMatchIn(lower)
+    val hasStreetNumber = Regex("""\b\d{1,6}\b""").containsMatchIn(lower)
+    val hasAddressWord = Regex("""\b(st|street|ave|avenue|rd|road|dr|drive|ln|lane|way|blvd|boulevard|ct|court|pl|place|apt|apartment|unit)\b""").containsMatchIn(lower)
+    val hasCoordinate = Regex("""-?\d{1,3}\.\d{3,}\s*,\s*-?\d{1,3}\.\d{3,}""").containsMatchIn(lower)
+    return hasCoordinate || (hasHomeWord && hasStreetNumber && hasAddressWord)
 }
 
 private fun JSONObject.stringArray(name: String): List<String> {

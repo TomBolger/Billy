@@ -123,6 +123,7 @@ class CompanionAgent(
         activePrompt = prompt
         directClarificationAnswer(prompt)?.let { return rememberTurn(prompt, it) }
         hydrateGoogleProfileIfAvailable()
+        homeLocationClarification(prompt)?.let { return rememberTurn(prompt, it) }
 
         val contextualPrompt = buildContextualPrompt(prompt)
         val result = geminiClient.generateWithTools(
@@ -179,6 +180,18 @@ class CompanionAgent(
         val context = fields["context"].orEmpty()
         val answer = fields["answer"].orEmpty().substringBefore('|').trim()
         val question = fields["question"].orEmpty()
+        if (context.startsWith("maps_home_location_missing")) {
+            if (answer.equals("cancel", ignoreCase = true)) {
+                return CompanionAgentResult.Passed("Canceled.")
+            }
+            val original = context.substringAfter("original=", "").ifBlank { activePrompt }
+            val continuation = if (answer.equals("current location", ignoreCase = true)) {
+                "Resolved Maps origin: use the Android phone's current location. Original request: $original"
+            } else {
+                "Resolved Maps origin: use this dictated address or area: $answer. Original request: $original"
+            }
+            return answer(continuation)
+        }
         if (context.startsWith("calendar_create_token=")) {
             val token = context.substringAfter("calendar_create_token=").trim()
             val resolution = PendingCalendarClarifications.resolveCreate(token, answer)
@@ -390,6 +403,23 @@ class CompanionAgent(
             threadId = threadId,
         )
     }
+
+    private fun homeLocationClarification(prompt: String): CompanionAgentResult? {
+        if (!prompt.needsConcreteHomeForMaps()) {
+            return null
+        }
+        if (userProfileStore.homeLocationHint() != null) {
+            return null
+        }
+        return CompanionAgentResult.Passed(
+            text = "",
+            clarificationCard = ClarificationCard(
+                question = "I don't have your home address. Search where?",
+                context = "maps_home_location_missing original=${prompt.take(120)}",
+                options = listOf("Current location", "Cancel"),
+            ),
+        )
+    }
 }
 
 private fun JSONObject.toPhotoDateRange(): PhotoDateRange? {
@@ -412,6 +442,22 @@ private fun JSONObject.optionalPositiveLong(name: String): Long? {
         is String -> value.trim().toLongOrNull()
         else -> null
     }?.takeIf { it > 0L }
+}
+
+private fun String.needsConcreteHomeForMaps(): Boolean {
+    val lower = lowercase()
+    if (lower.startsWith("resolved maps origin:")) {
+        return false
+    }
+    val mentionsHome = Regex("""\b(my\s+)?(home|house|place)\b""").containsMatchIn(lower)
+    if (!mentionsHome) {
+        return false
+    }
+    val placeIntent = Regex(
+        """\b(coffee|cafe|restaurant|pizza|shop|store|bar|pharmacy|grocery|gas|station|airport|hotel|map|maps|navigate|directions?|route|near|nearby|closest|around|walk|drive|bike|transit)\b""",
+    ).containsMatchIn(lower)
+    val homeScreen = Regex("""\bhome screen\b""").containsMatchIn(lower)
+    return placeIntent && !homeScreen
 }
 
 sealed interface CompanionAgentResult {
