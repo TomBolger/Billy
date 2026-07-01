@@ -48,12 +48,19 @@
 struct ConversationManager {
   Conversation* conversation;
   EventHandle app_message_handle;
+  AppTimer* pending_input_timer;
+  char* pending_input;
+  int pending_input_attempts;
   void* context;
   ConversationManagerUpdateHandler handler;
   ConversationManagerEntryDeletedHandler deletion_handler;
 };
 
 static void prv_conversation_updated(ConversationManager* manager, bool new_entry);
+static bool prv_send_input(ConversationManager* manager, const char* input);
+static void prv_schedule_input_retry(ConversationManager* manager, const char* input);
+static void prv_retry_pending_input(void *context);
+static void prv_clear_pending_input(ConversationManager* manager);
 static void prv_handle_app_message_outbox_sent(DictionaryIterator *iterator, void *context);
 static void prv_handle_app_message_outbox_failed(DictionaryIterator *iterator, AppMessageResult reason, void *context);
 static void prv_handle_app_message_inbox_received(DictionaryIterator *iterator, void *context);
@@ -69,6 +76,9 @@ static bool prv_handle_memory_pressure(void *context);
 
 static ConversationManager* s_conversation_manager;
 
+#define INPUT_SEND_RETRY_DELAY_MS 450
+#define INPUT_SEND_MAX_ATTEMPTS 5
+
 void conversation_manager_init() {
   events_app_message_request_outbox_size(1024);
   events_app_message_request_inbox_size(1024);
@@ -78,6 +88,9 @@ ConversationManager* conversation_manager_create() {
   ConversationManager* manager = bmalloc(sizeof(ConversationManager));
   manager->conversation = conversation_create();
   manager->handler = NULL;
+  manager->pending_input_timer = NULL;
+  manager->pending_input = NULL;
+  manager->pending_input_attempts = 0;
   manager->app_message_handle = events_app_message_subscribe_handlers((EventAppMessageHandlers){
       .sent = prv_handle_app_message_outbox_sent,
       .failed = prv_handle_app_message_outbox_failed,
@@ -91,6 +104,7 @@ ConversationManager* conversation_manager_create() {
 }
 
 void conversation_manager_destroy(ConversationManager* manager) {
+  prv_clear_pending_input(manager);
   conversation_destroy(manager->conversation);
   events_app_message_unsubscribe(manager->app_message_handle);
   if (s_conversation_manager == manager) {
@@ -121,15 +135,20 @@ void conversation_manager_add_input(ConversationManager* manager, const char* in
 }
 
 void conversation_manager_add_input_with_display(ConversationManager* manager, const char* input, const char* display_text) {
-  DictionaryIterator *iter;
-  AppMessageResult result = app_message_outbox_begin(&iter);
   conversation_add_prompt(manager->conversation, display_text ? display_text : input);
   prv_conversation_updated(manager, true);
+
+  if (!prv_send_input(manager, input)) {
+    prv_schedule_input_retry(manager, input);
+  }
+}
+
+static bool prv_send_input(ConversationManager* manager, const char* input) {
+  DictionaryIterator *iter;
+  AppMessageResult result = app_message_outbox_begin(&iter);
   if (result != APP_MSG_OK) {
     BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Preparing outbox failed: %d.", result);
-    conversation_add_error(manager->conversation, "Sending to service failed.");
-    prv_conversation_updated(manager, true);
-    return;
+    return false;
   }
 
   // The Android Pebble app has a fun bug where any double-quotes in a
@@ -152,10 +171,56 @@ void conversation_manager_add_input_with_display(ConversationManager* manager, c
   result = app_message_outbox_send();
   if (result != APP_MSG_OK) {
     BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Sending message failed: %d.", result);
-    conversation_add_error(manager->conversation, "Sending to service failed.");
-    prv_conversation_updated(manager, true);
+    return false;
+  }
+  return true;
+}
+
+static void prv_clear_pending_input(ConversationManager* manager) {
+  if (manager->pending_input_timer) {
+    app_timer_cancel(manager->pending_input_timer);
+    manager->pending_input_timer = NULL;
+  }
+  if (manager->pending_input) {
+    free(manager->pending_input);
+    manager->pending_input = NULL;
+  }
+  manager->pending_input_attempts = 0;
+}
+
+static void prv_schedule_input_retry(ConversationManager* manager, const char* input) {
+  if (!manager || !input || input[0] == 0) {
     return;
   }
+  if (!manager->pending_input) {
+    manager->pending_input = bmalloc(strlen(input) + 1);
+    strcpy(manager->pending_input, input);
+    manager->pending_input_attempts = 0;
+  }
+  if (manager->pending_input_timer) {
+    app_timer_cancel(manager->pending_input_timer);
+  }
+  manager->pending_input_timer = app_timer_register(INPUT_SEND_RETRY_DELAY_MS, prv_retry_pending_input, manager);
+}
+
+static void prv_retry_pending_input(void *context) {
+  ConversationManager* manager = context;
+  manager->pending_input_timer = NULL;
+  if (!manager->pending_input) {
+    return;
+  }
+  manager->pending_input_attempts++;
+  if (prv_send_input(manager, manager->pending_input)) {
+    prv_clear_pending_input(manager);
+    return;
+  }
+  if (manager->pending_input_attempts < INPUT_SEND_MAX_ATTEMPTS) {
+    manager->pending_input_timer = app_timer_register(INPUT_SEND_RETRY_DELAY_MS, prv_retry_pending_input, manager);
+    return;
+  }
+  conversation_add_error(manager->conversation, "Sending to service failed.");
+  prv_conversation_updated(manager, true);
+  prv_clear_pending_input(manager);
 }
 
 void conversation_manager_add_action(ConversationManager* manager, ConversationAction* action) {
@@ -177,6 +242,11 @@ static void prv_handle_app_message_outbox_sent(DictionaryIterator *iterator, voi
 static void prv_handle_app_message_outbox_failed(DictionaryIterator *iterator, AppMessageResult reason, void *context) {
   BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Sending message failed: %d", reason);
   ConversationManager* manager = context;
+  Tuple *prompt_tuple = dict_find(iterator, MESSAGE_KEY_PROMPT);
+  if (prompt_tuple && prompt_tuple->length > 1) {
+    prv_schedule_input_retry(manager, prompt_tuple->value->cstring);
+    return;
+  }
   conversation_add_error(manager->conversation, "Sending to service failed.");
   prv_conversation_updated(manager, true);
 }

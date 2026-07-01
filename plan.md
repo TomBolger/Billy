@@ -680,3 +680,11 @@ Status on 2026-06-29, companionless schema/runtime fix:
 - Increased automatic-mode Android companion wait from 1.2s to 5s so cold
   companion wakeups are less likely to race with companionless fallback and
   produce duplicate error/answer messages.
+
+Status on 2026-07-01, watch AppMessage send retry:
+
+- Fixed first-attempt `Sending to service failed` errors when a prompt launches
+  the watch chat from the phone and the Pebble AppMessage outbox is still busy.
+- Conversation prompt sends now retry internally before surfacing an error.
+- Prompt outbox failure callbacks now retry the prompt instead of immediately
+  adding a visible chat error.
