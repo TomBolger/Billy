@@ -793,3 +793,14 @@ Status on 2026-07-02, picker option label limits:
   original generic option labels in the pending clarification record so the
   selected short label can resolve back to the full intended answer.
 - Android companion version code `60` identifies this cleanup build.
+
+Status on 2026-07-02, follow-up picker label regression:
+
+- Follow-up/action picker cards could still bypass the generic shortening path,
+  so a second picker could show long labels ending in ellipses on Pebble 2.
+- The Android Pebble sender now clamps every outgoing picker option using the
+  connected watch platform budget, regardless of which tool produced the card.
+- Generic clarification cards keep their original labels internally, and action
+  token resolvers now accept shortened platform labels so compact display text
+  still resolves to the stored calendar/contact/task object.
+- Android companion version code `61` identifies this follow-up fix.

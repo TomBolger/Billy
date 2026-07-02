@@ -35,7 +35,7 @@ class ClarificationCompanionTool(
             if (array != null) {
                 for (i in 0 until minOf(array.length(), 3)) {
                     array.optString(i).trim().takeIf { it.isNotBlank() }?.let {
-                        add(it.shortPickerLabel(optionLabelMaxChars))
+                        add(it.take(120))
                     }
                 }
             }
@@ -63,4 +63,14 @@ internal fun String.shortPickerLabel(maxChars: Int): String {
         return visible.take(safeMax)
     }
     return visible.take(safeMax - 3).trimEnd() + "..."
+}
+
+internal fun String.matchesPickerAnswer(answer: String): Boolean {
+    val cleanAnswer = answer.substringBefore("|").trim()
+    if (equals(cleanAnswer, ignoreCase = true)) {
+        return true
+    }
+    return listOf(18, 20, 28, 34, 64).any { maxChars ->
+        shortPickerLabel(maxChars).equals(cleanAnswer, ignoreCase = true)
+    }
 }

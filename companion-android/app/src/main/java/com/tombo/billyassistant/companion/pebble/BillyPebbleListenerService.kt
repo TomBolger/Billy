@@ -7,6 +7,7 @@ import com.tombo.billyassistant.companion.agent.tools.ClarificationCard
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
 import com.tombo.billyassistant.companion.agent.tools.WatchMediaSpec
+import com.tombo.billyassistant.companion.agent.tools.shortPickerLabel
 import io.rebble.pebblekit2.client.BasePebbleListenerService
 import io.rebble.pebblekit2.client.DefaultPebbleSender
 import io.rebble.pebblekit2.common.model.PebbleDictionary
@@ -87,7 +88,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
                     if (result.clarificationCard != null) {
                         result.watchImage?.let { image -> sender.sendWatchImage(image, watch) }
                         result.watchWeatherCurrent?.let { weather -> sender.sendWeatherCurrent(weather, watch) }
-                        sender.sendClarificationCard(result.clarificationCard, watch)
+                        sender.sendClarificationCard(result.clarificationCard, watch, watchMediaSpec.pickerOptionChars)
                         sender.sendDone(watch)
                         return ReceiveResult.Ack
                     }
@@ -144,7 +145,11 @@ private fun PebbleDictionary.intValue(key: UInt): Int? {
     }
 }
 
-private suspend fun DefaultPebbleSender.sendClarificationCard(card: ClarificationCard, watch: WatchIdentifier) {
+private suspend fun DefaultPebbleSender.sendClarificationCard(
+    card: ClarificationCard,
+    watch: WatchIdentifier,
+    optionMaxChars: Int,
+) {
     val baseOptions = card.options
         .filterNot { it.equals(CLARIFICATION_DICTATE_OPTION, ignoreCase = true) }
         .take(3)
@@ -152,6 +157,12 @@ private suspend fun DefaultPebbleSender.sendClarificationCard(card: Clarificatio
         listOf(CLARIFICATION_DICTATE_OPTION)
     } else {
         baseOptions + CLARIFICATION_DICTATE_OPTION
+    }.map { option ->
+        if (option.equals(CLARIFICATION_DICTATE_OPTION, ignoreCase = true)) {
+            CLARIFICATION_DICTATE_OPTION
+        } else {
+            option.shortPickerLabel(optionMaxChars)
+        }
     }
     val payload = mutableMapOf<UInt, PebbleDictionaryItem>(
         BillyPebbleProtocol.CLARIFY_WIDGET to PebbleDictionaryItem.Int32(1),

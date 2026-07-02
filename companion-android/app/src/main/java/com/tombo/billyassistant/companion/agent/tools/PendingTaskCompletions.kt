@@ -26,7 +26,7 @@ object PendingTaskCompletions {
         }
         val cleanAnswer = answer.substringBefore('|').trim()
         return options.firstOrNull { option ->
-            option.title.equals(cleanAnswer, ignoreCase = true)
+            option.title.matchesPickerAnswer(cleanAnswer)
         } ?: options.firstOrNull { option ->
             cleanAnswer.contains(option.title, ignoreCase = true) ||
                 option.title.contains(cleanAnswer, ignoreCase = true)

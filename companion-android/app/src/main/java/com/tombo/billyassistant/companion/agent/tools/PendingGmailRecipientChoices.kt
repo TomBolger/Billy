@@ -16,7 +16,8 @@ object PendingGmailRecipientChoices {
         val choice = pending.remove(token) ?: return null
         val normalized = answer.trim()
         val option = choice.options.firstOrNull { option ->
-            option.label.equals(normalized, ignoreCase = true) ||
+            option.label.matchesPickerAnswer(normalized) ||
+                option.displayName.matchesPickerAnswer(normalized) ||
                 option.email.equals(normalized, ignoreCase = true) ||
                 normalized.contains(option.email, ignoreCase = true)
         } ?: return null

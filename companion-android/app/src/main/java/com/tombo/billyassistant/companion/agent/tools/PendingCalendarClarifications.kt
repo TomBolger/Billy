@@ -16,8 +16,8 @@ object PendingCalendarClarifications {
         val request = pendingCreates.remove(token) ?: return null
         val normalizedAnswer = answer.trim()
         val option = request.options.firstOrNull { option ->
-            option.label.equals(normalizedAnswer, ignoreCase = true) ||
-                option.display.equals(normalizedAnswer, ignoreCase = true) ||
+            option.label.matchesPickerAnswer(normalizedAnswer) ||
+                option.display.matchesPickerAnswer(normalizedAnswer) ||
                 normalizedAnswer.startsWith("${option.index}.", ignoreCase = true) ||
                 normalizedAnswer.equals(option.index.toString(), ignoreCase = true)
         } ?: return null
