@@ -63,7 +63,7 @@ function runModelLoop(session, threadId, history, iteration, progress, searchGro
             session.handleMessage({data: 'd'});
             session.handleClose({
                 code: 1000,
-                reason: 'Local assistant request failed.',
+                reason: '',
                 wasClean: true
             });
             return;

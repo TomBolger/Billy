@@ -740,3 +740,24 @@ Status on 2026-07-02, Profile Pack importer and indexed retrieval:
   and relevant topic slices instead of dumping the whole profile pack into every
   Gemini request.
 - Android companion version code `57` identifies the importer build.
+
+Status on 2026-07-02, clarification chain and duplicate-runtime cleanup:
+
+- Fixed generic clarification picker chains by storing each card in the Android
+  companion with a token. The watch now sends back the token, and the companion
+  reconstructs the original request plus all prior picker answers before asking
+  Gemini to continue.
+- Action confirmation cards keep their special contexts, so Gmail send,
+  calendar choice, task completion, and home-location cards still execute their
+  dedicated handlers.
+- Clarification continuations now explicitly tell Gemini to complete
+  recommendation/advice/brainstorming requests after the collected answers
+  instead of asking another open-ended question.
+- Added retries when the watch forwards Android companion readiness back to the
+  phone JavaScript runtime. This reduces automatic-mode races where companionless
+  Gemini also starts under an active Android companion request.
+- Companionless failure handling no longer posts both a warning and a duplicate
+  close-reason error for the same failed local request.
+- Watch assistant-label logic now skips deleted/thinking entries when deciding
+  whether a new `Billy` label is needed, preventing extra labels mid-turn.
+- Android companion version code `58` identifies this cleanup build.

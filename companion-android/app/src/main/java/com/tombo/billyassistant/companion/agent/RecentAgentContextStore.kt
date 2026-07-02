@@ -1,10 +1,12 @@
 package com.tombo.billyassistant.companion.agent
 
 import android.content.Context
+import com.tombo.billyassistant.companion.agent.tools.ClarificationCard
 import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.UUID
 
 class RecentAgentContextStore(context: Context) {
     private val preferences = context.getSharedPreferences("recent_agent_context", Context.MODE_PRIVATE)
@@ -67,6 +69,44 @@ class RecentAgentContextStore(context: Context) {
             .apply()
     }
 
+    fun saveClarification(
+        originalPrompt: String,
+        card: ClarificationCard,
+        priorAnswers: List<ClarificationAnswer> = emptyList(),
+        threadId: String? = null,
+    ): PendingClarification {
+        val pending = PendingClarification(
+            token = UUID.randomUUID().toString(),
+            originalPrompt = originalPrompt.take(MAX_CLARIFICATION_TEXT_LENGTH),
+            priorContext = card.context.take(MAX_CLARIFICATION_TEXT_LENGTH),
+            question = card.question.take(MAX_CLARIFICATION_TEXT_LENGTH),
+            priorAnswers = priorAnswers.takeLast(MAX_CLARIFICATION_ANSWERS),
+            createdAtMillis = System.currentTimeMillis(),
+            threadId = threadId.orEmpty(),
+        )
+        preferences.edit()
+            .putString(key(KEY_PENDING_CLARIFICATION_PREFIX + pending.token, threadId), pending.toJson().toString())
+            .putString(KEY_PENDING_CLARIFICATION_PREFIX + pending.token, pending.toJson().toString())
+            .apply()
+        return pending
+    }
+
+    fun resolveClarification(token: String, threadId: String? = null): PendingClarification? {
+        val cleanToken = token.trim()
+        if (cleanToken.isBlank()) {
+            return null
+        }
+        val raw = preferences.getString(key(KEY_PENDING_CLARIFICATION_PREFIX + cleanToken, threadId), null)
+            ?: preferences.getString(KEY_PENDING_CLARIFICATION_PREFIX + cleanToken, null)
+            ?: return null
+        val pending = runCatching { PendingClarification.fromJson(JSONObject(raw)) }.getOrNull()
+            ?: return null
+        if (System.currentTimeMillis() - pending.createdAtMillis > CLARIFICATION_MAX_AGE_MILLIS) {
+            return null
+        }
+        return pending
+    }
+
     fun lastTurnSummary(maxAgeMillis: Long = TURN_CONTEXT_MAX_AGE_MILLIS): String? {
         val savedAt = preferences.getLong(KEY_LAST_TURN_SAVED_AT, 0L)
         if (savedAt <= 0L || System.currentTimeMillis() - savedAt > maxAgeMillis) {
@@ -114,13 +154,84 @@ class RecentAgentContextStore(context: Context) {
         private const val KEY_LAST_TURN_RESPONSE = "last_turn_response"
         private const val KEY_LAST_TURN_KIND = "last_turn_kind"
         private const val KEY_LAST_TURN_SAVED_AT = "last_turn_saved_at"
+        private const val KEY_PENDING_CLARIFICATION_PREFIX = "pending_clarification:"
         private const val KIND_WEB_IMAGE = "web_image"
         private const val KIND_PHOTO = "photo"
         private const val KIND_GENERAL = "general"
         private const val MAX_TURN_TEXT_LENGTH = 220
         private const val MAX_TURNS = 6
+        private const val MAX_CLARIFICATION_TEXT_LENGTH = 420
+        private const val MAX_CLARIFICATION_ANSWERS = 4
         private const val PHOTO_CONTEXT_MAX_AGE_MILLIS = 30L * 60L * 1000L
         private const val TURN_CONTEXT_MAX_AGE_MILLIS = 60L * 60L * 1000L
+        private const val CLARIFICATION_MAX_AGE_MILLIS = 30L * 60L * 1000L
+    }
+}
+
+data class ClarificationAnswer(
+    val question: String,
+    val answer: String,
+) {
+    fun toJson(): JSONObject {
+        return JSONObject()
+            .put("question", question)
+            .put("answer", answer)
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): ClarificationAnswer {
+            return ClarificationAnswer(
+                question = json.optString("question"),
+                answer = json.optString("answer"),
+            )
+        }
+    }
+}
+
+data class PendingClarification(
+    val token: String,
+    val originalPrompt: String,
+    val priorContext: String,
+    val question: String,
+    val priorAnswers: List<ClarificationAnswer>,
+    val createdAtMillis: Long,
+    val threadId: String,
+) {
+    fun toJson(): JSONObject {
+        return JSONObject()
+            .put("token", token)
+            .put("original_prompt", originalPrompt)
+            .put("prior_context", priorContext)
+            .put("question", question)
+            .put("prior_answers", org.json.JSONArray().also { array ->
+                priorAnswers.forEach { array.put(it.toJson()) }
+            })
+            .put("created_at_millis", createdAtMillis)
+            .put("thread_id", threadId)
+    }
+
+    fun withAnswer(answer: String): List<ClarificationAnswer> {
+        return (priorAnswers + ClarificationAnswer(question = question, answer = answer)).takeLast(5)
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): PendingClarification {
+            val answers = buildList {
+                val array = json.optJSONArray("prior_answers") ?: org.json.JSONArray()
+                for (i in 0 until array.length()) {
+                    array.optJSONObject(i)?.let { add(ClarificationAnswer.fromJson(it)) }
+                }
+            }
+            return PendingClarification(
+                token = json.optString("token"),
+                originalPrompt = json.optString("original_prompt"),
+                priorContext = json.optString("prior_context"),
+                question = json.optString("question"),
+                priorAnswers = answers,
+                createdAtMillis = json.optLong("created_at_millis", 0L),
+                threadId = json.optString("thread_id"),
+            )
+        }
     }
 }
 

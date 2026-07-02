@@ -479,6 +479,12 @@ bool conversation_assistant_just_started(Conversation* conversation) {
   if (conversation->entry_count == 1) {
     return true;
   }
-  ConversationEntry *previous = &conversation->entries[conversation->entry_count - 2];
-  return !prv_entry_type_is_assistant(previous);
+  for (int i = conversation->entry_count - 2; i >= conversation->deleted_entries; --i) {
+    ConversationEntry *previous = &conversation->entries[i];
+    if (previous->type == EntryTypeDeleted || previous->type == EntryTypeThought) {
+      continue;
+    }
+    return !prv_entry_type_is_assistant(previous);
+  }
+  return true;
 }

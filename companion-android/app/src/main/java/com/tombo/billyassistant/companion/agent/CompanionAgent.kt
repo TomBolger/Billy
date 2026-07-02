@@ -75,6 +75,8 @@ class CompanionAgent(
         recentContextStore.saveWebImageQuery(query, threadId)
     }
     private var activePrompt: String = ""
+    private var activeClarificationOriginalPrompt: String? = null
+    private var activeClarificationAnswers: List<ClarificationAnswer> = emptyList()
 
     private val toolRegistry = CompanionToolRegistry(
         listOf(
@@ -113,6 +115,12 @@ class CompanionAgent(
     )
 
     fun answer(prompt: String): CompanionAgentResult {
+        activeClarificationOriginalPrompt = null
+        activeClarificationAnswers = emptyList()
+        return answerInternal(prompt)
+    }
+
+    private fun answerInternal(prompt: String): CompanionAgentResult {
         val settings = settingsStore.load()
         if (prompt.isBlank()) {
             return CompanionAgentResult.Failed("Prompt is blank.")
@@ -121,9 +129,9 @@ class CompanionAgent(
             return CompanionAgentResult.Failed("Gemini API key is missing in the companion app.")
         }
         activePrompt = prompt
-        directClarificationAnswer(prompt)?.let { return rememberTurn(prompt, it) }
+        directClarificationAnswer(prompt)?.let { return rememberTurn(prompt, prepareOutgoingResult(prompt, it)) }
         hydrateGoogleProfileIfAvailable()
-        homeLocationClarification(prompt)?.let { return rememberTurn(prompt, it) }
+        homeLocationClarification(prompt)?.let { return rememberTurn(prompt, prepareOutgoingResult(prompt, it)) }
 
         val contextualPrompt = buildContextualPrompt(prompt)
         val result = geminiClient.generateWithTools(
@@ -132,7 +140,7 @@ class CompanionAgent(
             toolDeclarations = toolRegistry.declarations(),
             toolExecutor = ::executeToolAndRemember,
         )
-        return rememberTurn(prompt, result)
+        return rememberTurn(prompt, prepareOutgoingResult(prompt, result))
     }
 
     private fun buildContextualPrompt(prompt: String): String {
@@ -180,6 +188,14 @@ class CompanionAgent(
         val context = fields["context"].orEmpty()
         val answer = fields["answer"].orEmpty().substringBefore('|').trim()
         val question = fields["question"].orEmpty()
+        if (context.startsWith("agent_clarify_token=")) {
+            val token = context.substringAfter("agent_clarify_token=").trim()
+            val pending = recentContextStore.resolveClarification(token, threadId)
+                ?: return CompanionAgentResult.Passed("That question expired. Please ask again.")
+            activeClarificationOriginalPrompt = pending.originalPrompt
+            activeClarificationAnswers = pending.withAnswer(answer)
+            return answerInternal(buildClarificationContinuation(pending, answer))
+        }
         if (context.startsWith("maps_home_location_missing")) {
             if (answer.equals("cancel", ignoreCase = true)) {
                 return CompanionAgentResult.Passed("Canceled.")
@@ -190,7 +206,7 @@ class CompanionAgent(
             } else {
                 "Resolved Maps origin: use this dictated address or area: $answer. Original request: $original"
             }
-            return answer(continuation)
+            return answerInternal(continuation)
         }
         if (context.startsWith("calendar_create_token=")) {
             val token = context.substringAfter("calendar_create_token=").trim()
@@ -274,7 +290,7 @@ class CompanionAgent(
                 append("Selected answer: $answer\n")
                 append("Continue the original request using that answer.")
             }
-            return answer(continuation)
+            return answerInternal(continuation)
         }
         val values = context.split('|')
             .mapNotNull { part ->
@@ -359,6 +375,43 @@ class CompanionAgent(
             )
         }
         return result
+    }
+
+    private fun prepareOutgoingResult(prompt: String, result: CompanionAgentResult): CompanionAgentResult {
+        if (result !is CompanionAgentResult.Passed || result.clarificationCard == null) {
+            return result
+        }
+        val card = result.clarificationCard
+        if (card.context.isActionClarificationContext()) {
+            return result
+        }
+        val pending = recentContextStore.saveClarification(
+            originalPrompt = activeClarificationOriginalPrompt ?: prompt,
+            card = card,
+            priorAnswers = activeClarificationAnswers,
+            threadId = threadId,
+        )
+        return result.copy(
+            clarificationCard = card.copy(context = "agent_clarify_token=${pending.token}"),
+        )
+    }
+
+    private fun buildClarificationContinuation(pending: PendingClarification, answer: String): String {
+        val answers = pending.withAnswer(answer)
+        return buildString {
+            append("Continue the user's original request using the clarification answers below.\n")
+            append("Original user request: ${pending.originalPrompt}\n")
+            if (pending.priorContext.isNotBlank() && pending.priorContext != pending.originalPrompt) {
+                append("Hidden context from the previous clarification: ${pending.priorContext}\n")
+            }
+            append("Clarification answers so far:\n")
+            answers.forEachIndexed { index, item ->
+                append("${index + 1}. ${item.question} -> ${item.answer}\n")
+            }
+            append("Now complete the original request. ")
+            append("Do not ask another clarification unless a private-data action would otherwise be unsafe. ")
+            append("For recommendations, advice, summaries, or brainstorming, make a best-effort answer with the available context.")
+        }
     }
 
     private fun rememberTurn(
@@ -458,6 +511,16 @@ private fun String.needsConcreteHomeForMaps(): Boolean {
     ).containsMatchIn(lower)
     val homeScreen = Regex("""\bhome screen\b""").containsMatchIn(lower)
     return placeIntent && !homeScreen
+}
+
+private fun String.isActionClarificationContext(): Boolean {
+    return startsWith("calendar_create_token=") ||
+        startsWith("calendar_create|") ||
+        startsWith("gmail_send_token=") ||
+        startsWith("gmail_recipient_token=") ||
+        startsWith("task_complete_token=") ||
+        startsWith("maps_home_location_missing") ||
+        startsWith("agent_clarify_token=")
 }
 
 sealed interface CompanionAgentResult {

@@ -35,19 +35,61 @@
 #define QUICK_LAUNCH_TIMEOUT_MS 60000
 #define BILLY_MESSAGE_KEY_WATCH_PROMPT 10121
 #define BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY 10123
+#define ANDROID_HEARTBEAT_RETRY_DELAY_MS 250
+#define ANDROID_HEARTBEAT_MAX_ATTEMPTS 6
 
 static RootWindow* s_root_window = NULL;
 static EventHandle s_prompt_inbox_handle = NULL;
+static AppTimer *s_android_heartbeat_retry_timer = NULL;
+static int s_android_heartbeat_attempts = 0;
 
-static void prv_forward_android_companion_ready(void) {
+static bool prv_send_android_companion_ready_to_phone(void);
+static void prv_retry_android_companion_ready(void *context);
+
+static bool prv_send_android_companion_ready_to_phone(void) {
   DictionaryIterator *out;
   AppMessageResult result = app_message_outbox_begin(&out);
   if (result != APP_MSG_OK || !out) {
     BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Could not forward Android companion heartbeat: %d.", result);
-    return;
+    return false;
   }
   dict_write_uint8(out, BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY, 1);
-  app_message_outbox_send();
+  result = app_message_outbox_send();
+  if (result != APP_MSG_OK) {
+    BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Could not send Android companion heartbeat: %d.", result);
+    return false;
+  }
+  return true;
+}
+
+static void prv_schedule_android_companion_ready_retry(void) {
+  if (s_android_heartbeat_attempts >= ANDROID_HEARTBEAT_MAX_ATTEMPTS) {
+    BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Giving up forwarding Android companion heartbeat.");
+    return;
+  }
+  if (s_android_heartbeat_retry_timer) {
+    app_timer_cancel(s_android_heartbeat_retry_timer);
+  }
+  s_android_heartbeat_retry_timer = app_timer_register(ANDROID_HEARTBEAT_RETRY_DELAY_MS, prv_retry_android_companion_ready, NULL);
+}
+
+static void prv_retry_android_companion_ready(void *context) {
+  s_android_heartbeat_retry_timer = NULL;
+  s_android_heartbeat_attempts++;
+  if (prv_send_android_companion_ready_to_phone()) {
+    s_android_heartbeat_attempts = 0;
+    return;
+  }
+  prv_schedule_android_companion_ready_retry();
+}
+
+static void prv_forward_android_companion_ready(void) {
+  s_android_heartbeat_attempts = 1;
+  if (prv_send_android_companion_ready_to_phone()) {
+    s_android_heartbeat_attempts = 0;
+    return;
+  }
+  prv_schedule_android_companion_ready_retry();
 }
 
 static void prv_prompt_inbox_received(DictionaryIterator *iter, void *context) {
@@ -86,6 +128,10 @@ static void prv_deinit(void) {
   if (s_prompt_inbox_handle) {
     events_app_message_unsubscribe(s_prompt_inbox_handle);
     s_prompt_inbox_handle = NULL;
+  }
+  if (s_android_heartbeat_retry_timer) {
+    app_timer_cancel(s_android_heartbeat_retry_timer);
+    s_android_heartbeat_retry_timer = NULL;
   }
   if (s_root_window) {
     root_window_destroy(s_root_window);
