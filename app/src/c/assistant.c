@@ -33,8 +33,9 @@
 
 
 #define QUICK_LAUNCH_TIMEOUT_MS 60000
-#define BILLY_MESSAGE_KEY_WATCH_PROMPT 10121
-#define BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY 10123
+#define BILLY_MESSAGE_KEY_WATCH_PROMPT 10122
+#define BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY 10124
+#define BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID 10125
 #define ANDROID_HEARTBEAT_RETRY_DELAY_MS 250
 #define ANDROID_HEARTBEAT_MAX_ATTEMPTS 6
 
@@ -42,6 +43,7 @@ static RootWindow* s_root_window = NULL;
 static EventHandle s_prompt_inbox_handle = NULL;
 static AppTimer *s_android_heartbeat_retry_timer = NULL;
 static int s_android_heartbeat_attempts = 0;
+static uint32_t s_android_heartbeat_request_id = 0;
 
 static bool prv_send_android_companion_ready_to_phone(void);
 static void prv_retry_android_companion_ready(void *context);
@@ -54,6 +56,9 @@ static bool prv_send_android_companion_ready_to_phone(void) {
     return false;
   }
   dict_write_uint8(out, BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY, 1);
+  if (s_android_heartbeat_request_id != 0) {
+    dict_write_uint32(out, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID, s_android_heartbeat_request_id);
+  }
   result = app_message_outbox_send();
   if (result != APP_MSG_OK) {
     BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Could not send Android companion heartbeat: %d.", result);
@@ -83,7 +88,8 @@ static void prv_retry_android_companion_ready(void *context) {
   prv_schedule_android_companion_ready_retry();
 }
 
-static void prv_forward_android_companion_ready(void) {
+static void prv_forward_android_companion_ready(uint32_t request_id) {
+  s_android_heartbeat_request_id = request_id;
   s_android_heartbeat_attempts = 1;
   if (prv_send_android_companion_ready_to_phone()) {
     s_android_heartbeat_attempts = 0;
@@ -95,7 +101,9 @@ static void prv_forward_android_companion_ready(void) {
 static void prv_prompt_inbox_received(DictionaryIterator *iter, void *context) {
   Tuple *android_ready_tuple = dict_find(iter, BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY);
   if (android_ready_tuple) {
-    prv_forward_android_companion_ready();
+    Tuple *request_tuple = dict_find(iter, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID);
+    uint32_t request_id = request_tuple ? request_tuple->value->uint32 : 0;
+    prv_forward_android_companion_ready(request_id);
     return;
   }
   Tuple *prompt_tuple = dict_find(iter, BILLY_MESSAGE_KEY_WATCH_PROMPT);

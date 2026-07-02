@@ -29,7 +29,7 @@
 #include "version/version.h"
 #include "vibes/haptic_feedback.h"
 
-#define BILLY_MESSAGE_KEY_WATCH_READY 10122
+#define BILLY_MESSAGE_KEY_WATCH_READY 10123
 
 struct RootWindow {
   Window* window;

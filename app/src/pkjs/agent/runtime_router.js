@@ -19,7 +19,9 @@ var CompanionlessRuntime = require('./companionless').CompanionlessRuntime;
 var watchTools = require('./watch_tools');
 
 var COMPANION_SEEN_KEY = 'androidCompanionSeenAt';
+var COMPANION_CLAIM_PREFIX = 'androidCompanionClaimed:';
 var COMPANION_RECENT_MS = 15000;
+var COMPANION_CLAIM_MS = 60000;
 var AUTOMATIC_COMPANION_WAIT_MS = 5000;
 
 function isAndroidCompanionAvailable() {
@@ -33,9 +35,36 @@ function shouldWaitForAndroidCompanion(prompt) {
         !isAndroidCompanionAvailable();
 }
 
-exports.recordAndroidCompanionSeen = function() {
+function normalizeRequestId(requestId) {
+    if (requestId === undefined || requestId === null || requestId === 0 || requestId === '0') {
+        return '';
+    }
+    return String(requestId);
+}
+
+function isAndroidClaimedForRequest(requestId) {
+    var normalized = normalizeRequestId(requestId);
+    if (!normalized) {
+        return false;
+    }
+    var claimedAt = parseInt(localStorage.getItem(COMPANION_CLAIM_PREFIX + normalized), 10);
+    return !!claimedAt && Date.now() - claimedAt < COMPANION_CLAIM_MS;
+}
+
+exports.recordAndroidCompanionSeen = function(requestId) {
     localStorage.setItem(COMPANION_SEEN_KEY, Date.now());
-    console.log('Android companion heartbeat recorded.');
+    requestId = normalizeRequestId(requestId);
+    if (requestId) {
+        localStorage.setItem(COMPANION_CLAIM_PREFIX + requestId, Date.now());
+    }
+    console.log('Android companion heartbeat recorded' + (requestId ? ' for request ' + requestId : '') + '.');
+}
+
+exports.shouldStandDown = function(session) {
+    if (!session || config.getAssistantRuntime() !== config.RUNTIME_AUTOMATIC || watchTools.shouldExpose(session.prompt || '')) {
+        return false;
+    }
+    return isAndroidClaimedForRequest(session.androidRequestId);
 }
 
 exports.selectRuntime = function(prompt, threadId) {
@@ -56,12 +85,19 @@ exports.selectRuntime = function(prompt, threadId) {
 }
 
 exports.run = function(session) {
+    session.shouldStandDown = function() {
+        return exports.shouldStandDown(session);
+    };
     if (!session.waitedForAndroidCompanion && shouldWaitForAndroidCompanion(session.prompt)) {
         session.waitedForAndroidCompanion = true;
         console.log('Automatic runtime waiting briefly for Android companion heartbeat.');
         setTimeout(function() {
             exports.run(session);
         }, AUTOMATIC_COMPANION_WAIT_MS);
+        return;
+    }
+    if (exports.shouldStandDown(session)) {
+        console.log('Android companion claimed this request; JS phone runtime is standing down.');
         return;
     }
     var runtime = exports.selectRuntime(session.prompt, session.threadId);

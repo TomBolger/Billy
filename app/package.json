@@ -136,7 +136,8 @@
       "USER_PROFILE_CONTEXT",
       "WATCH_PROMPT",
       "WATCH_READY",
-      "ANDROID_COMPANION_READY"
+      "ANDROID_COMPANION_READY",
+      "ANDROID_REQUEST_ID"
     ],
     "resources": {
       "media": [

@@ -183,6 +183,14 @@ class GeminiClient {
                 val text = extractResponseText(response.raw).ifBlank {
                     "I did not receive a usable answer."
                 }
+                clarificationCardFromLeakedToolText(text)?.let { card ->
+                    return CompanionAgentResult.Passed(
+                        text = "",
+                        watchImage = pendingWatchImage,
+                        watchWeatherCurrent = pendingWatchWeather,
+                        clarificationCard = card,
+                    )
+                }
                 maybeClarificationCardFromText(text, prompt)?.let { card ->
                     return CompanionAgentResult.Passed(
                         text = "",
@@ -233,6 +241,39 @@ class GeminiClient {
         }
 
         return CompanionAgentResult.Failed("I used too many tool steps and stopped before finishing.")
+    }
+
+    private fun clarificationCardFromLeakedToolText(text: String): ClarificationCard? {
+        val compact = text.lowercase().replace(Regex("[^a-z0-9]"), "")
+        if (!compact.contains("askclarifyingquestion")) {
+            return null
+        }
+        val question = Regex("""question\s*=\s*["']([^"']{1,160})["']""", RegexOption.IGNORE_CASE)
+            .find(text)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?: return null
+        val optionsText = Regex("""options\s*=\s*\[([\s\S]{1,400}?)]""", RegexOption.IGNORE_CASE)
+            .find(text)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?: return null
+        val options = Regex("""["']([^"']{1,64})["']""")
+            .findAll(optionsText)
+            .map { it.groupValues[1].trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(3)
+            .toList()
+        if (options.isEmpty()) {
+            return null
+        }
+        return ClarificationCard(
+            question = question.take(120),
+            context = "",
+            options = options,
+        )
     }
 
     private fun maybeClarificationCardFromText(text: String, prompt: String): ClarificationCard? {

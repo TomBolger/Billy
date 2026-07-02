@@ -57,6 +57,10 @@ function runModelLoop(session, threadId, history, iteration, progress, searchGro
         tools: tools,
         systemInstruction: promptBuilder.buildSystemInstruction()
     }, function(err, response) {
+        if (shouldStandDown(session)) {
+            progress.done();
+            return;
+        }
         if (err) {
             progress.done();
             session.handleMessage({data: 'w' + err.message});
@@ -72,6 +76,10 @@ function runModelLoop(session, threadId, history, iteration, progress, searchGro
             usage.recordGeminiResponse(response);
             appendHistoryItems(history, response.historyItems);
             executeFunctionCalls(session, history, response.functionCalls, function(stoppedForUser) {
+                if (shouldStandDown(session)) {
+                    progress.done();
+                    return;
+                }
                 if (stoppedForUser) {
                     progress.done();
                     return;
@@ -103,7 +111,7 @@ function startProgress(session, searchGrounding, hasTools) {
     var timers = [];
 
     function update(text) {
-        if (!active) {
+        if (!active || shouldStandDown(session)) {
             return;
         }
         session.handleMessage({data: 'f' + text});
@@ -136,6 +144,10 @@ function startProgress(session, searchGrounding, hasTools) {
             timers = [];
         }
     };
+}
+
+function shouldStandDown(session) {
+    return !!(session && session.shouldStandDown && session.shouldStandDown());
 }
 
 function appendHistoryItems(history, items) {

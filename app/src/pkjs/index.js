@@ -51,12 +51,12 @@ function handleAppMessage(e) {
     console.log(JSON.stringify(e));
     var data = e.payload;
     if (data.ANDROID_COMPANION_READY) {
-        runtimeRouter.recordAndroidCompanionSeen();
+        runtimeRouter.recordAndroidCompanionSeen(data.ANDROID_REQUEST_ID);
         return;
     }
     if (data.PROMPT) {
         console.log("Starting a new Session...");
-        var s = new session.Session(data.PROMPT, data.THREAD_ID);
+        var s = new session.Session(data.PROMPT, data.THREAD_ID, data.ANDROID_REQUEST_ID);
         s.run();
         return;
     }

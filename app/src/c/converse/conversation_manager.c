@@ -78,6 +78,9 @@ static ConversationManager* s_conversation_manager;
 
 #define INPUT_SEND_RETRY_DELAY_MS 450
 #define INPUT_SEND_MAX_ATTEMPTS 5
+#define BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID 10125
+
+static uint32_t s_next_android_request_id = 1;
 
 void conversation_manager_init() {
   events_app_message_request_outbox_size(1024);
@@ -162,6 +165,11 @@ static bool prv_send_input(ConversationManager* manager, const char* input) {
   char prompt_context[48];
   snprintf(prompt_context, sizeof(prompt_context), "media=%dx%d;pbi=%d;maxb=%d", WATCH_MEDIA_WIDTH, WATCH_MEDIA_HEIGHT, WATCH_MEDIA_PBI_DEPTH, WATCH_MEDIA_MAX_BYTES);
   dict_write_cstring(iter, MESSAGE_KEY_PROMPT_CONTEXT, prompt_context);
+  uint32_t request_id = s_next_android_request_id++;
+  if (s_next_android_request_id == 0) {
+    s_next_android_request_id = 1;
+  }
+  dict_write_uint32(iter, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID, request_id);
 
   const char* thread_id = conversation_get_thread_id(manager->conversation);
   if (thread_id[0] != 0) {
@@ -255,9 +263,17 @@ static void prv_handle_app_message_inbox_received(DictionaryIterator *iter, void
   ConversationManager* manager = context;
   for (Tuple *tuple = dict_read_first(iter); tuple; tuple = dict_read_next(iter)) {
     if (tuple->key == MESSAGE_KEY_CHAT) {
+      if (conversation_get_last_unanswered_clarification(manager->conversation) != NULL) {
+        BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Ignoring chat text while a clarification picker is active.");
+        continue;
+      }
       bool added_entry = conversation_add_response_fragment(manager->conversation, tuple->value->cstring);
       prv_conversation_updated(manager, added_entry);
     } else if (tuple->key == MESSAGE_KEY_FUNCTION) {
+      if (conversation_get_last_unanswered_clarification(manager->conversation) != NULL) {
+        BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Ignoring function text while a clarification picker is active.");
+        continue;
+      }
       BOBBY_LOG(APP_LOG_LEVEL_INFO, "Received function: \"%s\".", tuple->value->cstring);
       conversation_complete_response(manager->conversation);
       prv_conversation_updated(manager, false);
@@ -270,12 +286,20 @@ static void prv_handle_app_message_inbox_received(DictionaryIterator *iter, void
       conversation_set_thread_id(manager->conversation, tuple->value->cstring);
     } else if (tuple->key == MESSAGE_KEY_CLOSE_WAS_CLEAN) {
       if (!tuple->value->int16) {
+        if (conversation_get_last_unanswered_clarification(manager->conversation) != NULL) {
+          BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Ignoring close error while a clarification picker is active.");
+          continue;
+        }
         conversation_complete_response(manager->conversation);
         conversation_add_error(manager->conversation, "Lost connection to server.");
         prv_conversation_updated(manager, true);
       }
     } else if (tuple->key == MESSAGE_KEY_CLOSE_REASON) {
       if (tuple->value->cstring[0] != 0) {
+        if (conversation_get_last_unanswered_clarification(manager->conversation) != NULL) {
+          BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Ignoring close reason while a clarification picker is active.");
+          continue;
+        }
         conversation_complete_response(manager->conversation);
         conversation_add_error(manager->conversation, tuple->value->cstring);
         prv_conversation_updated(manager, true);
@@ -317,6 +341,10 @@ static void prv_handle_app_message_inbox_received(DictionaryIterator *iter, void
       };
       conversation_manager_add_action(manager, &action);
     } else if (tuple->key == MESSAGE_KEY_WARNING) {
+      if (conversation_get_last_unanswered_clarification(manager->conversation) != NULL) {
+        BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Ignoring warning while a clarification picker is active.");
+        continue;
+      }
       conversation_complete_response(manager->conversation);
       prv_conversation_updated(manager, false);
       conversation_add_error(manager->conversation, tuple->value->cstring);
@@ -334,6 +362,10 @@ static void prv_handle_app_message_inbox_received(DictionaryIterator *iter, void
       prv_conversation_updated(manager, false);
       prv_process_highlight_widget(tuple->value->int32, iter, manager);
     } else if (tuple->key == MESSAGE_KEY_CLARIFY_WIDGET) {
+      if (conversation_get_last_unanswered_clarification(manager->conversation) != NULL) {
+        BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Ignoring second clarification picker while one is active.");
+        continue;
+      }
       conversation_complete_response(manager->conversation);
       prv_conversation_updated(manager, false);
       prv_process_clarify_widget(tuple->value->int32, iter, manager);

@@ -288,7 +288,49 @@ function extractFunctionCalls(response) {
             }
         });
     });
+    if (calls.length === 0) {
+        var leakedCall = extractLeakedClarificationCall(extractText(response));
+        if (leakedCall) {
+            calls.push(leakedCall);
+        }
+    }
     return calls;
+}
+
+function extractLeakedClarificationCall(text) {
+    if (!looksLikeLeakedClarificationCall(text)) {
+        return null;
+    }
+    var questionMatch = /question\s*=\s*["']([^"']{1,160})["']/i.exec(text);
+    var optionsMatch = /options\s*=\s*\[([\s\S]{1,400}?)\]/i.exec(text);
+    if (!questionMatch || !optionsMatch) {
+        return null;
+    }
+    var options = [];
+    var optionRegex = /["']([^"']{1,64})["']/g;
+    var match;
+    while ((match = optionRegex.exec(optionsMatch[1])) && options.length < 4) {
+        options.push(match[1]);
+    }
+    if (options.length < 1) {
+        return null;
+    }
+    return {
+        id: undefined,
+        name: 'ask_clarifying_question',
+        arguments: {
+            question: questionMatch[1],
+            options: options
+        }
+    };
+}
+
+function looksLikeLeakedClarificationCall(text) {
+    if (!text) {
+        return false;
+    }
+    var compact = String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
+    return compact.indexOf('askclarifyingquestion') !== -1;
 }
 
 function extractHistoryItems(response) {

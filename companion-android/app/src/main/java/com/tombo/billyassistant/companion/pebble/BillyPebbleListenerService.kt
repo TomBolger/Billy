@@ -38,7 +38,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
             }
             val sender = DefaultPebbleSender(this)
             try {
-                sender.sendAndroidCompanionReady(watch)
+                sender.sendAndroidCompanionReady(watch, null)
                 val pendingPrompt = PendingWatchPromptStore(this).pop()
                 if (pendingPrompt != null) {
                     sender.sendPrompt(pendingPrompt, watch)
@@ -52,6 +52,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         val watchMediaSpec = data.textValue(BillyPebbleProtocol.PROMPT_CONTEXT).toWatchMediaSpec()
         val threadId = data.textValue(BillyPebbleProtocol.THREAD_ID)?.takeIf { it.isNotBlank() }
             ?: UUID.randomUUID().toString()
+        val requestId = data.intValue(BillyPebbleProtocol.ANDROID_REQUEST_ID)
         if (runtime == RUNTIME_COMPANIONLESS) {
             Log.d(TAG, "Ignoring prompt because companionless runtime is selected.")
             return ReceiveResult.Ack
@@ -64,7 +65,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         Log.d(TAG, "Received Billy prompt from watch: $prompt runtime=$runtime")
         val sender = DefaultPebbleSender(this)
         try {
-            sender.sendAndroidCompanionReady(watch)
+            sender.sendAndroidCompanionReady(watch, requestId)
             sender.sendThreadId(threadId, watch)
             sender.sendFunction("Thinking...", watch)
             val result = withTimeoutOrNull(REMOTE_TIMEOUT_MS) {
@@ -133,6 +134,16 @@ private fun PebbleDictionary.textValue(key: UInt): String? {
     return (this[key] as? PebbleDictionaryItem.Text)?.value
 }
 
+private fun PebbleDictionary.intValue(key: UInt): Int? {
+    return when (val item = this[key]) {
+        is PebbleDictionaryItem.Int32 -> item.value
+        is PebbleDictionaryItem.UInt8 -> item.value.toInt()
+        is PebbleDictionaryItem.UInt16 -> item.value.toInt()
+        is PebbleDictionaryItem.UInt32 -> item.value.toInt()
+        else -> null
+    }
+}
+
 private suspend fun DefaultPebbleSender.sendClarificationCard(card: ClarificationCard, watch: WatchIdentifier) {
     val baseOptions = card.options
         .filterNot { it.equals(CLARIFICATION_DICTATE_OPTION, ignoreCase = true) }
@@ -180,12 +191,14 @@ private suspend fun DefaultPebbleSender.sendPrompt(prompt: String, watch: WatchI
     )
 }
 
-private suspend fun DefaultPebbleSender.sendAndroidCompanionReady(watch: WatchIdentifier) {
-    sendDataToPebble(
-        BillyPebbleProtocol.APP_UUID,
-        mapOf(BillyPebbleProtocol.ANDROID_COMPANION_READY to PebbleDictionaryItem.UInt8(1)),
-        listOf(watch),
+private suspend fun DefaultPebbleSender.sendAndroidCompanionReady(watch: WatchIdentifier, requestId: Int?) {
+    val payload = mutableMapOf<UInt, PebbleDictionaryItem>(
+        BillyPebbleProtocol.ANDROID_COMPANION_READY to PebbleDictionaryItem.UInt8(1),
     )
+    if (requestId != null && requestId != 0) {
+        payload[BillyPebbleProtocol.ANDROID_REQUEST_ID] = PebbleDictionaryItem.UInt32(requestId.toUInt())
+    }
+    sendDataToPebble(BillyPebbleProtocol.APP_UUID, payload, listOf(watch))
 }
 
 private suspend fun DefaultPebbleSender.sendFunction(text: String, watch: WatchIdentifier) {
@@ -362,9 +375,10 @@ object BillyPebbleProtocol {
     val CLARIFY_OPTION_COUNT: UInt = 10108u
     val CLARIFY_OPTION_0: UInt = 10109u
     val ASSISTANT_RUNTIME: UInt = 10115u
-    val WATCH_PROMPT: UInt = 10121u
-    val WATCH_READY: UInt = 10122u
-    val ANDROID_COMPANION_READY: UInt = 10123u
+    val WATCH_PROMPT: UInt = 10122u
+    val WATCH_READY: UInt = 10123u
+    val ANDROID_COMPANION_READY: UInt = 10124u
+    val ANDROID_REQUEST_ID: UInt = 10125u
 
     fun nextImageId(): Int = imageIds.getAndIncrement()
 }

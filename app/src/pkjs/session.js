@@ -21,11 +21,13 @@ var widgets = require('./widgets');
 var messageQueue = require('./lib/message_queue').Queue;
 var runtimeRouter = require('./agent/runtime_router');
 
-function Session(prompt, threadId) {
+function Session(prompt, threadId, androidRequestId) {
     this.prompt = prompt;
     this.threadId = threadId;
+    this.androidRequestId = androidRequestId;
     this.ws = undefined;
     this.hasOpenDialog = false;
+    this.shouldStandDown = undefined;
 }
 
 Session.prototype.run = function() {

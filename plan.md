@@ -761,3 +761,20 @@ Status on 2026-07-02, clarification chain and duplicate-runtime cleanup:
 - Watch assistant-label logic now skips deleted/thinking entries when deciding
   whether a new `Billy` label is needed, preventing extra labels mid-turn.
 - Android companion version code `58` identifies this cleanup build.
+
+Status on 2026-07-02, picker leak and request-claim cleanup:
+
+- Added a per-prompt Android request id so automatic mode can tell when the
+  Android companion claimed the exact request instead of relying on a recent
+  generic heartbeat.
+- Aligned the manually hardcoded watch/Android bridge keys with the generated
+  package keys: `WATCH_PROMPT=10122`, `WATCH_READY=10123`,
+  `ANDROID_COMPANION_READY=10124`, and `ANDROID_REQUEST_ID=10125`.
+- The JS companionless runtime now stands down if a late Android claim arrives
+  before it emits text or continues tool execution.
+- The watch conversation manager ignores chat, thinking text, warnings, close
+  errors, and duplicate picker cards while an unanswered picker is active.
+- Android and companionless Gemini parsers now quarantine leaked
+  `ask_clarifying_question(...)` tool-call text and convert it back into a
+  picker instead of rendering the internal call syntax.
+- Android companion version code `59` identifies this cleanup build.
