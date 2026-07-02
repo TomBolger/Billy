@@ -707,3 +707,19 @@ Status on 2026-07-01, maps home-search and picker correction:
   questions become picker cards instead of plain bullet text.
 - Relaxed Places type filtering to avoid false empty results when Google labels
   a nearby business with a neighboring category.
+
+Status on 2026-07-02, Billy Profile Pack template:
+
+- Added `docs/BILLY_PROFILE_PACK_TEMPLATE.md`, a self-contained document that
+  can be handed to Gemini and filled without a separate detailed prompt.
+- The template includes AI-facing fill instructions, privacy rules, metadata
+  requirements, and a broad YAML schema for identity, people, places, routines,
+  calendar, Gmail, tasks, projects, work, hobbies, preferences, health/lifestyle
+  notes, photos, Drive/Docs, search context, assistant behavior, common phrases,
+  examples, and memory management.
+- The profile pack is intended as a reviewed import/bootstrap path for Billy's
+  own local memory, not as direct access to consumer Gemini app memory.
+- Next implementation work: add an Android companion import/review flow that
+  extracts the bounded YAML block, validates version/fields, shows sensitive
+  facts for approval, and stores accepted facts into Billy's local profile and
+  memory index.

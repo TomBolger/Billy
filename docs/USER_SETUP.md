@@ -133,3 +133,20 @@ Billy Companion has its own local profile/memory store:
 The companionless PBW path has a manual `Billy profile context` Clay setting
 and local remember/forget tools backed by that setting. It cannot read Google
 profile data without the Android companion.
+
+### Billy Profile Pack template
+
+Users who want richer personal context can use
+`docs/BILLY_PROFILE_PACK_TEMPLATE.md`.
+
+That file is intentionally self-contained: it includes instructions for Gemini
+and a structured YAML profile pack. The expected workflow is:
+
+1. Give the template document to Gemini in the consumer Gemini app.
+2. Ask Gemini to fill it from what it knows about the user.
+3. Review and delete anything the user does not want Billy to store.
+4. Import the reviewed pack into Billy Companion once the importer is available.
+
+This is a bootstrap path for Billy's own local memory. It does not grant Billy
+access to the consumer Gemini app's private memory system, but it can turn
+Gemini's user-visible personal context into structured facts Billy can use.

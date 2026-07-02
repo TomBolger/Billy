@@ -53,6 +53,8 @@ Billy profile/memory:
 
 - Stored locally on the user's phone.
 - Can be bootstrapped from Google OAuth identity/profile data.
+- Can be bootstrapped from a reviewed Billy Profile Pack generated with
+  `docs/BILLY_PROFILE_PACK_TEMPLATE.md`.
 - Can be edited through Billy Companion or explicit watch requests such as "remember that my dog is named Scout."
 - Is included as compact prompt context for Billy requests.
 - Does not inherit consumer Gemini app memories, Gemini app chat history, or Gemini Connected Apps context.
@@ -133,6 +135,7 @@ See `docs/USER_SETUP.md` for the current setup notes covering:
 - Google API enablement,
 - optional Google Maps Platform keys,
 - credential separation so users pay for their own Gemini and Maps usage.
+- the Billy Profile Pack template for importing reviewed personal context.
 
 ## Project Status
 
