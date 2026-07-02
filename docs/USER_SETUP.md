@@ -150,3 +150,18 @@ and a structured YAML profile pack. The expected workflow is:
 This is a bootstrap path for Billy's own local memory. It does not grant Billy
 access to the consumer Gemini app's private memory system, but it can turn
 Gemini's user-visible personal context into structured facts Billy can use.
+
+Billy Companion can import a filled Markdown/plain-text Profile Pack from the
+`Billy profile and memory` section. The importer:
+
+- extracts only the text between `BEGIN_BILLY_PROFILE_PACK` and
+  `END_BILLY_PROFILE_PACK`
+- parses structured YAML-like fields into indexed local facts
+- preserves category, path, confidence, source hint, last-confirmed, sensitivity,
+  topics, and keywords when present
+- previews fact counts, categories, sensitive fact count, and samples before
+  storing anything
+- replaces the previous imported Profile Pack facts while keeping manual Billy
+  memories and Google profile data
+- retrieves only relevant profile facts for each watch request instead of
+  pasting the entire pack into every Gemini prompt

@@ -140,7 +140,7 @@ class CompanionAgent(
             return prompt
         }
         val summaries = buildList {
-            userProfileStore.promptContext()?.let { add(it) }
+            userProfileStore.promptContext(prompt)?.let { add(it) }
             recentContextStore.conversationContext(threadId)?.let { add(it) }
             recentContextStore.lastPhotoContext(threadId)?.humanSummary()?.let { add(it) }
         }

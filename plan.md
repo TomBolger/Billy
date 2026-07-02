@@ -723,3 +723,20 @@ Status on 2026-07-02, Billy Profile Pack template:
   extracts the bounded YAML block, validates version/fields, shows sensitive
   facts for approval, and stores accepted facts into Billy's local profile and
   memory index.
+
+Status on 2026-07-02, Profile Pack importer and indexed retrieval:
+
+- Added a Billy Companion Profile Pack importer for Markdown/plain-text files
+  selected through Android's document picker.
+- The importer extracts only the bounded Profile Pack block, parses YAML-like
+  scalar and list fields, preserves available metadata, previews category and
+  sensitive-fact counts, and requires user approval before storing.
+- Imported Profile Pack facts are stored locally as indexed memories with
+  category, path, topics, confidence, source hint, last-confirmed date,
+  sensitive flag, and keywords.
+- Re-importing a Profile Pack replaces prior imported pack facts but keeps
+  manual Billy memories and Google profile data.
+- Companion prompt context now uses prompt-aware retrieval. It includes identity
+  and relevant topic slices instead of dumping the whole profile pack into every
+  Gemini request.
+- Android companion version code `57` identifies the importer build.

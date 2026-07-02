@@ -46,6 +46,8 @@ import com.tombo.billyassistant.companion.media.PhotoPermissionStatus
 import com.tombo.billyassistant.companion.pebble.BillyPebbleProtocol
 import com.tombo.billyassistant.companion.pebble.PendingWatchPromptStore
 import com.tombo.billyassistant.companion.pebble.PebbleWatchStore
+import com.tombo.billyassistant.companion.profile.BillyProfilePackParser
+import com.tombo.billyassistant.companion.profile.BillyProfilePackParseResult
 import com.tombo.billyassistant.companion.profile.BillyUserProfileStore
 import com.tombo.billyassistant.companion.settings.CompanionSettings
 import com.tombo.billyassistant.companion.settings.SettingsStore
@@ -88,6 +90,16 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
         handleGoogleAuthorizationActivityResult(result.resultCode, result.data)
+    }
+    private val profilePackImportLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) {
+            profileStatusText.text = "Profile Pack import canceled."
+            profileStatusText.setTextColor(COLOR_MUTED)
+        } else {
+            importProfilePackFromUri(uri)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -336,6 +348,14 @@ class MainActivity : ComponentActivity() {
                 })
                 addView(actionButton("Clear", emphasis = false) {
                     confirmClearProfile()
+                })
+            })
+            addView(horizontalActions().apply {
+                addView(actionButton("Import Profile Pack") {
+                    openProfilePackPicker()
+                })
+                addView(actionButton("Profile Pack help", emphasis = false) {
+                    showProfilePackInstructions()
                 })
             })
         }
@@ -634,10 +654,89 @@ class MainActivity : ComponentActivity() {
             .show()
     }
 
+    private fun openProfilePackPicker() {
+        profileStatusText.text = "Choose a filled Billy Profile Pack Markdown file."
+        profileStatusText.setTextColor(COLOR_MUTED)
+        profilePackImportLauncher.launch(PROFILE_PACK_MIME_TYPES)
+    }
+
+    private fun importProfilePackFromUri(uri: Uri) {
+        profileStatusText.text = "Reading Profile Pack..."
+        profileStatusText.setTextColor(COLOR_MUTED)
+        Thread {
+            val result = runCatching {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    val bytes = input.readBytes()
+                    if (bytes.size > MAX_PROFILE_PACK_BYTES) {
+                        throw IllegalArgumentException("Profile Pack is too large (${bytes.size} bytes).")
+                    }
+                    BillyProfilePackParser.parseMarkdown(bytes.toString(Charsets.UTF_8))
+                } ?: throw IllegalArgumentException("Could not open selected file.")
+            }
+            runOnUiThread {
+                result.fold(
+                    onSuccess = { parsed -> confirmProfilePackImport(parsed) },
+                    onFailure = { error ->
+                        profileStatusText.text = "Profile Pack import failed: ${error.message ?: error.javaClass.simpleName}"
+                        profileStatusText.setTextColor(COLOR_WARNING)
+                    },
+                )
+            }
+        }.start()
+    }
+
+    private fun confirmProfilePackImport(parsed: BillyProfilePackParseResult) {
+        if (parsed.facts.isEmpty()) {
+            profileStatusText.text = parsed.summary()
+            profileStatusText.setTextColor(COLOR_WARNING)
+            return
+        }
+        val examples = parsed.facts
+            .take(5)
+            .joinToString(separator = "\n") { "- ${it.fact}" }
+        AlertDialog.Builder(this)
+            .setTitle("Import Billy Profile Pack?")
+            .setMessage(
+                parsed.summary() +
+                    "\n\nThis replaces the previous imported Profile Pack facts but keeps manual memories and Google profile data." +
+                    "\n\nSample:\n$examples",
+            )
+            .setPositiveButton("Import") { _, _ ->
+                val stored = userProfileStore.importProfilePack(parsed.facts)
+                profileStatusText.text = buildString {
+                    append("Imported ${stored.imported} Profile Pack facts.")
+                    if (stored.replaced > 0) {
+                        append(" Replaced ${stored.replaced} older imported facts.")
+                    }
+                    if (stored.sensitive > 0) {
+                        append(" ${stored.sensitive} marked sensitive.")
+                    }
+                    append("\n${userProfileStore.load().statusSummary()}")
+                }
+                profileStatusText.setTextColor(COLOR_SUCCESS)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showProfilePackInstructions() {
+        AlertDialog.Builder(this)
+            .setTitle("Billy Profile Pack")
+            .setMessage(
+                "1. Open the Billy Profile Pack template from Drive or docs.\n\n" +
+                    "2. Give it to the consumer Gemini app and ask Gemini to fill it from what it knows about you.\n\n" +
+                    "3. Review the filled result and delete anything you do not want Billy to store.\n\n" +
+                    "4. Save it as Markdown or plain text, then import it here.\n\n" +
+                    "Billy stores imported facts locally on this phone and retrieves only relevant slices for each watch request.",
+            )
+            .setPositiveButton("Done", null)
+            .show()
+    }
+
     private fun confirmClearProfile() {
         AlertDialog.Builder(this)
             .setTitle("Clear Billy profile?")
-            .setMessage("This removes the local Google profile summary and Billy memories stored by the companion.")
+            .setMessage("This removes the local Google profile summary, imported Profile Pack facts, and Billy memories stored by the companion.")
             .setPositiveButton("Clear") { _, _ ->
                 userProfileStore.clear()
                 renderStatus()
@@ -1181,8 +1280,15 @@ class MainActivity : ComponentActivity() {
         private const val REQUEST_BACKGROUND_LOCATION_PERMISSION = 1004
         private const val WATCH_PROMPT_MAX_LENGTH = 240
         private const val WATCH_PROMPT_SEND_DELAY_MS = 900L
+        private const val MAX_PROFILE_PACK_BYTES = 4 * 1024 * 1024
         private const val GEMINI_API_KEY_URL = "https://aistudio.google.com/app/apikey"
         private const val GOOGLE_MAPS_API_KEY_URL = "https://console.cloud.google.com/google/maps-apis/credentials"
+        private val PROFILE_PACK_MIME_TYPES = arrayOf(
+            "text/markdown",
+            "text/plain",
+            "application/octet-stream",
+            "*/*",
+        )
         private val COLOR_PANEL = Color.rgb(17, 24, 39)
         private val COLOR_FIELD = Color.rgb(31, 41, 55)
         private val COLOR_STROKE = Color.rgb(75, 85, 99)
