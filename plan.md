@@ -804,3 +804,12 @@ Status on 2026-07-02, follow-up picker label regression:
   token resolvers now accept shortened platform labels so compact display text
   still resolves to the stored calendar/contact/task object.
 - Android companion version code `61` identifies this follow-up fix.
+
+Status on 2026-07-02, chat bullet rendering:
+
+- Response message rendering now normalizes common list markers at line start:
+  `- `, `* `, `+ `, `•`, `‣`, and `◦`.
+- The watch draws bullets as filled circles sized from the current body font
+  instead of relying on tiny/high font glyphs. The dot is vertically centered
+  against the message text row, and wrapped bullet lines keep the existing
+  hanging indent.

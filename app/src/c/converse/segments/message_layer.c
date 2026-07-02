@@ -176,6 +176,22 @@ static int prv_max_int(int a, int b) {
   return a > b ? a : b;
 }
 
+static int prv_bullet_radius(const FontsConfig *fonts) {
+  if (fonts->text_font_cap >= 18) {
+    return 4;
+  }
+  return 3;
+}
+
+static int prv_bullet_center_y(int y, int line_height) {
+  return y + (line_height / 2) + 2;
+}
+
+static void prv_draw_bullet(GContext *ctx, const FontsConfig *fonts, int y, int line_height) {
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_fill_circle(ctx, GPoint(5, prv_bullet_center_y(y, line_height)), prv_bullet_radius(fonts));
+}
+
 static int prv_measure_token_width(const char *token, GFont font) {
   return graphics_text_layout_get_content_size(token, font, GRect(0, 0, 10000, 10000), GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft).w;
 }
@@ -185,6 +201,32 @@ static void prv_rich_newline(int *x, int *y, int line_height, bool *line_start, 
   *y += line_height;
   *line_start = true;
   *bullet_line = false;
+}
+
+static bool prv_consume_bullet_marker(const char **p) {
+  if (((*p)[0] == '-' || (*p)[0] == '*' || (*p)[0] == '+') && (*p)[1] == ' ') {
+    *p += 2;
+    return true;
+  }
+  const unsigned char *u = (const unsigned char *)(*p);
+  if (u[0] != 0xE2 || u[1] == 0) {
+    return false;
+  }
+  if (u[1] == 0x80 && u[2] != 0 && (u[2] == 0xA2 || u[2] == 0xA3)) {
+    *p += 3;
+    if (**p == ' ') {
+      ++(*p);
+    }
+    return true;
+  }
+  if (u[1] == 0x97 && u[2] != 0 && u[2] == 0xA6) {
+    *p += 3;
+    if (**p == ' ') {
+      ++(*p);
+    }
+    return true;
+  }
+  return false;
 }
 
 static int prv_rich_layout(MessageLayer *layer, GContext *ctx) {
@@ -224,13 +266,12 @@ static int prv_rich_layout(MessageLayer *layer, GContext *ctx) {
       while (*p == ' ') {
         ++p;
       }
-      if (p[0] == '-' && p[1] == ' ') {
+      if (prv_consume_bullet_marker(&p)) {
         bullet_line = true;
         x = bullet_indent;
         if (ctx) {
-          graphics_fill_circle(ctx, GPoint(5, y + line_height / 2), 2);
+          prv_draw_bullet(ctx, fonts, y, line_height);
         }
-        p += 2;
       }
       line_start = false;
     }
