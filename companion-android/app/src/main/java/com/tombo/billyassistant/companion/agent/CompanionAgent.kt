@@ -25,6 +25,7 @@ import com.tombo.billyassistant.companion.agent.tools.WebImageCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WatchMediaSpec
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
+import com.tombo.billyassistant.companion.agent.tools.shortPickerLabel
 import com.tombo.billyassistant.companion.auth.GoogleApiScopes
 import com.tombo.billyassistant.companion.auth.GoogleAuthStore
 import com.tombo.billyassistant.companion.auth.GoogleAccessTokenProvider
@@ -80,7 +81,9 @@ class CompanionAgent(
 
     private val toolRegistry = CompanionToolRegistry(
         listOf(
-            ClarificationCompanionTool { activePrompt },
+            ClarificationCompanionTool(
+                optionLabelMaxChars = watchMediaSpec.pickerOptionChars,
+            ) { activePrompt },
             UserProfileCompanionTool(userProfileStore),
             CalendarCompanionTool(
                 calendarTools = calendarTools,
@@ -186,15 +189,17 @@ class CompanionAgent(
             }
             .toMap()
         val context = fields["context"].orEmpty()
-        val answer = fields["answer"].orEmpty().substringBefore('|').trim()
+        val rawAnswer = fields["answer"].orEmpty().trim()
+        val answer = rawAnswer.substringBefore('|').trim()
         val question = fields["question"].orEmpty()
         if (context.startsWith("agent_clarify_token=")) {
             val token = context.substringAfter("agent_clarify_token=").trim()
             val pending = recentContextStore.resolveClarification(token, threadId)
                 ?: return CompanionAgentResult.Passed("That question expired. Please ask again.")
+            val resolvedAnswer = resolveGenericClarificationAnswer(pending, answer.ifBlank { rawAnswer })
             activeClarificationOriginalPrompt = pending.originalPrompt
-            activeClarificationAnswers = pending.withAnswer(answer)
-            return answerInternal(buildClarificationContinuation(pending, answer))
+            activeClarificationAnswers = pending.withAnswer(resolvedAnswer)
+            return answerInternal(buildClarificationContinuation(pending, resolvedAnswer))
         }
         if (context.startsWith("maps_home_location_missing")) {
             if (answer.equals("cancel", ignoreCase = true)) {
@@ -385,6 +390,9 @@ class CompanionAgent(
         if (card.context.isActionClarificationContext()) {
             return result
         }
+        val shortCard = card.copy(
+            options = card.options.map { it.shortPickerLabel(watchMediaSpec.pickerOptionChars) },
+        )
         val pending = recentContextStore.saveClarification(
             originalPrompt = activeClarificationOriginalPrompt ?: prompt,
             card = card,
@@ -392,8 +400,20 @@ class CompanionAgent(
             threadId = threadId,
         )
         return result.copy(
-            clarificationCard = card.copy(context = "agent_clarify_token=${pending.token}"),
+            clarificationCard = shortCard.copy(context = "agent_clarify_token=${pending.token}"),
         )
+    }
+
+    private fun resolveGenericClarificationAnswer(pending: PendingClarification, answer: String): String {
+        val cleanAnswer = answer.trim()
+        if (cleanAnswer.isBlank()) {
+            return answer
+        }
+        return pending.options.firstOrNull { option ->
+            option.equals(cleanAnswer, ignoreCase = true)
+        } ?: pending.options.firstOrNull { option ->
+            option.shortPickerLabel(watchMediaSpec.pickerOptionChars).equals(cleanAnswer, ignoreCase = true)
+        } ?: cleanAnswer
     }
 
     private fun buildClarificationContinuation(pending: PendingClarification, answer: String): String {

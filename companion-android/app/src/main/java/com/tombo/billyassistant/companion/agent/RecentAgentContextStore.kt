@@ -80,6 +80,7 @@ class RecentAgentContextStore(context: Context) {
             originalPrompt = originalPrompt.take(MAX_CLARIFICATION_TEXT_LENGTH),
             priorContext = card.context.take(MAX_CLARIFICATION_TEXT_LENGTH),
             question = card.question.take(MAX_CLARIFICATION_TEXT_LENGTH),
+            options = card.options.map { it.take(MAX_CLARIFICATION_TEXT_LENGTH) }.take(4),
             priorAnswers = priorAnswers.takeLast(MAX_CLARIFICATION_ANSWERS),
             createdAtMillis = System.currentTimeMillis(),
             threadId = threadId.orEmpty(),
@@ -193,6 +194,7 @@ data class PendingClarification(
     val originalPrompt: String,
     val priorContext: String,
     val question: String,
+    val options: List<String>,
     val priorAnswers: List<ClarificationAnswer>,
     val createdAtMillis: Long,
     val threadId: String,
@@ -203,6 +205,9 @@ data class PendingClarification(
             .put("original_prompt", originalPrompt)
             .put("prior_context", priorContext)
             .put("question", question)
+            .put("options", org.json.JSONArray().also { array ->
+                options.forEach { array.put(it) }
+            })
             .put("prior_answers", org.json.JSONArray().also { array ->
                 priorAnswers.forEach { array.put(it.toJson()) }
             })
@@ -222,11 +227,21 @@ data class PendingClarification(
                     array.optJSONObject(i)?.let { add(ClarificationAnswer.fromJson(it)) }
                 }
             }
+            val options = buildList {
+                val array = json.optJSONArray("options") ?: org.json.JSONArray()
+                for (i in 0 until array.length()) {
+                    val option = array.optString(i)
+                    if (option.isNotBlank()) {
+                        add(option)
+                    }
+                }
+            }
             return PendingClarification(
                 token = json.optString("token"),
                 originalPrompt = json.optString("original_prompt"),
                 priorContext = json.optString("prior_context"),
                 question = json.optString("question"),
+                options = options,
                 priorAnswers = answers,
                 createdAtMillis = json.optLong("created_at_millis", 0L),
                 threadId = json.optString("thread_id"),

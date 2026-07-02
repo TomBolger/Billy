@@ -13,6 +13,8 @@
 #include "../../../util/memory/sdk.h"
 #include "../../../util/style.h"
 
+#include <string.h>
+
 typedef struct {
   ConversationEntry *entry;
 } ClarificationWidgetData;
@@ -27,11 +29,21 @@ typedef struct {
 #define CLARIFICATION_MAX_QUESTION_HEIGHT 10000
 #define CLARIFICATION_LINE_COLOUR COLOR_FALLBACK(GColorLightGray, GColorBlack)
 #define CLARIFICATION_SELECTION_COLOUR COLOR_FALLBACK(GColorYellow, GColorBlack)
+#if defined(PBL_PLATFORM_EMERY)
+#define CLARIFICATION_OPTION_DISPLAY_CHARS 28
+#elif defined(PBL_PLATFORM_BASALT)
+#define CLARIFICATION_OPTION_DISPLAY_CHARS 20
+#elif defined(PBL_PLATFORM_CHALK)
+#define CLARIFICATION_OPTION_DISPLAY_CHARS 18
+#else
+#define CLARIFICATION_OPTION_DISPLAY_CHARS 18
+#endif
 
 static void prv_layer_update(Layer *layer, GContext *ctx);
 static int16_t prv_measure_height(GRect rect, ConversationWidgetClarification *widget);
 static int16_t prv_row_height(const FontsConfig *fonts);
 static void prv_draw_horizontal_line(GContext *ctx, int16_t x, int16_t y, int16_t w);
+static void prv_option_display_text(const char *option, char *buffer, size_t buffer_size);
 
 ClarificationWidget* clarification_widget_create(GRect rect, ConversationEntry* entry) {
   ConversationWidgetClarification *widget = &conversation_entry_get_widget(entry)->widget.clarification;
@@ -123,6 +135,8 @@ static void prv_layer_update(Layer *layer, GContext *ctx) {
       NULL);
 
   for (int i = 0; i < widget->option_count; ++i) {
+    char display_option[CLARIFICATION_OPTION_DISPLAY_CHARS + 4];
+    prv_option_display_text(widget->options[i], display_option, sizeof(display_option));
     int16_t row_top_line_y = options_top_line_y + (row_height * i);
     GRect row = GRect(options_left, row_top_line_y + 1, options_width, row_height - 1);
     GRect text_rect = GRect(
@@ -137,7 +151,7 @@ static void prv_layer_update(Layer *layer, GContext *ctx) {
             GColorBlack);
     graphics_draw_text(
         ctx,
-        widget->options[i],
+        display_option,
         fonts->small_font,
         text_rect,
         GTextOverflowModeTrailingEllipsis,
@@ -158,4 +172,45 @@ static int16_t prv_row_height(const FontsConfig *fonts) {
 
 static void prv_draw_horizontal_line(GContext *ctx, int16_t x, int16_t y, int16_t w) {
   graphics_draw_line(ctx, GPoint(x, y), GPoint(x + w - 1, y));
+}
+
+static void prv_option_display_text(const char *option, char *buffer, size_t buffer_size) {
+  if (!buffer || buffer_size == 0) {
+    return;
+  }
+  buffer[0] = 0;
+  if (!option) {
+    return;
+  }
+  size_t visible_len = 0;
+  while (option[visible_len] != 0) {
+    if (option[visible_len] == '|' || (
+        option[visible_len] == ' ' &&
+        option[visible_len + 1] == '|' &&
+        option[visible_len + 2] == ' ')) {
+      break;
+    }
+    visible_len++;
+  }
+  while (visible_len > 0 && option[visible_len - 1] == ' ') {
+    visible_len--;
+  }
+
+  size_t max_chars = CLARIFICATION_OPTION_DISPLAY_CHARS;
+  bool truncated = visible_len > max_chars;
+  if (truncated && max_chars > 3) {
+    max_chars -= 3;
+  }
+  size_t copy_len = visible_len < max_chars ? visible_len : max_chars;
+  if (copy_len >= buffer_size) {
+    copy_len = buffer_size - 1;
+  }
+  memcpy(buffer, option, copy_len);
+  buffer[copy_len] = 0;
+  while (copy_len > 0 && buffer[copy_len - 1] == ' ') {
+    buffer[--copy_len] = 0;
+  }
+  if (truncated && copy_len + 4 <= buffer_size) {
+    strcat(buffer, "...");
+  }
 }

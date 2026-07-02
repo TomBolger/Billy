@@ -33,13 +33,14 @@ function arraySchema(description) {
 }
 
 exports.getDeclarations = function() {
+    var optionMax = getPickerOptionMaxChars();
     return [{
         type: 'function',
         name: 'ask_clarifying_question',
-        description: 'Ask the user one short clarifying question with 2-4 selectable options when guessing would risk doing the wrong thing.',
+        description: 'Ask the user one short clarifying question with 2-4 selectable options when guessing would risk doing the wrong thing. Each option label must be ' + optionMax + ' characters or fewer.',
         parameters: schema({
             question: stringSchema('Short watch-sized question.'),
-            options: arraySchema('Two to four short answer options.'),
+            options: arraySchema('Two to four short answer option labels, each ' + optionMax + ' characters or fewer.'),
             context: stringSchema('The original user request or enough hidden context to continue after the user chooses.')
         }, ['question', 'options'])
     }].concat(osmMapTool.getDeclarations()).concat(weatherTool.getDeclarations());
@@ -66,6 +67,8 @@ exports.execute = function(session, call, callback) {
     var options = Array.isArray(args.options) ? args.options.slice(0, 4) : [];
     options = options.filter(function(option) {
         return String(option || '').trim().length > 0;
+    }).map(function(option) {
+        return shortPickerLabel(option, getPickerOptionMaxChars());
     });
     if (options.length < 2) {
         options = ['Yes', 'No'];
@@ -87,6 +90,8 @@ exports.sendClarification = function(session, card) {
     var options = Array.isArray(card.options) ? card.options.slice(0, 4) : [];
     options = options.filter(function(option) {
         return String(option || '').trim().length > 0;
+    }).map(function(option) {
+        return shortPickerLabel(option, getPickerOptionMaxChars());
     });
     if (options.length < 2) {
         options = ['Yes', 'No'];
@@ -103,3 +108,28 @@ exports.sendClarification = function(session, card) {
     session.enqueue(message);
     session.enqueue({CHAT_DONE: true});
 };
+
+function getPickerOptionMaxChars() {
+    var platform = '';
+    try {
+        platform = Pebble && Pebble.platform ? Pebble.platform : '';
+    } catch (e) {
+        platform = '';
+    }
+    if (platform === 'emery') {
+        return 28;
+    }
+    if (platform === 'basalt') {
+        return 20;
+    }
+    return 18;
+}
+
+function shortPickerLabel(option, maxChars) {
+    var label = String(option || '').split('|')[0].trim();
+    maxChars = Math.max(8, Math.min(64, maxChars || 18));
+    if (label.length <= maxChars) {
+        return label;
+    }
+    return label.substring(0, Math.max(0, maxChars - 3)).replace(/\s+$/, '') + '...';
+}

@@ -46,6 +46,7 @@ data class WatchMediaSpec(
     val maxHeight: Int,
     val pbiDepth: Int,
     val maxBytes: Int,
+    val pickerOptionChars: Int,
 ) {
     companion object {
         val Default = WatchMediaSpec(
@@ -53,6 +54,7 @@ data class WatchMediaSpec(
             maxHeight = 100,
             pbiDepth = 2,
             maxBytes = 23_000,
+            pickerOptionChars = 20,
         )
     }
 }

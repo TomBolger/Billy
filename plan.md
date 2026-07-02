@@ -778,3 +778,18 @@ Status on 2026-07-02, picker leak and request-claim cleanup:
   `ask_clarifying_question(...)` tool-call text and convert it back into a
   picker instead of rendering the internal call syntax.
 - Android companion version code `59` identifies this cleanup build.
+
+Status on 2026-07-02, picker option label limits:
+
+- Added platform-specific picker option display budgets: Emery/Time 2 uses 28
+  characters, Basalt uses 20, and smaller/monochrome platforms use 18.
+- The watch renderer now draws a shortened display label for each picker option
+  while preserving the full stored option value for answer submission and hidden
+  tool ids.
+- The watch prompt context now includes `opt=<chars>` so Android companion tools
+  can ask Gemini for labels that fit the connected watch.
+- Android and companionless clarification tools now advertise and enforce short
+  generic option labels before sending cards to the watch. Android keeps the
+  original generic option labels in the pending clarification record so the
+  selected short label can resolve back to the full intended answer.
+- Android companion version code `60` identifies this cleanup build.

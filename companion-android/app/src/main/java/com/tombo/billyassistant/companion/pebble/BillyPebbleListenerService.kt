@@ -324,6 +324,7 @@ private fun String?.toWatchMediaSpec(): WatchMediaSpec {
     val mediaMatch = Regex("""media=(\d+)x(\d+)""").find(this) ?: return WatchMediaSpec.Default
     val pbiMatch = Regex("""pbi=(\d+)""").find(this)
     val maxBytesMatch = Regex("""maxb=(\d+)""").find(this)
+    val pickerOptionMatch = Regex("""opt=(\d+)""").find(this)
     val maxWidth = mediaMatch.groupValues[1].toIntOrNull()?.coerceIn(80, 200) ?: WatchMediaSpec.Default.maxWidth
     val maxHeight = mediaMatch.groupValues[2].toIntOrNull()?.coerceIn(60, 220) ?: WatchMediaSpec.Default.maxHeight
     val pbiDepth = when (pbiMatch?.groupValues?.getOrNull(1)?.toIntOrNull()) {
@@ -333,7 +334,15 @@ private fun String?.toWatchMediaSpec(): WatchMediaSpec {
     }
     val maxBytes = maxBytesMatch?.groupValues?.getOrNull(1)?.toIntOrNull()?.coerceIn(4_000, 60_000)
         ?: WatchMediaSpec.Default.maxBytes
-    return WatchMediaSpec(maxWidth = maxWidth, maxHeight = maxHeight, pbiDepth = pbiDepth, maxBytes = maxBytes)
+    val pickerOptionChars = pickerOptionMatch?.groupValues?.getOrNull(1)?.toIntOrNull()?.coerceIn(12, 34)
+        ?: WatchMediaSpec.Default.pickerOptionChars
+    return WatchMediaSpec(
+        maxWidth = maxWidth,
+        maxHeight = maxHeight,
+        pbiDepth = pbiDepth,
+        maxBytes = maxBytes,
+        pickerOptionChars = pickerOptionChars,
+    )
 }
 
 object BillyPebbleProtocol {

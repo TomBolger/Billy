@@ -32,16 +32,25 @@
 #define WATCH_MEDIA_HEIGHT 198
 #define WATCH_MEDIA_PBI_DEPTH 4
 #define WATCH_MEDIA_MAX_BYTES 40000
+#define WATCH_CLARIFY_OPTION_CHARS 28
 #elif defined(PBL_PLATFORM_BASALT)
 #define WATCH_MEDIA_WIDTH 144
 #define WATCH_MEDIA_HEIGHT 100
 #define WATCH_MEDIA_PBI_DEPTH 2
 #define WATCH_MEDIA_MAX_BYTES 23000
+#define WATCH_CLARIFY_OPTION_CHARS 20
+#elif defined(PBL_PLATFORM_CHALK)
+#define WATCH_MEDIA_WIDTH 144
+#define WATCH_MEDIA_HEIGHT 100
+#define WATCH_MEDIA_PBI_DEPTH 2
+#define WATCH_MEDIA_MAX_BYTES 23000
+#define WATCH_CLARIFY_OPTION_CHARS 18
 #else
 #define WATCH_MEDIA_WIDTH 144
 #define WATCH_MEDIA_HEIGHT 100
 #define WATCH_MEDIA_PBI_DEPTH 1
 #define WATCH_MEDIA_MAX_BYTES 8500
+#define WATCH_CLARIFY_OPTION_CHARS 18
 #endif
 
 
@@ -162,8 +171,16 @@ static bool prv_send_input(ConversationManager* manager, const char* input) {
   dict_write_cstring(iter, MESSAGE_KEY_PROMPT, bridge_bodge);
   free(bridge_bodge);
   dict_write_cstring(iter, MESSAGE_KEY_ASSISTANT_RUNTIME, settings_get_assistant_runtime());
-  char prompt_context[48];
-  snprintf(prompt_context, sizeof(prompt_context), "media=%dx%d;pbi=%d;maxb=%d", WATCH_MEDIA_WIDTH, WATCH_MEDIA_HEIGHT, WATCH_MEDIA_PBI_DEPTH, WATCH_MEDIA_MAX_BYTES);
+  char prompt_context[64];
+  snprintf(
+      prompt_context,
+      sizeof(prompt_context),
+      "media=%dx%d;pbi=%d;maxb=%d;opt=%d",
+      WATCH_MEDIA_WIDTH,
+      WATCH_MEDIA_HEIGHT,
+      WATCH_MEDIA_PBI_DEPTH,
+      WATCH_MEDIA_MAX_BYTES,
+      WATCH_CLARIFY_OPTION_CHARS);
   dict_write_cstring(iter, MESSAGE_KEY_PROMPT_CONTEXT, prompt_context);
   uint32_t request_id = s_next_android_request_id++;
   if (s_next_android_request_id == 0) {
