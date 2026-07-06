@@ -57,14 +57,14 @@ class GoogleWorkspaceCompanionTool(
             ),
         JSONObject()
             .put("name", "create_google_doc")
-            .put("description", "Create a Google Doc in the user's Drive when the user explicitly asks for a Google Doc.")
+            .put("description", "Create a Google Doc in the user's Drive when the user explicitly asks for a Google Doc. If the user asks Billy to write content into the document, put the full requested prose in the text argument; do not compress it for watch display.")
             .put(
                 "parameters",
                 objectSchema(
                     required = listOf("title"),
                     properties = mapOf(
                         "title" to stringSchema("Document title."),
-                        "text" to stringSchema("Optional document body text."),
+                        "text" to stringSchema("Optional full document body text. Use complete paragraphs, lists, drafts, or other requested long-form content here; do not provide only an outline unless the user asked for an outline."),
                     ),
                 ),
             ),

@@ -503,7 +503,7 @@ function generateContent(apiKey, model, models, input, options, callback) {
         contents: buildGenerateContentContents(input),
         generationConfig: {
             candidateCount: 1,
-            maxOutputTokens: 700
+            maxOutputTokens: 2048
         }
     };
     if (options.systemInstruction) {

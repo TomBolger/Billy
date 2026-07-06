@@ -813,3 +813,16 @@ Status on 2026-07-02, chat bullet rendering:
   instead of relying on tiny/high font glyphs. The dot is vertically centered
   against the message text row, and wrapped bullet lines keep the existing
   hanging indent.
+
+Status on 2026-07-06, off-watch long-form content:
+
+- Watch-facing final replies should stay concise, but tool arguments for
+  off-watch artifacts must not be compressed to watch length.
+- Android Gemini output cap increased from 260 to 2048 tokens so long tool
+  arguments can carry real document/email prose instead of summaries.
+- Android and companionless system prompts now explicitly separate compact
+  watch replies from full content written to Docs, Gmail, Drive files, drafts,
+  Sheets, Slides, Forms, or other off-watch destinations.
+- `create_google_doc` tool metadata now tells Gemini to put complete document
+  body text in the `text` argument unless the user asked for an outline.
+- Android companion version code `62` identifies this prompt/tooling fix.
