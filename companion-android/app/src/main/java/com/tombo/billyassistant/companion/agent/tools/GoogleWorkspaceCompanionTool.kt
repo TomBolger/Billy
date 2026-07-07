@@ -69,6 +69,21 @@ class GoogleWorkspaceCompanionTool(
                 ),
             ),
         JSONObject()
+            .put("name", "update_google_doc")
+            .put("description", "Update an existing Google Doc. Use this for requests to edit, rewrite, expand, flesh out, continue, append to, or replace the content of an existing Doc. Read the Doc first if current content matters, then put the full replacement or appended prose in text; do not list Drive files or only summarize the intended edit.")
+            .put(
+                "parameters",
+                objectSchema(
+                    required = listOf("text"),
+                    properties = mapOf(
+                        "file_id" to stringSchema("Optional exact Google Doc id. Use the recent/current Google Doc id from context when available."),
+                        "query" to stringSchema("Optional Drive search text for the Google Doc when file_id is unknown."),
+                        "text" to stringSchema("Full text to write into the document. For replace_body, provide the complete new document body, not only the changed paragraph or an outline."),
+                        "mode" to stringSchema("replace_body to replace the document body, or append to add text at the end. Defaults to replace_body."),
+                    ),
+                ),
+            ),
+        JSONObject()
             .put("name", "create_google_sheet")
             .put("description", "Create a blank Google Sheet in the user's Drive when explicitly requested.")
             .put(
@@ -217,10 +232,16 @@ class GoogleWorkspaceCompanionTool(
                 fileId = args.optString("file_id").ifBlank { null },
                 query = args.optString("query").ifBlank { null },
                 maxChars = args.optionalInt("max_chars") ?: 1800,
-            ).toExecution(finalOnSuccess = true)
+            ).toExecution(finalOnSuccess = false)
             "create_google_doc" -> driveApiTools.createGoogleDoc(
                 title = args.optString("title"),
                 text = args.optString("text").ifBlank { null },
+            ).toExecution(finalOnSuccess = true)
+            "update_google_doc" -> driveApiTools.updateGoogleDoc(
+                fileId = args.optString("file_id").ifBlank { null },
+                query = args.optString("query").ifBlank { null },
+                text = args.optString("text").ifBlank { null },
+                mode = args.optString("mode").ifBlank { null },
             ).toExecution(finalOnSuccess = true)
             "create_google_sheet" -> driveApiTools.createGoogleSheet(
                 title = args.optString("title"),

@@ -49,6 +49,27 @@ class RecentAgentContextStore(context: Context) {
         return context.takeIf { System.currentTimeMillis() - it.savedAtMillis <= maxAgeMillis }
     }
 
+    fun saveGoogleDocContext(context: RecentGoogleDocContext, threadId: String? = null) {
+        if (context.documentId.isBlank()) {
+            return
+        }
+        preferences.edit()
+            .putString(key(KEY_LAST_GOOGLE_DOC_CONTEXT, threadId), context.toJson().toString())
+            .putString(KEY_LAST_GOOGLE_DOC_CONTEXT, context.toJson().toString())
+            .apply()
+    }
+
+    fun lastGoogleDocContext(threadId: String? = null, maxAgeMillis: Long = GOOGLE_DOC_CONTEXT_MAX_AGE_MILLIS): RecentGoogleDocContext? {
+        val json = if (threadId.isNullOrBlank()) {
+            preferences.getString(KEY_LAST_GOOGLE_DOC_CONTEXT, null)?.takeIf { it.isNotBlank() }
+        } else {
+            preferences.getString(key(KEY_LAST_GOOGLE_DOC_CONTEXT, threadId), null)?.takeIf { it.isNotBlank() }
+                ?: preferences.getString(KEY_LAST_GOOGLE_DOC_CONTEXT, null)?.takeIf { it.isNotBlank() }
+        } ?: return null
+        val context = runCatching { RecentGoogleDocContext.fromJson(JSONObject(json)) }.getOrNull() ?: return null
+        return context.takeIf { System.currentTimeMillis() - it.savedAtMillis <= maxAgeMillis }
+    }
+
     fun saveTurn(prompt: String, assistantText: String, kind: String = KIND_GENERAL, threadId: String? = null) {
         if (prompt.isBlank() || assistantText.isBlank()) {
             return
@@ -150,6 +171,7 @@ class RecentAgentContextStore(context: Context) {
         private const val KEY_LAST_KIND = "last_kind"
         private const val KEY_LAST_QUERY = "last_query"
         private const val KEY_LAST_PHOTO_CONTEXT = "last_photo_context"
+        private const val KEY_LAST_GOOGLE_DOC_CONTEXT = "last_google_doc_context"
         private const val KEY_TURNS = "turns"
         private const val KEY_LAST_TURN_PROMPT = "last_turn_prompt"
         private const val KEY_LAST_TURN_RESPONSE = "last_turn_response"
@@ -164,6 +186,7 @@ class RecentAgentContextStore(context: Context) {
         private const val MAX_CLARIFICATION_TEXT_LENGTH = 420
         private const val MAX_CLARIFICATION_ANSWERS = 4
         private const val PHOTO_CONTEXT_MAX_AGE_MILLIS = 30L * 60L * 1000L
+        private const val GOOGLE_DOC_CONTEXT_MAX_AGE_MILLIS = 6L * 60L * 60L * 1000L
         private const val TURN_CONTEXT_MAX_AGE_MILLIS = 60L * 60L * 1000L
         private const val CLARIFICATION_MAX_AGE_MILLIS = 30L * 60L * 1000L
     }
@@ -283,6 +306,41 @@ private data class RecentTurn(
 
         fun toJsonArray(turns: List<RecentTurn>): org.json.JSONArray {
             return org.json.JSONArray().also { array -> turns.forEach { array.put(it.toJson()) } }
+        }
+    }
+}
+
+data class RecentGoogleDocContext(
+    val documentId: String,
+    val title: String,
+    val webViewLink: String?,
+    val textExcerpt: String?,
+    val savedAtMillis: Long = System.currentTimeMillis(),
+) {
+    fun toJson(): JSONObject {
+        return JSONObject()
+            .put("document_id", documentId)
+            .put("title", title)
+            .put("web_view_link", webViewLink)
+            .put("text_excerpt", textExcerpt)
+            .put("saved_at_millis", savedAtMillis)
+    }
+
+    fun humanSummary(): String {
+        val titleText = title.ifBlank { "Untitled Google Doc" }
+        val excerpt = textExcerpt?.takeIf { it.isNotBlank() }?.let { "\nRecent excerpt:\n${it.take(900)}" }.orEmpty()
+        return "Recent/current Google Doc context. Use this for follow-up requests about \"the document\" or \"that Doc\".\nTitle: $titleText\nDocument id: $documentId$excerpt"
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): RecentGoogleDocContext {
+            return RecentGoogleDocContext(
+                documentId = json.optString("document_id"),
+                title = json.optString("title"),
+                webViewLink = json.optString("web_view_link").takeIf { it.isNotBlank() },
+                textExcerpt = json.optString("text_excerpt").takeIf { it.isNotBlank() },
+                savedAtMillis = json.optionalPositiveLong("saved_at_millis") ?: System.currentTimeMillis(),
+            )
         }
     }
 }

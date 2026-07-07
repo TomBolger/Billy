@@ -240,7 +240,7 @@ class AppIntentCompanionTool(
             service("keep", "unavailable", "Google Keep personal OAuth returns invalid_scope. Billy does not create a substitute note."),
             service("gmail", "api_backed", "Can search Gmail, create drafts, and send after watch confirmation through OAuth."),
             service("drive", "api_backed", "Can search Drive metadata/full text through OAuth; opening Drive search remains available as a phone fallback."),
-            service("docs", "api_backed", "Can read text from Google Docs and create Google Docs through OAuth."),
+            service("docs", "api_backed", "Can read, create, and update Google Docs through OAuth."),
             service("sheets", "api_backed", "Can read small Google Sheets ranges through OAuth."),
             service("slides", "api_backed", "Can read visible text from Google Slides through OAuth."),
             service("tasks", "api_backed", "Can list, create, and complete Google Tasks through OAuth with readback verification."),

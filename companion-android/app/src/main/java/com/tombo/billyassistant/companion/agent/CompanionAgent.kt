@@ -154,6 +154,7 @@ class CompanionAgent(
             userProfileStore.promptContext(prompt)?.let { add(it) }
             recentContextStore.conversationContext(threadId)?.let { add(it) }
             recentContextStore.lastPhotoContext(threadId)?.humanSummary()?.let { add(it) }
+            recentContextStore.lastGoogleDocContext(threadId)?.humanSummary()?.let { add(it) }
         }
         if (summaries.isEmpty()) {
             return prompt
@@ -379,6 +380,9 @@ class CompanionAgent(
                 result = result.response,
             )
         }
+        if (name == "read_google_doc" || name == "create_google_doc" || name == "update_google_doc") {
+            saveGoogleDocContextFromResult(result.response)
+        }
         return result
     }
 
@@ -443,6 +447,31 @@ class CompanionAgent(
             recentContextStore.saveTurn(prompt, result.text, kind, threadId)
         }
         return result
+    }
+
+    private fun saveGoogleDocContextFromResult(result: JSONObject) {
+        if (result.optString("status") != "ok") {
+            return
+        }
+        val file = result.optJSONObject("file")
+        val documentId = result.optString("document_id")
+            .ifBlank { file?.optString("id").orEmpty() }
+        if (documentId.isBlank()) {
+            return
+        }
+        recentContextStore.saveGoogleDocContext(
+            RecentGoogleDocContext(
+                documentId = documentId,
+                title = result.optString("title")
+                    .ifBlank { file?.optString("name").orEmpty() },
+                webViewLink = file?.optString("webViewLink")?.takeIf { it.isNotBlank() },
+                textExcerpt = result.optString("text_excerpt")
+                    .ifBlank { result.optString("text") }
+                    .takeIf { it.isNotBlank() }
+                    ?.take(900),
+            ),
+            threadId = threadId,
+        )
     }
 
     private fun savePhotoContextFromResult(

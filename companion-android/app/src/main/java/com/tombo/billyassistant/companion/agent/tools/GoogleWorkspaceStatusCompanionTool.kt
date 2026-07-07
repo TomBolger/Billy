@@ -285,7 +285,7 @@ class GoogleWorkspaceStatusCompanionTool(
             ),
             GoogleApiContract(
                 service = "docs",
-                summary = "Docs can read text and create new Google Docs.",
+                summary = "Docs can read, create, and update Google Docs.",
                 operations = listOf(
                     GoogleApiOperation(
                         name = "Read Google Doc",
@@ -300,6 +300,13 @@ class GoogleWorkspaceStatusCompanionTool(
                         support = "api_backed",
                         requiredScopes = setOf(SCOPE_DOCS),
                         limits = "Creates a titled document and optional body text.",
+                    ),
+                    GoogleApiOperation(
+                        name = "Update Google Doc",
+                        toolName = "update_google_doc",
+                        support = "api_backed",
+                        requiredScopes = setOf(SCOPE_DRIVE_METADATA_READONLY, SCOPE_DOCS),
+                        limits = "Replaces the document body or appends full generated text by file id or Drive search query.",
                     ),
                 ),
             ),

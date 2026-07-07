@@ -826,3 +826,21 @@ Status on 2026-07-06, off-watch long-form content:
 - `create_google_doc` tool metadata now tells Gemini to put complete document
   body text in the `text` argument unless the user asked for an outline.
 - Android companion version code `62` identifies this prompt/tooling fix.
+
+Status on 2026-07-06, Google Docs update/edit path:
+
+- Added `update_google_doc` for existing Google Docs. It can replace the body
+  for rewrite/flesh-out/edit requests or append text when the user asks to add
+  to a document.
+- `read_google_doc` now feeds its result back into Gemini instead of ending the
+  turn immediately, so read-before-edit chains can continue into
+  `update_google_doc`.
+- The companion now saves recent/current Google Doc context after read, create,
+  or update: document id, title, optional link, and a text excerpt. Follow-up
+  prompts such as "flesh out the document" can target the Doc by id instead of
+  dumping Drive search results.
+- System instructions now require `update_google_doc` for existing Doc edits
+  and explicitly forbid satisfying edit requests by listing Drive files or only
+  reading the Doc back.
+- Google workspace status text now reports Docs as read/create/update capable.
+- Android companion version code `63` identifies this Docs edit build.

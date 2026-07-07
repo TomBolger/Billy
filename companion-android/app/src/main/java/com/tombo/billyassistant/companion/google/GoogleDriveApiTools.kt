@@ -142,6 +142,88 @@ class GoogleDriveApiTools(
         }
     }
 
+    fun updateGoogleDoc(fileId: String?, query: String?, text: String?, mode: String? = null): GoogleDriveResult {
+        val cleanText = text?.trim().orEmpty()
+        if (cleanText.isBlank()) {
+            return GoogleDriveResult.Rejected("I need the replacement or appended document text.")
+        }
+        val append = mode.equals("append", ignoreCase = true)
+        return withToken(GoogleApiScopes.identity + listOf(GoogleApiScopes.DRIVE_METADATA_READONLY, GoogleApiScopes.DOCS)) { token ->
+            val file = resolveFile(
+                token = token,
+                fileId = fileId,
+                query = query,
+                mimeTypes = listOf(MIME_GOOGLE_DOC),
+            ) ?: return@withToken GoogleDriveResult.Rejected("I could not find a Google Doc to update.")
+            when (val documentResult = http.get("$DOCS_BASE/documents/${encode(file.id)}", token)) {
+                is GoogleHttpResult.Success -> {
+                    val doc = JSONObject(documentResult.body)
+                    val title = doc.optString("title").ifBlank { file.name }
+                    val endIndex = documentBodyEndIndex(doc)
+                    val currentText = extractDocText(doc)
+                    val requests = JSONArray()
+                    val targetText = cleanText.take(MAX_TEXT_CHARS)
+                    if (append) {
+                        val insertAt = maxOf(1, endIndex - 1)
+                        val prefix = if (currentText.isBlank()) "" else "\n\n"
+                        requests.put(
+                            JSONObject().put(
+                                "insertText",
+                                JSONObject()
+                                    .put("location", JSONObject().put("index", insertAt))
+                                    .put("text", prefix + targetText),
+                            ),
+                        )
+                    } else {
+                        if (endIndex > 2) {
+                            requests.put(
+                                JSONObject().put(
+                                    "deleteContentRange",
+                                    JSONObject().put(
+                                        "range",
+                                        JSONObject()
+                                            .put("startIndex", 1)
+                                            .put("endIndex", endIndex - 1),
+                                    ),
+                                ),
+                            )
+                        }
+                        requests.put(
+                            JSONObject().put(
+                                "insertText",
+                                JSONObject()
+                                    .put("location", JSONObject().put("index", 1))
+                                    .put("text", targetText),
+                            ),
+                        )
+                    }
+                    when (val update = http.post("$DOCS_BASE/documents/${encode(file.id)}:batchUpdate", token, JSONObject().put("requests", requests))) {
+                        is GoogleHttpResult.HttpError -> GoogleDriveResult.Failed("Google Docs update HTTP ${update.responseCode}: ${update.reason}")
+                        is GoogleHttpResult.Failed -> GoogleDriveResult.Failed("Google Docs update failed: ${update.reason}")
+                        is GoogleHttpResult.Success -> {
+                            val action = if (append) "Appended to" else "Updated"
+                            val summary = "$action Google Doc:\n$title"
+                            GoogleDriveResult.Success(
+                                summary = summary,
+                                payload = JSONObject()
+                                    .put("status", "ok")
+                                    .put("summary", summary)
+                                    .put("document_id", file.id)
+                                    .put("title", title)
+                                    .put("mode", if (append) "append" else "replace_body")
+                                    .put("text_chars", targetText.length)
+                                    .put("text_excerpt", targetText.take(500))
+                                    .put("file", file.toJson()),
+                            )
+                        }
+                    }
+                }
+                is GoogleHttpResult.HttpError -> GoogleDriveResult.Failed("Google Docs read-before-update HTTP ${documentResult.responseCode}: ${documentResult.reason}")
+                is GoogleHttpResult.Failed -> GoogleDriveResult.Failed("Google Docs read-before-update failed: ${documentResult.reason}")
+            }
+        }
+    }
+
     fun readGoogleSheet(fileId: String?, query: String?, range: String?, maxRows: Int = 12): GoogleDriveResult {
         return withToken(GoogleApiScopes.identity + listOf(GoogleApiScopes.DRIVE_METADATA_READONLY, GoogleApiScopes.SHEETS_READONLY)) { token ->
             val file = resolveFile(
@@ -377,6 +459,18 @@ class GoogleDriveApiTools(
         return lines.joinToString("\n")
     }
 
+    private fun documentBodyEndIndex(doc: JSONObject): Int {
+        val content = doc.optJSONObject("body")?.optJSONArray("content") ?: JSONArray()
+        var endIndex = 1
+        for (i in 0 until content.length()) {
+            val itemEnd = content.optJSONObject(i)?.optInt("endIndex", 0) ?: 0
+            if (itemEnd > endIndex) {
+                endIndex = itemEnd
+            }
+        }
+        return endIndex
+    }
+
     private fun extractSlidesText(deck: JSONObject): String {
         val slides = deck.optJSONArray("slides") ?: JSONArray()
         val lines = mutableListOf<String>()
@@ -488,7 +582,7 @@ class GoogleDriveApiTools(
         private const val MIME_GOOGLE_SHEET = "application/vnd.google-apps.spreadsheet"
         private const val MIME_GOOGLE_SLIDES = "application/vnd.google-apps.presentation"
         private const val MIME_GOOGLE_FORM = "application/vnd.google-apps.form"
-        private const val MAX_TEXT_CHARS = 5_000
+        private const val MAX_TEXT_CHARS = 12_000
     }
 }
 
