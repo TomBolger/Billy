@@ -25,11 +25,15 @@ var reminders = require('./reminders');
 var feedback = require('./lib/feedback');
 var package_json = require('package.json');
 var runtimeRouter = require('./agent/runtime_router');
+var relay = require('./agent/relay');
 
 
 var clay = new Clay(clayConfig, customConfigFunction);
 
 function main() {
+    // Keep the watch's copy of the model current so the Android companion
+    // (which reads it from each prompt) uses the same model as this runtime.
+    Pebble.sendAppMessage({GEMINI_MODEL: config.getGeminiModel()});
     doQuotaWarning();
     location.update();
     Pebble.addEventListener('appmessage', handleAppMessage);
@@ -52,6 +56,14 @@ function handleAppMessage(e) {
     var data = e.payload;
     if (data.ANDROID_COMPANION_READY) {
         runtimeRouter.recordAndroidCompanionSeen(data.ANDROID_REQUEST_ID);
+        return;
+    }
+    if (data.JS_TOOL_REQUEST) {
+        relay.handleRequest(data.JS_TOOL_REQUEST);
+        return;
+    }
+    if (data.JS_TOOL_RESULT) {
+        // Our own relay reply bounced back by the watch for the companion.
         return;
     }
     if (data.PROMPT) {

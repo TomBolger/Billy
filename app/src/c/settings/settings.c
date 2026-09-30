@@ -16,12 +16,14 @@
 
 #include "settings.h"
 #include <pebble.h>
+#include <string.h>
 #include <pebble-events/pebble-events.h>
 
 #include "../util/persist_keys.h"
 
 static EventHandle s_event_handle;
 static char s_assistant_runtime[16];
+static char s_gemini_model[40];
 
 static void prv_app_message_handler(DictionaryIterator *iter, void *context);
 
@@ -71,6 +73,15 @@ const char* settings_get_assistant_runtime() {
   return "automatic";
 }
 
+const char* settings_get_gemini_model() {
+  if (persist_exists(PERSIST_KEY_GEMINI_MODEL)) {
+    persist_read_string(PERSIST_KEY_GEMINI_MODEL, s_gemini_model, sizeof(s_gemini_model));
+    s_gemini_model[sizeof(s_gemini_model) - 1] = '\0';
+    return s_gemini_model;
+  }
+  return "";
+}
+
 static void prv_app_message_handler(DictionaryIterator *iter, void *context) {
   for (Tuple *tuple = dict_read_first(iter); tuple; tuple = dict_read_next(iter)) {
     if (tuple->key == MESSAGE_KEY_QUICK_LAUNCH_BEHAVIOUR) {
@@ -84,6 +95,9 @@ static void prv_app_message_handler(DictionaryIterator *iter, void *context) {
       persist_write_bool(PERSIST_KEY_CONFIRM_TRANSCRIPTS, tuple->value->int8);
     } else if (tuple->key == MESSAGE_KEY_ASSISTANT_RUNTIME) {
       persist_write_string(PERSIST_KEY_ASSISTANT_RUNTIME, tuple->value->cstring);
+    } else if (tuple->key == MESSAGE_KEY_GEMINI_MODEL && tuple->type == TUPLE_CSTRING &&
+               strlen(tuple->value->cstring) < sizeof(s_gemini_model)) {
+      persist_write_string(PERSIST_KEY_GEMINI_MODEL, tuple->value->cstring);
     }
   }
 }

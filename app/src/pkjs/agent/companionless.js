@@ -14,223 +14,254 @@
  * limitations under the License.
  */
 
+// The phone-side agent loop: prompt -> Gemini -> tools -> Gemini -> answer.
+
 var gemini = require('./gemini');
 var formatting = require('./formatting');
 var localHistory = require('./local_history');
-var profileTools = require('./profile_tools');
 var promptBuilder = require('./prompt');
+var registry = require('./tool_registry');
 var usage = require('./usage');
-var watchTools = require('./watch_tools');
-var uiTools = require('./ui_tools');
+
+var MAX_STEPS = 8;
+var CHUNK_LENGTH = 80;
 
 function CompanionlessRuntime(session) {
     this.session = session;
 }
 
 CompanionlessRuntime.prototype.run = function() {
-    runCompanionlessModel(this.session);
+    new Turn(this.session).start();
+};
+
+// "BILLY_CLARIFICATION_ANSWER\ncontext=..\nquestion=..\nanswer=.." from the
+// watch picker becomes a natural sentence in the same thread.
+function normalizePrompt(prompt) {
+    prompt = String(prompt || '').trim();
+    if (prompt.indexOf('BILLY_CLARIFICATION_ANSWER') !== 0) {
+        return prompt;
+    }
+    var fields = {};
+    prompt.split('\n').slice(1).forEach(function(line) {
+        var eq = line.indexOf('=');
+        if (eq > 0) {
+            fields[line.substring(0, eq)] = line.substring(eq + 1);
+        }
+    });
+    var answer = String(fields.answer || '').split('|')[0].trim();
+    if (fields.question) {
+        return 'My answer to your question "' + fields.question + '": ' + answer;
+    }
+    return answer || prompt;
 }
 
-function runCompanionlessModel(session) {
-    var threadId = localHistory.ensureThreadId(session);
-    var searchGrounding = true;
-    var tools = uiTools.getDeclarations();
-    if (profileTools.shouldExpose(session.prompt)) {
-        tools = tools.concat(profileTools.getDeclarations());
+function describeAction(name, args, result) {
+    var status = result && result.status ? result.status : 'done';
+    var brief = JSON.stringify(args || {});
+    if (brief.length > 140) {
+        brief = brief.substring(0, 137) + '...';
     }
-    if (watchTools.shouldExpose(session.prompt)) {
-        tools = tools.concat(watchTools.getDeclarations());
-    }
-    var progress = startProgress(session, searchGrounding, tools && tools.length > 0);
-    runModelLoop(session, threadId, [{
-        type: 'user_input',
-        content: [{
-            type: 'text',
-            text: localHistory.buildInput(threadId, session.prompt)
-        }]
-    }], 0, progress, searchGrounding, tools);
+    return name + ' ' + brief + ' -> ' + status;
 }
 
-function runModelLoop(session, threadId, history, iteration, progress, searchGrounding, tools) {
-    gemini.generate(history, {
-        enableSearchGrounding: searchGrounding,
-        tools: tools,
-        systemInstruction: promptBuilder.buildSystemInstruction()
-    }, function(err, response) {
-        if (shouldStandDown(session)) {
-            progress.done();
+function Turn(session) {
+    this.session = session;
+    this.userText = normalizePrompt(session.prompt);
+    this.actions = [];
+    this.executed = {};
+    this.lastSummary = '';
+    this.cardShown = false;
+    this.searchCounted = false;
+    this.progressTimers = [];
+    this.finished = false;
+}
+
+Turn.prototype.start = function() {
+    this.threadId = localHistory.ensureThreadId(this.session);
+    this.contents = localHistory.contents(this.threadId).concat([{
+        role: 'user',
+        parts: [{text: this.userText}]
+    }]);
+    this.options = {
+        functions: registry.declarations(),
+        systemInstruction: promptBuilder.buildSystemInstruction(),
+        search: true
+    };
+    this.progress('Thinking');
+    var self = this;
+    this.progressTimers.push(setTimeout(function() {
+        self.progress('Still thinking');
+    }, 8000));
+    this.step(0, null);
+};
+
+Turn.prototype.standingDown = function() {
+    var s = this.session;
+    return !!(s && s.shouldStandDown && s.shouldStandDown());
+};
+
+Turn.prototype.progress = function(text) {
+    if (!this.finished && !this.standingDown()) {
+        this.session.handleMessage({data: 'f' + text});
+    }
+};
+
+Turn.prototype.stopProgress = function() {
+    this.progressTimers.forEach(clearTimeout);
+    this.progressTimers = [];
+};
+
+Turn.prototype.step = function(index, model) {
+    var self = this;
+    var options = this.options;
+    if (index >= MAX_STEPS - 1) {
+        // Last round: force a text answer from what we have.
+        options = {};
+        Object.keys(this.options).forEach(function(key) {
+            options[key] = self.options[key];
+        });
+        options.forceText = true;
+    }
+    var handle = function(err, response) {
+        if (self.standingDown()) {
+            self.finish(null, true);
             return;
         }
         if (err) {
-            progress.done();
-            session.handleMessage({data: 'w' + err.message});
-            session.handleMessage({data: 'd'});
-            session.handleClose({
-                code: 1000,
-                reason: '',
-                wasClean: true
-            });
+            self.fail(err.message || String(err));
             return;
         }
-        if (response.functionCalls && response.functionCalls.length > 0 && iteration < 3) {
-            usage.recordGeminiResponse(response);
-            appendHistoryItems(history, response.historyItems);
-            executeFunctionCalls(session, history, response.functionCalls, function(stoppedForUser) {
-                if (shouldStandDown(session)) {
-                    progress.done();
-                    return;
-                }
-                if (stoppedForUser) {
-                    progress.done();
-                    return;
-                }
-                progress.update('Writing the answer');
-                runModelLoop(session, threadId, history, iteration + 1, progress, searchGrounding, tools);
-            });
-            return;
-        }
-        var text = response.text || 'I did not receive a usable answer.';
         usage.recordGeminiResponse(response);
-        if (searchGrounding && iteration === 0) {
+        if (response.usedSearch && !self.searchCounted) {
+            self.searchCounted = true;
             usage.recordGroundedSearch();
         }
-        localHistory.recordTurn(threadId, session.prompt, text);
-        progress.done();
-        streamText(session, text);
-        session.handleMessage({data: 'd'});
-        session.handleClose({
-            code: 1000,
-            reason: '',
-            wasClean: true
-        });
-    });
-}
-
-function startProgress(session, searchGrounding, hasTools) {
-    var active = true;
-    var timers = [];
-
-    function update(text) {
-        if (!active || shouldStandDown(session)) {
+        self.contents.push(response.modelContent);
+        if (response.functionCalls.length > 0 && !options.forceText) {
+            self.runTools(response.functionCalls, function(stopForUser) {
+                if (stopForUser) {
+                    self.finish('', false);
+                    return;
+                }
+                self.progress('Writing the answer');
+                self.step(index + 1, response.model);
+            });
             return;
         }
-        session.handleMessage({data: 'f' + text});
-    }
-
-    if (searchGrounding) {
-        update('Searching the web');
-        timers.push(setTimeout(function() {
-            update('Reading results');
-        }, 5000));
-        timers.push(setTimeout(function() {
-            update('Still working');
-        }, 15000));
-    } else if (hasTools) {
-        update('Understanding the request');
-    } else {
-        update('Thinking');
-        timers.push(setTimeout(function() {
-            update('Still thinking');
-        }, 5000));
-    }
-
-    return {
-        update: update,
-        done: function() {
-            active = false;
-            timers.forEach(function(timer) {
-                clearTimeout(timer);
-            });
-            timers = [];
-        }
+        self.finish(response.text, false);
     };
-}
-
-function shouldStandDown(session) {
-    return !!(session && session.shouldStandDown && session.shouldStandDown());
-}
-
-function appendHistoryItems(history, items) {
-    if (!items || !Array.isArray(items)) {
-        return;
+    if (model) {
+        gemini.generateWithModel(model, this.contents, options, handle);
+    } else {
+        gemini.generateFirst(this.contents, options, handle);
     }
-    items.forEach(function(item) {
-        history.push(item);
-    });
-}
+};
 
-function executeFunctionCalls(session, history, calls, callback) {
-    var index = 0;
+Turn.prototype.runTools = function(calls, done) {
+    var self = this;
+    var parts = [];
+    var stopForUser = false;
+    var i = 0;
     function next() {
-        if (index >= calls.length) {
-            callback();
-            return;
-        }
-        var call = calls[index++];
-        var handledByUi = uiTools.execute(session, call, function(result) {
-            if (result && result.stop_for_user) {
-                callback(true);
-                return;
+        if (i >= calls.length || self.standingDown()) {
+            if (parts.length > 0) {
+                self.contents.push({role: 'user', parts: parts});
             }
-            history.push({
-                type: 'function_result',
-                name: call.name,
-                call_id: call.id,
-                result: [{
-                    type: 'text',
-                    text: JSON.stringify(result)
-                }]
-            });
-            next();
-        });
-        if (handledByUi) {
+            done(stopForUser);
             return;
         }
-        var handledByProfile = profileTools.execute(session, call, function(result) {
-            history.push({
-                type: 'function_result',
-                name: call.name,
-                call_id: call.id,
-                result: [{
-                    type: 'text',
-                    text: JSON.stringify(result)
-                }]
+        var call = calls[i++];
+        var key = call.name + ':' + JSON.stringify(call.args || {});
+        var respond = function(result) {
+            result = result || {};
+            if (result.stop_for_user) {
+                stopForUser = true;
+                self.actions.push('asked the user: ' + ((call.args && call.args.question) || 'a question'));
+            } else {
+                self.actions.push(describeAction(call.name, call.args, result));
+            }
+            if (result.status === 'ok' && result.summary) {
+                self.lastSummary = result.summary;
+            }
+            if (result.watch_card) {
+                self.cardShown = true;
+            }
+            var response = {};
+            Object.keys(result).forEach(function(k) {
+                if (k !== 'stop_for_user') {
+                    response[k] = result[k];
+                }
             });
+            parts.push({functionResponse: {id: call.id, name: call.name, response: response}});
             next();
-        });
-        if (handledByProfile) {
+        };
+        if (registry.isMutating(call.name) && self.executed[key]) {
+            var previous = self.executed[key];
+            respond({status: previous.status, summary: 'Already done earlier in this turn; not repeated.', original: previous});
             return;
         }
-        watchTools.execute(session, call, function(result) {
-            history.push({
-                type: 'function_result',
-                name: call.name,
-                call_id: call.id,
-                result: [{
-                    type: 'text',
-                    text: JSON.stringify(result)
-                }]
-            });
-            next();
+        registry.execute(self.session, call.name, call.args, function(result) {
+            if (registry.isMutating(call.name)) {
+                self.executed[key] = result;
+            }
+            respond(result);
         });
     }
     next();
+};
+
+Turn.prototype.fail = function(message) {
+    if (this.finished) {
+        return;
+    }
+    this.finished = true;
+    this.stopProgress();
+    this.session.handleMessage({data: 'w' + message});
+    this.close();
+};
+
+Turn.prototype.finish = function(text, silent) {
+    if (this.finished) {
+        return;
+    }
+    this.finished = true;
+    this.stopProgress();
+    if (silent) {
+        return;
+    }
+    text = formatting.forWatch(text || '');
+    if (!text && this.lastSummary && !this.actions.some(isQuestion)) {
+        text = this.lastSummary;
+    }
+    if (!text && !this.cardShown && !this.actions.some(isQuestion)) {
+        text = 'Sorry, I did not get an answer. Please try again.';
+    }
+    localHistory.recordTurn(this.threadId, this.userText, text, this.actions);
+    if (!text && this.actions.some(isQuestion)) {
+        // The picker already ended the response on the watch.
+        return;
+    }
+    if (text) {
+        streamText(this.session, text);
+    }
+    this.close();
+};
+
+function isQuestion(action) {
+    return action.indexOf('asked the user') === 0;
 }
 
+Turn.prototype.close = function() {
+    this.session.handleMessage({data: 'd'});
+    this.session.handleClose({code: 1000, reason: '', wasClean: true});
+};
+
 function streamText(session, text) {
-    text = formatting.forWatch(text).replace(/\u202f/g, '\u00a0');
-    var chunk = '';
-    for (var i = 0; i < text.length; i++) {
-        var next = text[i];
-        if (chunk.length > 0 && (chunk + next).length > 80) {
-            session.handleMessage({data: 'c' + chunk});
-            chunk = '';
-        }
-        chunk += next;
-    }
-    if (chunk.length > 0) {
-        session.handleMessage({data: 'c' + chunk});
+    text = text.replace(/ /g, ' ');
+    for (var i = 0; i < text.length; i += CHUNK_LENGTH) {
+        session.handleMessage({data: 'c' + text.substring(i, i + CHUNK_LENGTH)});
     }
 }
 
 exports.CompanionlessRuntime = CompanionlessRuntime;
+exports._normalizePrompt = normalizePrompt;

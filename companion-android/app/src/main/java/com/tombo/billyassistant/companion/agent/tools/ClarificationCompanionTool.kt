@@ -9,7 +9,7 @@ class ClarificationCompanionTool(
     override val declarations: List<JSONObject> = listOf(
         JSONObject()
             .put("name", "ask_clarifying_question")
-            .put("description", "Ask the user one short clarifying question as a watch picker. Use this for every user-facing follow-up question; never ask open-ended questions in final text. Provide 1-3 likely selectable options; each option label must be $optionLabelMaxChars characters or fewer. The watch adds a Dictate option for anything else.")
+            .put("description", "Show a picker so the user can choose an answer with the watch buttons (a Dictate option is added automatically). Use ONLY when guessing could do the wrong thing (create, send, or delete the wrong item) and no sensible default exists. Never use it to confirm something the user already asked for. Provide 1-3 likely options, each $optionLabelMaxChars characters or fewer. Ends your turn; the answer arrives as the next message.")
             .put(
                 "parameters",
                 objectSchema(

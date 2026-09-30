@@ -26,7 +26,7 @@ exports.setReminder = function(session, message, callback) {
     session.enqueue({ACTION_REMINDER_WAS_SET: unixTime});
     
     if (unixTime < (new Date()).getTime() / 1000 + 3600) {
-      callback({"warning": "Your reminder was set. It is **critical** you warn the user: Due to timeline delays, reminders set in the near future may not appear on time."});
+      callback({"status": "ok", "summary": "Reminder set.", "note_for_user": "Tell the user briefly: reminders less than an hour away may arrive late because of timeline sync delays."});
     } else {
       callback({"status": "ok"});
     }
@@ -55,12 +55,14 @@ exports.deleteReminder = function(session, message, callback) {
   var reminderId = message['id'];
   if (!reminderId) {
     callback({"error": "No reminder ID provided"});
+    return;
   }
   
   try {
     var success = reminders.deleteReminder(reminderId);
     if (!success) {
-      callback({"error": "Reminder not found"});
+      callback({"error": "Reminder not found. Call get_reminders for current ids."});
+      return;
     }
     session.enqueue({ACTION_REMINDER_DELETED: 1});
     callback({"status": "ok"});

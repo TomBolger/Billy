@@ -14,385 +14,82 @@
  * limitations under the License.
  */
 
+// Thin, predictable Gemini generateContent client.
+//
+// Design rules (these are what keep tool calling reliable):
+// - One API surface only (generateContent). No silent fallback to a different
+//   API that flattens tool results into plain text.
+// - Google Search and custom functions are sent together with
+//   toolConfig.includeServerSideToolInvocations, which Gemini 3 requires for
+//   the combination. Without the flag every tool request fails.
+// - The model is chosen once per turn (see pickModel) and then pinned, because
+//   thought signatures from one model are not valid for another.
+// - Model content is returned untouched so thought signatures survive.
+
 var config = require('../config');
 
-var INTERACTIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
-var GENERATE_CONTENT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
-var FALLBACK_MODELS = ['gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash'];
-var GEMINI_REQUEST_TIMEOUT_MS = 45000;
+var BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
+var REQUEST_TIMEOUT_MS = 30000;
+var MAX_OUTPUT_TOKENS = 4096;
+var TRANSIENT_RETRY_DELAY_MS = 900;
 
-function extractText(response) {
-    if (response.output_text) {
-        return response.output_text;
-    }
-    if (response.output && Array.isArray(response.output)) {
-        return response.output.map(function(item) {
-            return item.text || '';
-        }).join('');
-    }
-    if (response.steps && Array.isArray(response.steps)) {
-        var stepParts = [];
-        response.steps.forEach(function(step) {
-            var output = step;
-            if (step.model_output) {
-                output = step.model_output;
-            } else if (step.modelOutput) {
-                output = step.modelOutput;
-            } else if (step.type !== 'model_output') {
-                output = null;
-            }
-            if (!output) {
-                return;
-            }
-            if (output.text) {
-                stepParts.push(output.text);
-                return;
-            }
-            if (!output.content) {
-                return;
-            }
-            output.content.forEach(function(content) {
-                if (content.type === 'text' && content.text) {
-                    stepParts.push(content.text);
-                }
-            });
-        });
-        if (stepParts.length > 0) {
-            return stepParts.join('');
-        }
-    }
-    var parts = [];
-    if (!response.candidates) {
-        return '';
-    }
-    response.candidates.forEach(function(candidate) {
-        if (!candidate.content || !candidate.content.parts) {
-            return;
-        }
-        candidate.content.parts.forEach(function(part) {
-            if (part.text) {
-                parts.push(part.text);
-            }
-        });
-    });
-    return parts.join('');
+function isGemini3(model) {
+    return /^gemini-3/.test(String(model || ''));
 }
 
-function buildGenerateContentContents(input) {
-    if (typeof input === 'string') {
-        return [{
-            role: 'user',
-            parts: [{text: input}]
-        }];
-    }
-    if (!input || !Array.isArray(input)) {
-        return [{
-            role: 'user',
-            parts: [{text: String(input || '')}]
-        }];
-    }
-    var contents = [];
-    input.forEach(function(item) {
-        if (item.role && item.parts) {
-            contents.push(item);
-            return;
-        }
-        if (item.type === 'user_input') {
-            contents.push({
-                role: 'user',
-                parts: buildTextParts(item.content)
-            });
-            return;
-        }
-        if (item.type === 'function_result') {
-            contents.push({
-                role: 'user',
-                parts: [{
-                    functionResponse: {
-                        id: item.call_id || undefined,
-                        name: item.name,
-                        response: buildFunctionResponse(item.result)
-                    }
-                }]
-            });
+exports.candidateModels = function() {
+    var models = [config.getGeminiModel()];
+    config.FALLBACK_MODELS.forEach(function(model) {
+        if (models.indexOf(model) === -1) {
+            models.push(model);
         }
     });
-    return contents;
-}
+    return models;
+};
 
-function buildInteractionText(input) {
-    if (typeof input === 'string') {
-        return input;
-    }
-    if (!input || !Array.isArray(input)) {
-        return String(input || '');
-    }
-    var textParts = [];
-    input.forEach(function(item) {
-        if (!item) {
-            return;
-        }
-        if (item.type === 'text' && item.text) {
-            textParts.push(item.text);
-            return;
-        }
-        if (item.type === 'user_input') {
-            textParts.push(extractPlainText(item.content));
-            return;
-        }
-        if (item.type === 'function_result') {
-            textParts.push('Tool ' + item.name + ' result: ' + JSON.stringify(buildFunctionResponse(item.result)));
-            return;
-        }
-        if (item.parts) {
-            textParts.push(extractPlainText(item.parts));
-            return;
-        }
-        if (item.content) {
-            textParts.push(extractPlainText(item.content));
-        }
-    });
-    return textParts.join('\n\n');
-}
-
-function buildInteractionContentList(input) {
-    return [{type: 'text', text: buildInteractionText(input)}];
-}
-
-function extractPlainText(content) {
-    if (typeof content === 'string') {
-        return content;
-    }
-    if (!Array.isArray(content)) {
-        return String(content || '');
-    }
-    var parts = [];
-    content.forEach(function(part) {
-        if (!part) {
-            return;
-        }
-        if (part.text) {
-            parts.push(part.text);
-        } else if (part.type === 'text' && part.text) {
-            parts.push(part.text);
-        }
-    });
-    return parts.join('\n');
-}
-
-function buildTextParts(content) {
-    var parts = [];
-    if (!Array.isArray(content)) {
-        return [{text: String(content || '')}];
-    }
-    content.forEach(function(part) {
-        if (part.type === 'text' && part.text) {
-            parts.push({text: part.text});
-        }
-    });
-    if (parts.length === 0) {
-        parts.push({text: ''});
-    }
-    return parts;
-}
-
-function buildFunctionResponse(result) {
-    if (!Array.isArray(result) || result.length === 0) {
-        return {};
-    }
-    var first = result[0];
-    if (first.type === 'text') {
-        try {
-            return JSON.parse(first.text);
-        } catch (e) {
-            return {result: first.text || ''};
-        }
-    }
-    return {result: result};
-}
-
-function buildGenerateContentTools(options) {
-    var tools = [];
-    if (options.enableSearchGrounding) {
-        tools.push({google_search: {}});
-    }
-    if (options.tools && options.tools.length > 0) {
-        var declarations = [];
-        options.tools.forEach(function(tool) {
-            if (tool.type === 'function') {
-                declarations.push({
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: normalizeFunctionParameters(tool.parameters)
-                });
-            }
-        });
-        if (declarations.length > 0) {
-            tools.push({function_declarations: declarations});
-        }
-    }
-    return tools;
-}
-
-function normalizeFunctionParameters(parameters) {
-    if (parameters && typeof parameters === 'object' && !Array.isArray(parameters)) {
-        return parameters;
-    }
-    return {
-        type: 'object',
-        properties: {}
-    };
-}
-
-function normalizeInteractionTool(tool) {
-    if (!tool || tool.type !== 'function') {
-        return tool;
-    }
-    var normalized = {};
-    Object.keys(tool).forEach(function(key) {
-        normalized[key] = tool[key];
-    });
-    normalized.parameters = normalizeFunctionParameters(normalized.parameters);
-    return normalized;
-}
-
-function extractFunctionCalls(response) {
-    var calls = [];
-    if (response.steps && Array.isArray(response.steps)) {
-        response.steps.forEach(function(step) {
-            var call = step.function_call || step.functionCall || (step.type === 'function_call' ? step : null);
-            if (call && call.name) {
-                calls.push({
-                    id: call.id,
-                    name: call.name,
-                    arguments: call.arguments || call.args || {}
-                });
-            }
-        });
-    }
-    if (!response.candidates || !Array.isArray(response.candidates)) {
-        return calls;
-    }
-    response.candidates.forEach(function(candidate) {
-        if (!candidate.content || !candidate.content.parts) {
-            return;
-        }
-        candidate.content.parts.forEach(function(part) {
-            var call = part.functionCall || part.function_call;
-            if (call) {
-                calls.push({
-                    id: call.id,
-                    name: call.name,
-                    arguments: call.args || call.arguments || {}
-                });
-            }
-        });
-    });
-    if (calls.length === 0) {
-        var leakedCall = extractLeakedClarificationCall(extractText(response));
-        if (leakedCall) {
-            calls.push(leakedCall);
-        }
-    }
-    return calls;
-}
-
-function extractLeakedClarificationCall(text) {
-    if (!looksLikeLeakedClarificationCall(text)) {
-        return null;
-    }
-    var questionMatch = /question\s*=\s*["']([^"']{1,160})["']/i.exec(text);
-    var optionsMatch = /options\s*=\s*\[([\s\S]{1,400}?)\]/i.exec(text);
-    if (!questionMatch || !optionsMatch) {
-        return null;
-    }
-    var options = [];
-    var optionRegex = /["']([^"']{1,64})["']/g;
-    var match;
-    while ((match = optionRegex.exec(optionsMatch[1])) && options.length < 4) {
-        options.push(match[1]);
-    }
-    if (options.length < 1) {
-        return null;
-    }
-    return {
-        id: undefined,
-        name: 'ask_clarifying_question',
-        arguments: {
-            question: questionMatch[1],
-            options: options
-        }
-    };
-}
-
-function looksLikeLeakedClarificationCall(text) {
-    if (!text) {
-        return false;
-    }
-    var compact = String(text).toLowerCase().replace(/[^a-z0-9]/g, '');
-    return compact.indexOf('askclarifyingquestion') !== -1;
-}
-
-function extractHistoryItems(response) {
-    if (response.steps && Array.isArray(response.steps)) {
-        return response.steps;
-    }
-    var items = [];
-    if (!response.candidates || !Array.isArray(response.candidates)) {
-        return items;
-    }
-    response.candidates.forEach(function(candidate) {
-        if (candidate.content) {
-            items.push(candidate.content);
-        }
-    });
-    return items;
-}
-
-function hasGenerateContentToolError(error) {
-    var text = (error.message + ' ' + error.code + ' ' + error.messageText).toLowerCase();
-    return error.status === 400 &&
-        (text.indexOf('tool') !== -1 ||
-            text.indexOf('function') !== -1 ||
-            text.indexOf('google_search') !== -1 ||
-            text.indexOf('function_declarations') !== -1);
-}
-
-function generateInteractions(apiKey, model, input, options, callback) {
-    generateInteractionsWithInput(apiKey, model, buildInteractionText(input), options, function(err, response) {
-        if (!err || !shouldRetryInteractionWithContentList(err)) {
-            callback(err, response);
-            return;
-        }
-        generateInteractionsWithInput(apiKey, model, buildInteractionContentList(input), options, callback);
-    });
-}
-
-function generateInteractionsWithInput(apiKey, model, interactionInput, options, callback) {
+function buildBody(model, contents, options) {
     var body = {
-        model: model,
-        input: interactionInput,
-        store: false
+        contents: contents,
+        generationConfig: {
+            candidateCount: 1,
+            maxOutputTokens: options.maxOutputTokens || MAX_OUTPUT_TOKENS
+        }
     };
-
+    if (isGemini3(model)) {
+        body.generationConfig.thinkingConfig = {thinkingLevel: options.thinkingLevel || 'low'};
+    }
     if (options.systemInstruction) {
-        body.system_instruction = options.systemInstruction;
+        body.systemInstruction = {parts: [{text: options.systemInstruction}]};
     }
-
-    body.tools = [];
-
-    if (options.enableSearchGrounding) {
-        body.tools.push({type: 'google_search'});
+    var declarations = (options.functions || []).map(function(fn) {
+        return {
+            name: fn.name,
+            description: fn.description,
+            parameters: fn.parameters || {type: 'object', properties: {}}
+        };
+    });
+    var tools = [];
+    var useSearch = !!options.search && (declarations.length === 0 || isGemini3(model));
+    if (useSearch) {
+        tools.push({googleSearch: {}});
     }
-
-    if (options.tools) {
-        body.tools = body.tools.concat(options.tools.map(normalizeInteractionTool));
+    if (declarations.length > 0) {
+        tools.push({functionDeclarations: declarations});
     }
-
-    if (body.tools.length === 0) {
-        delete body.tools;
+    if (tools.length > 0) {
+        body.tools = tools;
     }
+    if (useSearch && declarations.length > 0) {
+        body.toolConfig = {includeServerSideToolInvocations: true};
+    }
+    if (options.forceText && declarations.length > 0) {
+        body.toolConfig = body.toolConfig || {};
+        body.toolConfig.functionCallingConfig = {mode: 'NONE'};
+    }
+    return body;
+}
 
+function post(apiKey, model, body, callback) {
     var finished = false;
     var req = new XMLHttpRequest();
     function finish(err, value) {
@@ -402,8 +99,8 @@ function generateInteractionsWithInput(apiKey, model, interactionInput, options,
         finished = true;
         callback(err, value);
     }
-    req.open('POST', INTERACTIONS_URL, true);
-    req.timeout = GEMINI_REQUEST_TIMEOUT_MS;
+    req.open('POST', BASE_URL + encodeURIComponent(model) + ':generateContent', true);
+    req.timeout = REQUEST_TIMEOUT_MS;
     req.setRequestHeader('Content-Type', 'application/json');
     req.setRequestHeader('x-goog-api-key', apiKey);
     req.onload = function() {
@@ -415,153 +112,150 @@ function generateInteractionsWithInput(apiKey, model, interactionInput, options,
             return;
         }
         try {
-            var response = JSON.parse(req.responseText);
-            finish(null, {
-                text: extractText(response),
-                functionCalls: extractFunctionCalls(response),
-                interactionId: response.id || null,
-                historyItems: extractHistoryItems(response),
-                raw: response
-            });
+            finish(null, JSON.parse(req.responseText));
         } catch (e) {
             finish(e);
         }
     };
     req.onerror = function() {
-        finish(new Error('Gemini request failed before a response was received.'));
+        var err = new Error('Could not reach Gemini. Check the phone connection.');
+        err.transient = true;
+        finish(err);
     };
     req.ontimeout = function() {
-        finish(new Error('Gemini request timed out. Please try again.'));
+        var err = new Error('Gemini took too long to answer.');
+        err.transient = true;
+        finish(err);
     };
     req.send(JSON.stringify(body));
 }
 
-exports.generate = function(input, options, callback) {
-    var apiKey = config.getGeminiApiKey();
-    if (!apiKey) {
-        callback(new Error('Gemini API key is not configured. Open Billy settings and add a Gemini API key.'));
-        return;
+function parseResponse(model, raw) {
+    var candidate = raw && raw.candidates && raw.candidates[0];
+    var content = candidate && candidate.content ? candidate.content : {role: 'model', parts: []};
+    if (!content.role) {
+        content.role = 'model';
     }
-
-    options = options || {};
-    var models = [config.getGeminiModel()];
-    FALLBACK_MODELS.forEach(function(model) {
-        if (models.indexOf(model) === -1) {
-            models.push(model);
+    var parts = content.parts || [];
+    var text = [];
+    var calls = [];
+    parts.forEach(function(part) {
+        if (part.thought) {
+            return;
+        }
+        if (part.functionCall) {
+            var args = part.functionCall.args || {};
+            if (typeof args === 'string') {
+                try {
+                    args = JSON.parse(args);
+                } catch (e) {
+                    args = {};
+                }
+            }
+            calls.push({
+                id: part.functionCall.id,
+                name: part.functionCall.name,
+                args: args
+            });
+        } else if (typeof part.text === 'string') {
+            text.push(part.text);
         }
     });
-
-    generateWithModels(apiKey, models, input, options, callback);
+    return {
+        model: model,
+        text: text.join('').trim(),
+        functionCalls: calls,
+        modelContent: content,
+        finishReason: candidate ? candidate.finishReason : 'NO_CANDIDATE',
+        usedSearch: !!(candidate && candidate.groundingMetadata),
+        raw: raw
+    };
 }
 
-function generateWithModels(apiKey, models, input, options, callback) {
-    var model = models.shift();
-    generateContent(apiKey, model, models.slice(0), input, options, function(err, response) {
-        if (!err) {
-            if (hasUsableResponse(response)) {
+function isUsable(response) {
+    return response.functionCalls.length > 0 || response.text.length > 0;
+}
+
+// Sends one request to a specific model, retrying once on transient errors,
+// and once without Google Search if this model rejects the tool combination.
+exports.generateWithModel = function(model, contents, options, callback) {
+    var apiKey = config.getGeminiApiKey();
+    if (!apiKey) {
+        callback(new Error('Add a Gemini API key in Billy settings.'));
+        return;
+    }
+    var attempt = 0;
+    var searchEnabled = !!options.search;
+    function run() {
+        attempt++;
+        var effective = {};
+        Object.keys(options).forEach(function(key) {
+            effective[key] = options[key];
+        });
+        effective.search = searchEnabled;
+        post(apiKey, model, buildBody(model, contents, effective), function(err, raw) {
+            if (err) {
+                if (searchEnabled && err.status === 400 && /search|tool|server.?side|combination|function/i.test(err.messageText || '')) {
+                    console.log('Gemini rejected Search + functions on ' + model + '; retrying without Search.');
+                    searchEnabled = false;
+                    run();
+                    return;
+                }
+                if (attempt < 2 && isTransient(err)) {
+                    setTimeout(run, TRANSIENT_RETRY_DELAY_MS);
+                    return;
+                }
+                callback(err);
+                return;
+            }
+            var response = parseResponse(model, raw);
+            if (!isUsable(response) && attempt < 2 && response.finishReason !== 'SAFETY') {
+                setTimeout(run, TRANSIENT_RETRY_DELAY_MS);
+                return;
+            }
+            callback(null, response);
+        });
+    }
+    run();
+};
+
+// First call of a turn: try the configured model, then fall back to the next
+// model only for availability problems. The caller must pin response.model for
+// every later call in the same turn.
+exports.generateFirst = function(contents, options, callback) {
+    var models = exports.candidateModels();
+    var lastErr = null;
+    function next() {
+        var model = models.shift();
+        if (!model) {
+            callback(lastErr || new Error('Gemini did not answer. Try again.'));
+            return;
+        }
+        exports.generateWithModel(model, contents, options, function(err, response) {
+            if (!err && isUsable(response)) {
                 callback(null, response);
                 return;
             }
-            if (models.length > 0) {
-                generateWithModels(apiKey, models, input, options, callback);
+            lastErr = err || new Error('Gemini returned an empty answer.');
+            if (err && !shouldTryNextModel(err)) {
+                callback(err);
                 return;
             }
-            callback(new Error('Gemini returned an empty answer. Please try again.'));
-            return;
-        }
-        if (shouldTryGenerateContentFallback(err)) {
-            generateInteractions(apiKey, model, input, options, function(interactionsErr, interactionsResponse) {
-                if (!interactionsErr && hasUsableResponse(interactionsResponse)) {
-                    callback(null, interactionsResponse);
-                    return;
-                }
-                var fallbackErr = interactionsErr || new Error('Gemini returned an empty answer. Please try again.');
-                if (models.length > 0 && shouldFallback(fallbackErr)) {
-                    generateWithModels(apiKey, models, input, options, callback);
-                    return;
-                }
-                callback(fallbackErr);
-            });
-            return;
-        }
-        if (models.length > 0 && shouldFallback(err)) {
-            generateWithModels(apiKey, models, input, options, callback);
-            return;
-        }
-        callback(err);
-    });
+            console.log('Falling back from ' + model + ': ' + lastErr.message);
+            next();
+        });
+    }
+    next();
+};
+
+function isTransient(err) {
+    return !!err.transient || err.status === 429 || err.status === 500 || err.status === 502 ||
+        err.status === 503 || err.status === 504;
 }
 
-function hasUsableResponse(response) {
-    return !!(response &&
-        ((response.text && response.text.trim && response.text.trim().length > 0) ||
-            (response.functionCalls && response.functionCalls.length > 0)));
-}
-
-function generateContent(apiKey, model, models, input, options, callback) {
-    var body = {
-        contents: buildGenerateContentContents(input),
-        generationConfig: {
-            candidateCount: 1,
-            maxOutputTokens: 2048
-        }
-    };
-    if (options.systemInstruction) {
-        body.systemInstruction = {
-            parts: [{text: options.systemInstruction}]
-        };
-    }
-    var tools = buildGenerateContentTools(options);
-    if (tools.length > 0) {
-        body.tools = tools;
-    }
-
-    var finished = false;
-    var req = new XMLHttpRequest();
-    function finish(err, value) {
-        if (finished) {
-            return;
-        }
-        finished = true;
-        callback(err, value);
-    }
-    req.open('POST', GENERATE_CONTENT_BASE_URL + encodeURIComponent(model) + ':generateContent', true);
-    req.timeout = GEMINI_REQUEST_TIMEOUT_MS;
-    req.setRequestHeader('Content-Type', 'application/json');
-    req.setRequestHeader('x-goog-api-key', apiKey);
-    req.onload = function() {
-        if (req.readyState !== 4) {
-            return;
-        }
-        if (req.status < 200 || req.status >= 300) {
-            var error = parseError(req.status, req.responseText, model);
-            if (models.length > 0 && shouldFallback(error)) {
-                generateContent(apiKey, models.shift(), models, input, options, callback);
-                return;
-            }
-            finish(error);
-            return;
-        }
-        try {
-            var response = JSON.parse(req.responseText);
-            finish(null, {
-                text: extractText(response),
-                functionCalls: extractFunctionCalls(response),
-                interactionId: null,
-                historyItems: extractHistoryItems(response),
-                raw: response
-            });
-        } catch (e) {
-            finish(e);
-        }
-    };
-    req.onerror = function() {
-        finish(new Error('Gemini request failed before a response was received.'));
-    };
-    req.ontimeout = function() {
-        finish(new Error('Gemini request timed out. Please try again.'));
-    };
-    req.send(JSON.stringify(body));
+function shouldTryNextModel(err) {
+    return isTransient(err) || err.status === 404 ||
+        /overloaded|unavailable|high demand|not found|not supported/i.test(err.messageText || err.message || '');
 }
 
 function parseError(status, responseText, model) {
@@ -574,57 +268,26 @@ function parseError(status, responseText, model) {
             code = parsed.error.status || parsed.error.code || '';
         }
     } catch (e) {
-        // Keep the raw response text.
+        // keep raw text
     }
-    message = message || 'unknown error';
-    var lowerMessage = message.toLowerCase();
-    if (status === 403 && lowerMessage.indexOf('generativelanguage.googleapis.com') !== -1 && lowerMessage.indexOf('blocked') !== -1) {
-        message = 'Gemini API key is blocked. Enable the Gemini API and allow generativelanguage.googleapis.com. For companionless mode, do not restrict the key to Billy Companion package/SHA.';
+    message = String(message || 'unknown error');
+    var lower = message.toLowerCase();
+    var friendly = null;
+    if (status === 403 && lower.indexOf('blocked') !== -1) {
+        friendly = 'Gemini API key is blocked. Allow the Generative Language API for this key.';
+    } else if ((status === 400 || status === 401 || status === 403) &&
+        (lower.indexOf('api key not valid') !== -1 || lower.indexOf('invalid authentication') !== -1)) {
+        friendly = 'Gemini did not accept the API key. Use a key from Google AI Studio.';
+    } else if (status === 429) {
+        friendly = 'Gemini rate limit or quota reached. Try again shortly.';
     }
-    if ((status === 401 || status === 403) && lowerMessage.indexOf('invalid authentication credentials') !== -1) {
-        message = 'Gemini did not accept this value as an API key. Use a Gemini API key from Google AI Studio, not an OAuth client ID, client secret, or access token.';
-    }
-    if (message.length > 180) {
-        message = message.substring(0, 177) + '...';
-    }
-    var err = new Error('Gemini ' + model + ' failed: ' + message + (code ? ' (' + code + ')' : ''));
+    var err = new Error(friendly || ('Gemini error (' + model + '): ' + message.substring(0, 160)));
     err.status = status;
     err.code = code;
     err.messageText = message;
     return err;
 }
 
-function shouldFallback(error) {
-    var text = (error.message + ' ' + error.code + ' ' + error.messageText).toLowerCase();
-    return error.status === 429 ||
-        error.status === 502 ||
-        error.status === 500 ||
-        error.status === 503 ||
-        error.status === 404 ||
-        text.indexOf('empty answer') !== -1 ||
-        text.indexOf('api_error') !== -1 ||
-        text.indexOf('high demand') !== -1 ||
-        text.indexOf('overloaded') !== -1 ||
-        text.indexOf('unavailable') !== -1;
-}
-
-function shouldTryGenerateContentFallback(error) {
-    var text = (error.message + ' ' + error.code + ' ' + error.messageText).toLowerCase();
-    return error.status === 400 &&
-        (text.indexOf('tool') !== -1 ||
-            text.indexOf('function') !== -1 ||
-            text.indexOf('input') !== -1 ||
-            text.indexOf('top-level') !== -1 ||
-            text.indexOf('top level') !== -1 ||
-            text.indexOf('list') !== -1 ||
-            text.indexOf('unsupported') !== -1);
-}
-
-function shouldRetryInteractionWithContentList(error) {
-    var text = (error.message + ' ' + error.code + ' ' + error.messageText).toLowerCase();
-    return error.status === 400 &&
-        (text.indexOf('input') !== -1 ||
-            text.indexOf('top-level') !== -1 ||
-            text.indexOf('top level') !== -1 ||
-            text.indexOf('list') !== -1);
-}
+exports.isGemini3 = isGemini3;
+exports._buildBody = buildBody;
+exports._parseResponse = parseResponse;

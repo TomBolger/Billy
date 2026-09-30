@@ -25,6 +25,7 @@ import com.tombo.billyassistant.companion.agent.tools.WebImageCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WatchMediaSpec
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
+import com.tombo.billyassistant.companion.agent.tools.WatchToolsCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.shortPickerLabel
 import com.tombo.billyassistant.companion.auth.GoogleApiScopes
 import com.tombo.billyassistant.companion.auth.GoogleAuthStore
@@ -55,6 +56,7 @@ class CompanionAgent(
     private val watchMediaSpec: WatchMediaSpec = WatchMediaSpec.Default,
     calendarTools: AndroidCalendarTools = AndroidCalendarTools(context),
     private val threadId: String? = null,
+    watchToolRelay: ((String, JSONObject) -> JSONObject)? = null,
 ) {
     private val googleAccessTokenProvider = GoogleAccessTokenProvider(context)
     private val googleAuthStore = GoogleAuthStore(context)
@@ -84,6 +86,16 @@ class CompanionAgent(
             ClarificationCompanionTool(
                 optionLabelMaxChars = watchMediaSpec.pickerOptionChars,
             ) { activePrompt },
+            // Alarms, timers, reminders, settings, number card: run on the
+            // watch/phone JS through the relay, so this runtime can do
+            // everything the phone runtime can.
+            WatchToolsCompanionTool(
+                watchToolRelay ?: { name: String, _: JSONObject ->
+                    JSONObject()
+                        .put("status", "error")
+                        .put("summary", "$name needs the watch to be connected with Billy open.")
+                },
+            ),
             UserProfileCompanionTool(userProfileStore),
             CalendarCompanionTool(
                 calendarTools = calendarTools,

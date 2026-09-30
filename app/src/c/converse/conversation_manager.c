@@ -26,6 +26,7 @@
 #include <pebble-events/pebble-events.h>
 #include <pebble.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #if defined(PBL_PLATFORM_EMERY)
 #define WATCH_MEDIA_WIDTH 198
@@ -89,9 +90,16 @@ static ConversationManager* s_conversation_manager;
 #define INPUT_SEND_MAX_ATTEMPTS 5
 #define BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID 10125
 
-static uint32_t s_next_android_request_id = 1;
+static uint32_t s_next_android_request_id = 0;
 
 void conversation_manager_init() {
+  // Seed request ids per launch so a claim from a previous launch can never
+  // match a new prompt on the phone.
+  srand(time(NULL));
+  s_next_android_request_id = ((uint32_t)time(NULL) << 8) ^ (uint32_t)(rand() & 0xFFFF);
+  if (s_next_android_request_id == 0) {
+    s_next_android_request_id = 1;
+  }
   events_app_message_request_outbox_size(1024);
   events_app_message_request_inbox_size(1024);
 }
@@ -171,16 +179,17 @@ static bool prv_send_input(ConversationManager* manager, const char* input) {
   dict_write_cstring(iter, MESSAGE_KEY_PROMPT, bridge_bodge);
   free(bridge_bodge);
   dict_write_cstring(iter, MESSAGE_KEY_ASSISTANT_RUNTIME, settings_get_assistant_runtime());
-  char prompt_context[64];
+  char prompt_context[112];
   snprintf(
       prompt_context,
       sizeof(prompt_context),
-      "media=%dx%d;pbi=%d;maxb=%d;opt=%d",
+      "media=%dx%d;pbi=%d;maxb=%d;opt=%d;model=%s",
       WATCH_MEDIA_WIDTH,
       WATCH_MEDIA_HEIGHT,
       WATCH_MEDIA_PBI_DEPTH,
       WATCH_MEDIA_MAX_BYTES,
-      WATCH_CLARIFY_OPTION_CHARS);
+      WATCH_CLARIFY_OPTION_CHARS,
+      settings_get_gemini_model());
   dict_write_cstring(iter, MESSAGE_KEY_PROMPT_CONTEXT, prompt_context);
   uint32_t request_id = s_next_android_request_id++;
   if (s_next_android_request_id == 0) {

@@ -66,7 +66,7 @@ exports.getDeclarations = function() {
         {
             type: 'function',
             name: 'get_billy_user_profile',
-            description: 'Read Billy companionless local profile/memory notes. Use when the user asks what Billy knows or remembers about them.',
+            description: 'Read what Billy remembers about the user (profile/memory notes). Use when the user asks what Billy knows or remembers about them.',
             parameters: schema({}, [])
         },
         {
@@ -80,7 +80,7 @@ exports.getDeclarations = function() {
         {
             type: 'function',
             name: 'forget_billy_user_fact',
-            description: 'Remove Billy companionless local profile/memory notes matching the user request.',
+            description: 'Forget Billy memory notes matching the user request.',
             parameters: schema({
                 query: stringSchema('Memory text, person, preference, or topic to forget.')
             }, ['query'])
@@ -88,9 +88,6 @@ exports.getDeclarations = function() {
     ];
 }
 
-exports.shouldExpose = function(prompt) {
-    return /\b(remember|forget|forgot|delete.*memory|what.*know.*about me|what.*remember.*about me|my profile|about me)\b/i.test(prompt);
-}
 
 exports.execute = function(session, call, callback) {
     var args = call.arguments || {};

@@ -108,6 +108,23 @@ Status legend: `[x]` implemented and reviewed, `[~]` partially implemented or ne
 
 ## Current Repair Notes
 
+### 2026-09-30 Tool-reliability rewrite (watch 0.2 / companion 0.2)
+
+Root causes fixed:
+
+- Tools were hidden behind keyword regexes (`watchTools.shouldExpose`, `profileTools.shouldExpose`). Every tool is now offered on every turn.
+- Two different regexes (JS and Kotlin) decided who answered, so prompts were double-answered or sent to the side without the right tool. Now the companion claims every prompt by request id; the phone JS waits up to 2.5 s for the claim (4.5 s in Android mode) and otherwise answers itself.
+- Google Search + function calling was sent without `toolConfig.includeServerSideToolInvocations`, so every tool request failed and fell back to the Interactions API with tool results flattened into text. Both clients now send the flag, use generateContent only, pin the model for the whole turn, replay thought signatures, and return all function responses of a step in one user turn with call ids.
+- The model setting was ignored (3.5 Flash was rewritten to Flash-Lite; Android hard-coded Flash-Lite). Default is now `gemini-3.8-flash`; the watch stores the setting and passes `model=` in `PROMPT_CONTEXT` so the companion uses the same model.
+- The companion held the PebbleKit ack for the whole answer (up to 45 s), which could make the watch resend the prompt. It now acks immediately and answers in the background.
+
+New pieces:
+
+- Watch-tool relay: `JS_TOOL_REQUEST` (10126) / `JS_TOOL_RESULT` (10127). The watch bounces them between the companion and phone JS so the companion can set alarms, timers, reminders, settings, and number cards using the same JS implementation.
+- Cards: `set_timer` shows the countdown card, `show_number` shows the highlight card, `get_weather` takes `card=now|today|tomorrow|week` and returns a 7-day forecast.
+- Per-thread history is replayed as real turns with an "[Actions taken]" note so "cancel it" works.
+- Offline tests: `node tools/pkjs-tests/agent.test.js` (fake watch + scripted Gemini; also checks Kotlin key constants against package.json).
+
 ### 2026-06-26 Calendar/Photos Repair Pass
 
 Observed failures:

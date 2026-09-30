@@ -14,26 +14,25 @@
  * limitations under the License.
  */
 
+// Decides which runtime answers a prompt. Exactly one runtime answers.
+//
+// Every prompt from the watch reaches both this phone JS and (if installed)
+// the Android companion. The companion claims a prompt by echoing its request
+// id back through the watch the moment it receives it. This file waits a short,
+// bounded time for that claim and otherwise answers itself. No keyword guessing:
+// whichever runtime answers has every tool, including alarms, timers,
+// reminders, and settings (the companion reaches those through relay.js).
+
 var config = require('../config');
 var CompanionlessRuntime = require('./companionless').CompanionlessRuntime;
-var watchTools = require('./watch_tools');
 
-var COMPANION_SEEN_KEY = 'androidCompanionSeenAt';
-var COMPANION_CLAIM_PREFIX = 'androidCompanionClaimed:';
-var COMPANION_RECENT_MS = 15000;
-var COMPANION_CLAIM_MS = 60000;
-var AUTOMATIC_COMPANION_WAIT_MS = 5000;
-
-function isAndroidCompanionAvailable() {
-    var seenAt = parseInt(localStorage.getItem(COMPANION_SEEN_KEY), 10);
-    return !!seenAt && Date.now() - seenAt < COMPANION_RECENT_MS;
-}
-
-function shouldWaitForAndroidCompanion(prompt) {
-    return config.getAssistantRuntime() === config.RUNTIME_AUTOMATIC &&
-        !watchTools.shouldExpose(prompt || '') &&
-        !isAndroidCompanionAvailable();
-}
+var SEEN_KEY = 'androidCompanionSeenAt';
+var CLAIM_PREFIX = 'androidCompanionClaimed:';
+var CLAIM_TTL_MS = 10 * 60 * 1000;
+var RECENTLY_SEEN_MS = 7 * 24 * 60 * 60 * 1000;
+var AUTOMATIC_CLAIM_WAIT_MS = 2500;
+var ANDROID_MODE_CLAIM_WAIT_MS = 4500;
+var POLL_MS = 100;
 
 function normalizeRequestId(requestId) {
     if (requestId === undefined || requestId === null || requestId === 0 || requestId === '0') {
@@ -42,69 +41,79 @@ function normalizeRequestId(requestId) {
     return String(requestId);
 }
 
-function isAndroidClaimedForRequest(requestId) {
-    var normalized = normalizeRequestId(requestId);
-    if (!normalized) {
+function seenRecently() {
+    var seenAt = parseInt(localStorage.getItem(SEEN_KEY), 10);
+    return !!seenAt && Date.now() - seenAt < RECENTLY_SEEN_MS;
+}
+
+function isClaimed(requestId) {
+    var id = normalizeRequestId(requestId);
+    if (!id) {
         return false;
     }
-    var claimedAt = parseInt(localStorage.getItem(COMPANION_CLAIM_PREFIX + normalized), 10);
-    return !!claimedAt && Date.now() - claimedAt < COMPANION_CLAIM_MS;
+    var claimedAt = parseInt(localStorage.getItem(CLAIM_PREFIX + id), 10);
+    return !!claimedAt && Date.now() - claimedAt < CLAIM_TTL_MS;
+}
+
+function pruneClaims() {
+    try {
+        for (var i = localStorage.length - 1; i >= 0; i--) {
+            var key = localStorage.key(i);
+            if (key && key.indexOf(CLAIM_PREFIX) === 0) {
+                var at = parseInt(localStorage.getItem(key), 10);
+                if (!at || Date.now() - at > CLAIM_TTL_MS) {
+                    localStorage.removeItem(key);
+                }
+            }
+        }
+    } catch (e) {
+        // best effort
+    }
 }
 
 exports.recordAndroidCompanionSeen = function(requestId) {
-    localStorage.setItem(COMPANION_SEEN_KEY, Date.now());
-    requestId = normalizeRequestId(requestId);
-    if (requestId) {
-        localStorage.setItem(COMPANION_CLAIM_PREFIX + requestId, Date.now());
+    localStorage.setItem(SEEN_KEY, Date.now());
+    var id = normalizeRequestId(requestId);
+    if (id) {
+        localStorage.setItem(CLAIM_PREFIX + id, Date.now());
+        console.log('Android companion claimed request ' + id + '.');
     }
-    console.log('Android companion heartbeat recorded' + (requestId ? ' for request ' + requestId : '') + '.');
-}
+};
 
-exports.shouldStandDown = function(session) {
-    if (!session || config.getAssistantRuntime() !== config.RUNTIME_AUTOMATIC || watchTools.shouldExpose(session.prompt || '')) {
-        return false;
-    }
-    return isAndroidClaimedForRequest(session.androidRequestId);
-}
-
-exports.selectRuntime = function(prompt, threadId) {
-    var runtime = config.getAssistantRuntime();
-    if (watchTools.shouldExpose(prompt || '')) {
-        return config.RUNTIME_COMPANIONLESS;
-    }
+function claimWaitMs(runtime) {
     if (runtime === config.RUNTIME_ANDROID) {
-        return config.RUNTIME_ANDROID;
+        return ANDROID_MODE_CLAIM_WAIT_MS;
     }
-    if (runtime === config.RUNTIME_COMPANIONLESS) {
-        return config.RUNTIME_COMPANIONLESS;
+    if (runtime === config.RUNTIME_AUTOMATIC && seenRecently()) {
+        return AUTOMATIC_CLAIM_WAIT_MS;
     }
-    if (isAndroidCompanionAvailable()) {
-        return config.RUNTIME_ANDROID;
-    }
-    return config.RUNTIME_COMPANIONLESS;
+    return 0;
 }
 
 exports.run = function(session) {
+    var runtime = config.getAssistantRuntime();
     session.shouldStandDown = function() {
-        return exports.shouldStandDown(session);
+        return runtime !== config.RUNTIME_COMPANIONLESS && isClaimed(session.androidRequestId);
     };
-    if (!session.waitedForAndroidCompanion && shouldWaitForAndroidCompanion(session.prompt)) {
-        session.waitedForAndroidCompanion = true;
-        console.log('Automatic runtime waiting briefly for Android companion heartbeat.');
-        setTimeout(function() {
-            exports.run(session);
-        }, AUTOMATIC_COMPANION_WAIT_MS);
+    if (runtime === config.RUNTIME_COMPANIONLESS || !normalizeRequestId(session.androidRequestId)) {
+        new CompanionlessRuntime(session).run();
         return;
     }
-    if (exports.shouldStandDown(session)) {
-        console.log('Android companion claimed this request; JS phone runtime is standing down.');
-        return;
-    }
-    var runtime = exports.selectRuntime(session.prompt, session.threadId);
-    console.log('Selected assistant runtime: ' + runtime);
-    if (runtime === config.RUNTIME_ANDROID) {
-        console.log('Android companion runtime selected; JS phone runtime is standing down.');
-        return;
-    }
-    new CompanionlessRuntime(session).run();
-}
+    pruneClaims();
+    var waitMs = claimWaitMs(runtime);
+    var started = Date.now();
+    (function poll() {
+        if (isClaimed(session.androidRequestId)) {
+            console.log('Android companion is answering; phone runtime stands down.');
+            return;
+        }
+        if (Date.now() - started >= waitMs) {
+            if (runtime === config.RUNTIME_ANDROID) {
+                console.log('Android companion did not claim the prompt; answering from the phone instead.');
+            }
+            new CompanionlessRuntime(session).run();
+            return;
+        }
+        setTimeout(poll, POLL_MS);
+    })();
+};

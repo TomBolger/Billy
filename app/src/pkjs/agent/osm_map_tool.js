@@ -53,7 +53,7 @@ exports.getDeclarations = function() {
     return [{
         type: 'function',
         name: 'show_openstreetmap_map',
-        description: 'Show an OpenStreetMap map card on the watch for a specific destination. Use this only in companionless mode or when Google Maps Platform is unavailable. This does not start phone navigation.',
+        description: 'Show a map card on the watch centered on a place ("show me a map of...", "where is...", "map to..."). Works for addresses, landmarks, and cities. It cannot start turn-by-turn navigation on the phone.',
         parameters: schema({
             destination: stringSchema('Destination name or address.'),
             destination_latitude: numberSchema('Optional destination latitude if already known.'),

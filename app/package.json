@@ -1,7 +1,7 @@
 {
   "name": "Billy",
   "author": "Thomas Bolger",
-  "version": "0.1",
+  "version": "0.2",
   "keywords": [
     "pebble-app"
   ],
@@ -137,7 +137,9 @@
       "WATCH_PROMPT",
       "WATCH_READY",
       "ANDROID_COMPANION_READY",
-      "ANDROID_REQUEST_ID"
+      "ANDROID_REQUEST_ID",
+      "JS_TOOL_REQUEST",
+      "JS_TOOL_RESULT"
     ],
     "resources": {
       "media": [

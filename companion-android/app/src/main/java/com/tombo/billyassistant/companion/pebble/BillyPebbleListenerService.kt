@@ -3,6 +3,7 @@ package com.tombo.billyassistant.companion.pebble
 import android.util.Log
 import com.tombo.billyassistant.companion.agent.CompanionAgent
 import com.tombo.billyassistant.companion.agent.CompanionAgentResult
+import com.tombo.billyassistant.companion.agent.GeminiClient
 import com.tombo.billyassistant.companion.agent.tools.ClarificationCard
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
@@ -14,7 +15,10 @@ import io.rebble.pebblekit2.common.model.PebbleDictionary
 import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
 import io.rebble.pebblekit2.common.model.ReceiveResult
 import io.rebble.pebblekit2.common.model.WatchIdentifier
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -32,6 +36,17 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
             return ReceiveResult.Nack
         }
         PebbleWatchStore(this).saveLastWatch(watch)
+
+        // Watch-tool relay traffic (see WatchToolRelay). Results complete a
+        // pending call; our own bounced requests are ignored.
+        data.textValue(BillyPebbleProtocol.JS_TOOL_RESULT)?.let { raw ->
+            WatchToolRelayResults.complete(raw)
+            return ReceiveResult.Ack
+        }
+        if (data[BillyPebbleProtocol.JS_TOOL_REQUEST] != null) {
+            return ReceiveResult.Ack
+        }
+
         val prompt = data.textValue(BillyPebbleProtocol.PROMPT)
         if (prompt == null) {
             if (data[BillyPebbleProtocol.WATCH_READY] == null) {
@@ -50,50 +65,73 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
             return ReceiveResult.Ack
         }
         val runtime = data.textValue(BillyPebbleProtocol.ASSISTANT_RUNTIME) ?: RUNTIME_AUTOMATIC
-        val watchMediaSpec = data.textValue(BillyPebbleProtocol.PROMPT_CONTEXT).toWatchMediaSpec()
-        val threadId = data.textValue(BillyPebbleProtocol.THREAD_ID)?.takeIf { it.isNotBlank() }
-            ?: UUID.randomUUID().toString()
-        val requestId = data.intValue(BillyPebbleProtocol.ANDROID_REQUEST_ID)
         if (runtime == RUNTIME_COMPANIONLESS) {
             Log.d(TAG, "Ignoring prompt because companionless runtime is selected.")
             return ReceiveResult.Ack
         }
-        if (prompt.isNativeWatchActionPrompt()) {
-            Log.d(TAG, "Ignoring native watch action prompt so the Pebble JS watch tools can handle it.")
-            return ReceiveResult.Ack
+        val promptContext = data.textValue(BillyPebbleProtocol.PROMPT_CONTEXT)
+        val watchMediaSpec = promptContext.toWatchMediaSpec()
+        val model = promptContext.geminiModel()
+        val threadId = data.textValue(BillyPebbleProtocol.THREAD_ID)?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString()
+        val requestId = data.intValue(BillyPebbleProtocol.ANDROID_REQUEST_ID)
+
+        // Claim the prompt right away so the phone JS runtime stands down.
+        // Every prompt is ours: this runtime has every tool, including the
+        // watch tools through the relay, so there is no keyword routing.
+        val claimSender = DefaultPebbleSender(this)
+        try {
+            claimSender.sendAndroidCompanionReady(watch, requestId)
+        } finally {
+            claimSender.close()
         }
 
-        Log.d(TAG, "Received Billy prompt from watch: $prompt runtime=$runtime")
+        Log.d(TAG, "Answering Billy prompt: $prompt runtime=$runtime model=$model")
+        // Acknowledge now and answer in the background. Holding the ack for the
+        // whole answer made the watch think the send failed and resend the prompt.
+        agentScope.launch {
+            answerPrompt(prompt, watch, watchMediaSpec, model, threadId)
+        }
+        return ReceiveResult.Ack
+    }
+
+    private suspend fun answerPrompt(
+        prompt: String,
+        watch: WatchIdentifier,
+        watchMediaSpec: WatchMediaSpec,
+        model: String?,
+        threadId: String,
+    ) {
         val sender = DefaultPebbleSender(this)
         try {
-            sender.sendAndroidCompanionReady(watch, requestId)
             sender.sendThreadId(threadId, watch)
             sender.sendFunction("Thinking...", watch)
+            val relay = WatchToolRelay(this, watch)
             val result = withTimeoutOrNull(REMOTE_TIMEOUT_MS) {
                 withContext(Dispatchers.IO) {
                     CompanionAgent(
                         context = this@BillyPebbleListenerService,
+                        geminiClient = GeminiClient(model),
                         watchMediaSpec = watchMediaSpec,
                         threadId = threadId,
+                        watchToolRelay = { name, args -> relay.call(name, args) },
                     ).answer(prompt)
                 }
             }
             if (result == null) {
-                sender.sendChunks("Remote answer timed out.", watch)
+                sender.sendWarning("That took too long. Please try again.", watch)
                 sender.sendDone(watch)
-                return ReceiveResult.Ack
+                return
             }
             when (result) {
                 is CompanionAgentResult.Passed -> {
-                    if (result.clarificationCard != null) {
-                        result.watchImage?.let { image -> sender.sendWatchImage(image, watch) }
-                        result.watchWeatherCurrent?.let { weather -> sender.sendWeatherCurrent(weather, watch) }
-                        sender.sendClarificationCard(result.clarificationCard, watch, watchMediaSpec.pickerOptionChars)
-                        sender.sendDone(watch)
-                        return ReceiveResult.Ack
-                    }
                     result.watchImage?.let { image -> sender.sendWatchImage(image, watch) }
                     result.watchWeatherCurrent?.let { weather -> sender.sendWeatherCurrent(weather, watch) }
+                    if (result.clarificationCard != null) {
+                        sender.sendClarificationCard(result.clarificationCard, watch, watchMediaSpec.pickerOptionChars)
+                        sender.sendDone(watch)
+                        return
+                    }
                     if (result.text.isNotBlank()) {
                         sender.sendChunks(result.text, watch)
                     }
@@ -104,10 +142,15 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
                     sender.sendDone(watch)
                 }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Answering prompt failed", e)
+            runCatching {
+                sender.sendWarning("Billy Companion hit an error: ${e.message ?: e.javaClass.simpleName}", watch)
+                sender.sendDone(watch)
+            }
         } finally {
             sender.close()
         }
-        return ReceiveResult.Ack
     }
 
     override fun onAppOpened(watchappUUID: UUID, watch: WatchIdentifier) {
@@ -127,7 +170,11 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         private const val TAG = "BillyPebbleListener"
         private const val RUNTIME_AUTOMATIC = "automatic"
         private const val RUNTIME_COMPANIONLESS = "companionless"
-        private const val REMOTE_TIMEOUT_MS = 45_000L
+        private const val REMOTE_TIMEOUT_MS = 100_000L
+
+        // Outlives individual binder calls so an answer in progress is not
+        // cancelled when the Pebble app's request returns.
+        private val agentScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }
 }
 
@@ -321,11 +368,11 @@ private fun String.forWatch(): String {
         .trim()
 }
 
-private fun String.isNativeWatchActionPrompt(): Boolean {
-    val text = lowercase()
-    val hasWatchAction = Regex("""\b(timer|timers|alarm|alarms|remind|reminder|reminders|wake\s+me)\b""").containsMatchIn(text)
-    val hasActionVerb = Regex("""\b(cancel|delete|remove|list|show|check|get|create|add|make|schedule|start|set)\b""").containsMatchIn(text)
-    return hasWatchAction && (hasActionVerb || "wake me" in text || "remind me" in text)
+private fun String?.geminiModel(): String? {
+    if (isNullOrBlank()) {
+        return null
+    }
+    return Regex("""model=([A-Za-z0-9._-]+)""").find(this)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
 }
 
 private fun String?.toWatchMediaSpec(): WatchMediaSpec {
@@ -399,6 +446,8 @@ object BillyPebbleProtocol {
     val WATCH_READY: UInt = 10123u
     val ANDROID_COMPANION_READY: UInt = 10124u
     val ANDROID_REQUEST_ID: UInt = 10125u
+    val JS_TOOL_REQUEST: UInt = 10126u
+    val JS_TOOL_RESULT: UInt = 10127u
 
     fun nextImageId(): Int = imageIds.getAndIncrement()
 }
