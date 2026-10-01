@@ -45,9 +45,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
       - name: Build companion (compile check)
-        run: cd companion-android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > companion-android/local.properties
+          cd companion-android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
