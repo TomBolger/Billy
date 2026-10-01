@@ -8,6 +8,9 @@ on:
       - '.github/workflows/build-pbw.yaml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   pbw:
     runs-on: ubuntu-24.04
@@ -55,3 +58,24 @@ jobs:
           name: BillyCompanion-debug-APK-CI-signed
           path: companion-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  publish:
+    needs: [pbw, apk]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Name files
+        run: |
+          mkdir out
+          cp dist/Billy-PBW/app.pbw out/Billy-dev.pbw
+          cp dist/BillyCompanion-debug-APK-CI-signed/*.apk out/BillyCompanion-dev.apk
+      - name: Publish dev build
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-${{ github.ref_name }}
+          name: Dev build (${{ github.ref_name }})
+          prerelease: true
+          make_latest: false
+          files: out/*
