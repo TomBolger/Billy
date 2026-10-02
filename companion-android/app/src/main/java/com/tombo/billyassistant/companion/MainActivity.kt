@@ -12,1310 +12,560 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import com.tombo.billyassistant.companion.agent.GeminiClient
 import com.tombo.billyassistant.companion.agent.GeminiKeyTestResult
 import com.tombo.billyassistant.companion.auth.GoogleApiAuthorization
 import com.tombo.billyassistant.companion.auth.GoogleApiAuthorizationResult
 import com.tombo.billyassistant.companion.auth.GoogleApiScopes
 import com.tombo.billyassistant.companion.auth.GoogleAuthStore
-import com.tombo.billyassistant.companion.calendar.DeleteCalendarEventsResult
-import com.tombo.billyassistant.companion.calendar.AndroidCalendarTools
-import com.tombo.billyassistant.companion.auth.GoogleAccessTokenProvider
-import com.tombo.billyassistant.companion.google.GoogleApiSetupChecker
-import com.tombo.billyassistant.companion.google.GoogleApiSetupStatus
-import com.tombo.billyassistant.companion.google.GoogleCalendarApiTools
-import com.tombo.billyassistant.companion.google.GooglePhotosApiTools
-import com.tombo.billyassistant.companion.google.GooglePhotosPickerCreateResult
-import com.tombo.billyassistant.companion.google.GooglePhotosPickerStore
-import com.tombo.billyassistant.companion.google.GooglePeopleApiTools
-import com.tombo.billyassistant.companion.google.GooglePeopleResult
-import com.tombo.billyassistant.companion.media.AndroidPhotoTools
-import com.tombo.billyassistant.companion.media.PhotoAccessLevel
-import com.tombo.billyassistant.companion.media.PhotoPermissionStatus
+import com.tombo.billyassistant.companion.phone.BillyNotificationListener
 import com.tombo.billyassistant.companion.pebble.BillyPebbleProtocol
-import com.tombo.billyassistant.companion.pebble.PendingWatchPromptStore
 import com.tombo.billyassistant.companion.pebble.PebbleWatchStore
-import com.tombo.billyassistant.companion.profile.BillyProfilePackParser
+import com.tombo.billyassistant.companion.pebble.PendingWatchPromptStore
 import com.tombo.billyassistant.companion.profile.BillyProfilePackParseResult
+import com.tombo.billyassistant.companion.profile.BillyProfilePackParser
 import com.tombo.billyassistant.companion.profile.BillyUserProfileStore
-import com.tombo.billyassistant.companion.settings.CompanionSettings
 import com.tombo.billyassistant.companion.settings.SettingsStore
 import io.rebble.pebblekit2.client.DefaultPebbleSender
 import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
-import io.rebble.pebblekit2.common.model.TransmissionResult
-import io.rebble.pebblekit2.common.model.WatchIdentifier
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import androidx.lifecycle.lifecycleScope
 import java.security.MessageDigest
 
+/**
+ * Billy Companion setup: one screen, four steps. Everything Billy can do on
+ * the phone is listed with a single button to turn it on.
+ */
 class MainActivity : ComponentActivity() {
     private lateinit var settingsStore: SettingsStore
-    private lateinit var googleApiAuthorization: GoogleApiAuthorization
-    private lateinit var googleAuthStore: GoogleAuthStore
-    private lateinit var apiKeyInput: EditText
-    private lateinit var apiKeyStateText: TextView
-    private lateinit var mapsApiKeyInput: EditText
-    private lateinit var mapsKeyStateText: TextView
-    private lateinit var bridgeStateText: TextView
-    private lateinit var calendarPermissionRow: LinearLayout
-    private lateinit var locationPermissionRow: LinearLayout
-    private lateinit var photoPermissionRow: LinearLayout
-    private lateinit var calendarCleanupText: TextView
-    private lateinit var googleAccessRows: LinearLayout
-    private lateinit var googleAccessButton: Button
-    private lateinit var googleActionText: TextView
-    private lateinit var googleSetupCheckText: TextView
-    private lateinit var googlePhotosPickerText: TextView
-    private lateinit var oauthIdentityText: TextView
-    private lateinit var watchPromptInput: EditText
-    private lateinit var watchPromptStatusText: TextView
-    private lateinit var userProfileStore: BillyUserProfileStore
-    private lateinit var profileStatusText: TextView
+    private lateinit var authStore: GoogleAuthStore
+    private lateinit var profileStore: BillyUserProfileStore
+    private lateinit var googleAuth: GoogleApiAuthorization
+    private lateinit var content: LinearLayout
+    private var keyStatus = ""
+    private var googleStatus = ""
+    private var memoryStatus = ""
+    private var testStatus = ""
+    private var showAdvanced = false
 
-    private var googleApiAccessState = "not requested"
-    private var pendingGoogleScopes: List<String> = emptyList()
-    private val googleAuthorizationLauncher = registerForActivityResult(
-        ActivityResultContracts.StartIntentSenderForResult(),
-    ) { result ->
-        handleGoogleAuthorizationActivityResult(result.resultCode, result.data)
-    }
-    private val profilePackImportLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri == null) {
-            profileStatusText.text = "Profile Pack import canceled."
-            profileStatusText.setTextColor(COLOR_MUTED)
-        } else {
-            importProfilePackFromUri(uri)
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        // Background location can only be asked for after foreground location.
+        if (hasLocation() && !hasBackgroundLocation() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         }
+        render()
+    }
+    private val backgroundLocationLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { render() }
+    private val consentLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        handleGoogleResult(googleAuth.completeAccessRequest(result.data), allowConsentUi = false)
+    }
+    private val profilePackLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) importProfilePack(uri)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settingsStore = SettingsStore(this)
-        userProfileStore = BillyUserProfileStore(this)
-        googleApiAuthorization = GoogleApiAuthorization(this)
-        googleAuthStore = GoogleAuthStore(this)
-        forceBridgeEnabled()
-        configureSystemBars()
-
-        val scrollView = ScrollView(this).apply {
-            setBackgroundColor(COLOR_PANEL)
-            clipToPadding = false
-        }
-        val root = LinearLayout(this).apply {
+        authStore = GoogleAuthStore(this)
+        profileStore = BillyUserProfileStore(this)
+        googleAuth = GoogleApiAuthorization(this)
+        settingsStore.save(settingsStore.load().copy(pebbleBridgeEnabled = true))
+        window.statusBarColor = COLOR_BG
+        content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), statusBarHeight() + dp(18), dp(20), dp(28))
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
+            setPadding(dp(20), dp(28), dp(20), dp(32))
         }
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        panel.addView(title("Billy Companion ${appVersionLabel()}", 26f))
-        panel.addView(body("Private phone and Google tools for Billy on Pebble."))
-        panel.addView(spacer(20))
-        panel.addView(buildGeminiSection())
-        panel.addView(sectionDivider())
-        panel.addView(buildBridgeSection())
-        panel.addView(sectionDivider())
-        panel.addView(buildWatchPromptSection())
-        panel.addView(sectionDivider())
-        panel.addView(buildAndroidAccessSection())
-        panel.addView(sectionDivider())
-        panel.addView(buildGoogleAccessSection())
-        panel.addView(sectionDivider())
-        panel.addView(buildProfileSection())
-        panel.addView(sectionDivider())
-        panel.addView(buildDiagnosticsSection())
-
-        root.addView(panel)
-        scrollView.addView(root)
-        setContentView(FrameLayout(this).apply {
-            setBackgroundColor(COLOR_PANEL)
-            addView(scrollView)
-            addView(topScrim())
+        setContentView(ScrollView(this).apply {
+            setBackgroundColor(COLOR_BG)
+            fitsSystemWindows = true
+            addView(content)
         })
-
-        renderSettings(settingsStore.load())
-        renderStatus()
+        render()
     }
 
     override fun onResume() {
         super.onResume()
-        if (::settingsStore.isInitialized) {
-            renderStatus()
-        }
+        if (::content.isInitialized) render()
     }
 
-    private fun configureSystemBars() {
-        window.statusBarColor = COLOR_STATUS_SCRIM
-        window.navigationBarColor = COLOR_PANEL
-        @Suppress("DEPRECATION")
-        window.decorView.systemUiVisibility = window.decorView.systemUiVisibility and
-            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv() and
-            View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
-    }
+    // ---- layout -------------------------------------------------------------
 
-    private fun topScrim(): View {
-        return View(this).apply {
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(COLOR_STATUS_SCRIM, Color.TRANSPARENT),
-            )
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                statusBarHeight() + dp(48),
-            )
-        }
-    }
-
-    private fun buildGeminiSection(): View {
-        return section("Gemini API key").apply {
-            addView(apiKeyLabel("Gemini API key"))
-            apiKeyInput = EditText(this@MainActivity).apply {
-                hint = "Paste key"
-                textSize = 16f
-                minLines = 2
-                maxLines = 4
-                isSingleLine = false
-                setHorizontallyScrolling(false)
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-                setTextColor(COLOR_TEXT)
-                setHintTextColor(COLOR_MUTED)
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                background = rounded(COLOR_FIELD, dp(10).toFloat(), COLOR_STROKE)
-            }
-            addView(apiKeyInput, matchWrap())
-            apiKeyStateText = muted("")
-            addView(apiKeyStateText)
-            addView(horizontalActions().apply {
-                addView(actionButton("Save key") {
-                    settingsStore.save(readSettingsFromForm())
-                    renderStatus()
-                })
-                addView(actionButton("Verify key") {
-                    testGeminiKey()
-                })
-                addView(actionButton("Instructions", emphasis = false) {
-                    showGeminiKeyInstructions()
-                })
-            })
-            addView(spacer(14))
-            addView(apiKeyLabel("Google Maps API key"))
-            mapsApiKeyInput = EditText(this@MainActivity).apply {
-                hint = "Optional Places, Routes, Geocoding, Static Maps key"
-                textSize = 16f
-                minLines = 2
-                maxLines = 4
-                isSingleLine = false
-                setHorizontallyScrolling(false)
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-                setTextColor(COLOR_TEXT)
-                setHintTextColor(COLOR_MUTED)
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                background = rounded(COLOR_FIELD, dp(10).toFloat(), COLOR_STROKE)
-            }
-            addView(mapsApiKeyInput, matchWrap())
-            mapsKeyStateText = muted("")
-            addView(mapsKeyStateText)
-            addView(horizontalActions().apply {
-                addView(actionButton("Save keys") {
-                    settingsStore.save(readSettingsFromForm())
-                    renderStatus()
-                })
-                addView(actionButton("Maps setup", emphasis = false) {
-                    showMapsKeyInstructions()
-                })
-            })
-        }
-    }
-
-    private fun buildBridgeSection(): View {
-        return section("Pebble bridge").apply {
-            bridgeStateText = statusLine("Always enabled", granted = true)
-            addView(bridgeStateText)
-            addView(body("The companion listens for Billy watch requests whenever Android allows the app to run."))
-        }
-    }
-
-    private fun buildWatchPromptSection(): View {
-        return section("Watch test prompt").apply {
-            watchPromptInput = EditText(this@MainActivity).apply {
-                hint = "Type a prompt to send to Billy"
-                textSize = 16f
-                minLines = 2
-                maxLines = 5
-                isSingleLine = false
-                setHorizontallyScrolling(false)
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-                setTextColor(COLOR_TEXT)
-                setHintTextColor(COLOR_MUTED)
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                background = rounded(COLOR_FIELD, dp(10).toFloat(), COLOR_STROKE)
-            }
-            addView(watchPromptInput, matchWrap())
-            addView(horizontalActions().apply {
-                addView(actionButton("Send to watch") {
-                    sendTypedPromptToWatch()
-                })
-            })
-            watchPromptStatusText = muted("")
-            addView(watchPromptStatusText)
-        }
-    }
-
-    private fun buildAndroidAccessSection(): View {
-        return section("Android access").apply {
-            calendarPermissionRow = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-            }
-            locationPermissionRow = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-            }
-            photoPermissionRow = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-            }
-            addView(calendarPermissionRow)
-            addView(locationPermissionRow)
-            addView(photoPermissionRow)
-            addView(actionButton("Remove Billy calendar ghosts", emphasis = false) {
-                removeBillyCalendarGhosts()
-            })
-            calendarCleanupText = muted("")
-            addView(calendarCleanupText)
-        }
-    }
-
-    private fun buildGoogleAccessSection(): View {
-        return section("Google account access").apply {
-            googleAccessRows = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-            }
-            addView(googleAccessRows)
-            googleAccessButton = actionButton("Grant Google account access") {
-                showGoogleAccessDialog()
-            }
-            addView(googleAccessButton)
-            addView(actionButton("Check Google API setup", emphasis = false) {
-                checkGoogleApiSetup()
-            })
-            googleSetupCheckText = muted("")
-            addView(googleSetupCheckText)
-            addView(actionButton("Open Google Photos picker", emphasis = false) {
-                openGooglePhotosPicker()
-            })
-            googlePhotosPickerText = muted("")
-            addView(googlePhotosPickerText)
-            googleActionText = muted("")
-            addView(googleActionText)
-            addView(actionButton("Clear Google grant cache", emphasis = false) {
-                googleAuthStore.clear()
-                pendingGoogleScopes = emptyList()
-                googleApiAccessState = "local Google grant cache cleared"
-                renderStatus()
-            })
-        }
-    }
-
-    private fun buildProfileSection(): View {
-        return section("Billy profile and memory").apply {
-            addView(body("Stored locally on this phone and included with Billy Companion requests when relevant."))
-            profileStatusText = muted("")
-            addView(profileStatusText)
-            addView(horizontalActions().apply {
-                addView(actionButton("Load Google profile") {
-                    loadGoogleProfile()
-                })
-                addView(actionButton("Add memory", emphasis = false) {
-                    showAddMemoryDialog()
-                })
-                addView(actionButton("Clear", emphasis = false) {
-                    confirmClearProfile()
-                })
-            })
-            addView(horizontalActions().apply {
-                addView(actionButton("Import Profile Pack") {
-                    openProfilePackPicker()
-                })
-                addView(actionButton("Profile Pack help", emphasis = false) {
-                    showProfilePackInstructions()
-                })
-            })
-        }
-    }
-
-    private fun buildDiagnosticsSection(): View {
-        return section("OAuth setup").apply {
-            oauthIdentityText = TextView(this@MainActivity).apply {
-                textSize = 15f
-                setTextColor(COLOR_TEXT)
-                typeface = Typeface.MONOSPACE
-                setLineSpacing(0f, 1.08f)
-            }
-            addView(oauthIdentityText)
-        }
-    }
-
-    private fun renderSettings(settings: CompanionSettings) {
-        apiKeyInput.setText(settings.geminiApiKey)
-        mapsApiKeyInput.setText(settings.googleMapsApiKey)
-    }
-
-    private fun readSettingsFromForm(): CompanionSettings {
-        return CompanionSettings(
-            geminiApiKey = apiKeyInput.text.toString(),
-            googleMapsApiKey = mapsApiKeyInput.text.toString(),
-            pebbleBridgeEnabled = true,
+    private fun render() {
+        content.removeAllViews()
+        val missing = missingSteps()
+        content.addView(text("Billy Companion", 28f, COLOR_TEXT, bold = true))
+        content.addView(text(versionLabel(), 13f, COLOR_MUTED))
+        content.addView(
+            text(
+                if (missing.isEmpty()) "✓ Ready. Ask Billy anything from your watch." else "${missing.size} step${if (missing.size == 1) "" else "s"} left: ${missing.joinToString(", ")}",
+                16f,
+                if (missing.isEmpty()) COLOR_GOOD else COLOR_WARN,
+                bold = true,
+            ).padTop(12),
         )
-    }
 
-    private fun forceBridgeEnabled() {
-        val settings = settingsStore.load()
-        if (!settings.pebbleBridgeEnabled) {
-            settingsStore.save(settings.copy(pebbleBridgeEnabled = true))
-        }
-    }
-
-    private fun renderStatus() {
-        forceBridgeEnabled()
-        val settings = settingsStore.load()
-        apiKeyStateText.text = if (settings.geminiApiKey.isBlank()) {
-            "Missing. Stored locally after you save."
-        } else {
-            "Stored locally on this phone."
-        }
-        apiKeyStateText.setTextColor(if (settings.geminiApiKey.isBlank()) COLOR_WARNING else COLOR_MUTED)
-        mapsKeyStateText.text = if (settings.googleMapsApiKey.isBlank()) {
-            "Not set. Map cards use OpenStreetMap. Nearby search, Routes, Geocoding, and Time Zone need a Google Maps key."
-        } else {
-            "Stored locally on this phone for Google Maps Platform calls."
-        }
-        mapsKeyStateText.setTextColor(if (settings.googleMapsApiKey.isBlank()) COLOR_MUTED else COLOR_SUCCESS)
-        bridgeStateText.text = "✓ Enabled"
-        bridgeStateText.setTextColor(COLOR_SUCCESS)
-        renderAndroidPermissionRows()
-        renderGoogleAccessRows()
-        renderProfileStatus()
-        oauthIdentityText.text = oauthClientIdentity()
-    }
-
-    private fun renderProfileStatus() {
-        profileStatusText.text = userProfileStore.load().statusSummary()
-        profileStatusText.setTextColor(
-            if (userProfileStore.load().hasPromptContext()) COLOR_SUCCESS else COLOR_MUTED,
-        )
-    }
-
-    private fun renderAndroidPermissionRows() {
-        calendarPermissionRow.removeAllViews()
-        locationPermissionRow.removeAllViews()
-        photoPermissionRow.removeAllViews()
-        val calendarGranted = hasCalendarPermissions()
-        calendarPermissionRow.addView(accessRow(
-            title = "Android Calendar provider",
-            detail = "Fallback read/write access for calendars synced to this phone.",
-            granted = calendarGranted,
-            grantText = "Grant",
-        ) {
-            requestPermissions(
-                arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR),
-                REQUEST_CALENDAR_PERMISSIONS,
-            )
-        })
-
-        val foregroundLocationGranted = hasForegroundLocationPermission()
-        val backgroundLocationGranted = hasBackgroundLocationPermission()
-        val locationGranted = foregroundLocationGranted && backgroundLocationGranted
-        val locationDetail = when {
-            !foregroundLocationGranted -> "Allows Billy to fetch local weather and local-place context from this phone's current location."
-            !backgroundLocationGranted -> "Foreground location is granted. Set Location to Allow all the time so weather works while the phone is locked."
-            else -> "Allows Billy to fetch local weather while the companion is open or running in the background."
-        }
-        locationPermissionRow.addView(accessRow(
-            title = "Location for weather",
-            detail = locationDetail,
-            granted = locationGranted,
-            grantText = if (foregroundLocationGranted && !backgroundLocationGranted) "Open settings" else "Grant",
-        ) {
-            requestLocationPermissions(foregroundLocationGranted, backgroundLocationGranted)
-        })
-
-        val photoStatus = AndroidPhotoTools.checkImageReadAccess(this)
-        val photosGranted = photoStatus is PhotoPermissionStatus.Authorized &&
-            photoStatus.accessLevel != PhotoAccessLevel.SelectedImages
-        val photoDetail = when (photoStatus) {
-            is PhotoPermissionStatus.Authorized -> when (photoStatus.accessLevel) {
-                PhotoAccessLevel.FullImages,
-                PhotoAccessLevel.LegacyExternalStorage -> "Allows Billy to attach local camera photos and screenshots for Gemini vision."
-                PhotoAccessLevel.SelectedImages -> "Limited selected-photo access is active. Choose full Photos access for latest camera roll photos."
+        card("1  Gemini API key") {
+            val settings = settingsStore.load()
+            val input = EditText(this@MainActivity).apply {
+                setText(settings.geminiApiKey)
+                hint = "Paste your key"
+                isSingleLine = true
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                setTextColor(COLOR_TEXT)
+                setHintTextColor(COLOR_MUTED)
+                background = rounded(COLOR_FIELD, COLOR_STROKE)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
             }
-            is PhotoPermissionStatus.NotAuthorized -> "Allows Billy to attach local camera photos and screenshots for Gemini vision."
+            addView(input, matchWrap())
+            addView(row(
+                button("Save & test") { saveAndTestKey(input.text.toString()) },
+                button("Get a free key", primary = false) { open("https://aistudio.google.com/app/apikey") },
+            ))
+            addView(status(keyStatus.ifBlank { if (settings.geminiApiKey.isBlank()) "" else "Saved." }))
         }
-        photoPermissionRow.addView(accessRow(
-            title = "Photos and screenshots",
-            detail = photoDetail,
-            granted = photosGranted,
-            grantText = if (photoStatus is PhotoPermissionStatus.Authorized && photoStatus.accessLevel == PhotoAccessLevel.SelectedImages) {
-                "Open settings"
-            } else {
-                "Grant"
-            },
-        ) {
-            if (photoStatus is PhotoPermissionStatus.Authorized && photoStatus.accessLevel == PhotoAccessLevel.SelectedImages) {
-                openAppSettings()
-            } else {
-                requestPermissions(
-                    AndroidPhotoTools.imageReadPermissionsForRuntimeRequest().toTypedArray(),
-                    REQUEST_PHOTO_PERMISSIONS,
-                )
-            }
-        })
-    }
 
-    private fun renderGoogleAccessRows() {
-        googleAccessRows.removeAllViews()
-        val grantedScopes = googleAuthStore.grantedScopes()
-        GOOGLE_SERVICES.forEach { service ->
-            googleAccessRows.addView(googleStatusRow(service.label, grantedScopes.containsAll(service.scopes)))
+        card("2  Google account") {
+            addView(text("Calendar, Tasks, Gmail, Drive & Docs, and Contacts. One consent screen.", 14f, COLOR_MUTED))
+            val granted = authStore.grantedScopes()
+            GOOGLE_SERVICES.forEach { (label, scopes) ->
+                addView(checkRow(label, granted.containsAll(scopes)))
+            }
+            val connected = granted.containsAll(GoogleApiScopes.allUseful)
+            addView(row(button(if (connected) "Reconnect Google" else "Connect Google", primary = !connected) { connectGoogle() }))
+            addView(status(googleStatus))
         }
-        val missingAny = GOOGLE_SERVICES.any { !grantedScopes.containsAll(it.scopes) }
-        googleAccessButton.text = if (missingAny) "Grant Google account access" else "Manage Google account access"
-        googleActionText.text = if (googleApiAccessState == "not requested") {
-            ""
-        } else {
-            "Google OAuth: $googleApiAccessState"
-        }
-    }
 
-    private fun testGeminiKey() {
-        val settings = readSettingsFromForm()
-        settingsStore.save(settings)
-        apiKeyStateText.text = "Verifying Gemini key..."
-        apiKeyStateText.setTextColor(COLOR_MUTED)
-        Thread {
-            val result = GeminiClient().testKey(settings.geminiApiKey)
-            runOnUiThread {
-                apiKeyStateText.text = when (result) {
-                    is GeminiKeyTestResult.Passed -> "${result.message} Stored locally."
-                    is GeminiKeyTestResult.Failed -> result.reason
-                }
-                apiKeyStateText.setTextColor(if (result is GeminiKeyTestResult.Passed) COLOR_SUCCESS else COLOR_WARNING)
+        card("3  Phone access") {
+            addView(text("Turn on what you want Billy to do on this phone.", 14f, COLOR_MUTED))
+            if (runtimePermissionsMissing().isNotEmpty()) {
+                addView(row(button("Allow all") { permissionLauncher.launch(runtimePermissionsMissing().toTypedArray()) }))
             }
-        }.start()
-    }
-
-    private fun removeBillyCalendarGhosts() {
-        calendarCleanupText.text = "Removing Billy/Bobby calendar ghosts..."
-        calendarCleanupText.setTextColor(COLOR_MUTED)
-        Thread {
-            val localResult = AndroidCalendarTools(this).deleteBillyLocalGhostEvents()
-            val googleResult = GoogleCalendarApiTools(GoogleAccessTokenProvider(this)).deleteBillyGhostEvents()
-            runOnUiThread {
-                calendarCleanupText.text = "${localResult.summary}\n${googleResult.summary}"
-                calendarCleanupText.setTextColor(
-                    when (localResult) {
-                        is DeleteCalendarEventsResult.Deleted -> COLOR_SUCCESS
-                        else -> COLOR_WARNING
-                    },
-                )
-                renderStatus()
-            }
-        }.start()
-    }
-
-    private fun checkGoogleApiSetup() {
-        googleSetupCheckText.text = "Checking Google APIs..."
-        googleSetupCheckText.setTextColor(COLOR_MUTED)
-        Thread {
-            val checks = GoogleApiSetupChecker(GoogleAccessTokenProvider(this)).checkAll()
-            runOnUiThread {
-                googleSetupCheckText.text = checks.joinToString("\n") { check ->
-                    val marker = when (check.status) {
-                        GoogleApiSetupStatus.OK -> "✓"
-                        GoogleApiSetupStatus.NEEDS_GRANT -> "!"
-                        GoogleApiSetupStatus.API_DISABLED -> "!"
-                        GoogleApiSetupStatus.ERROR -> "!"
-                    }
-                    "$marker ${check.service}: ${check.detail}"
-                }
-                googleSetupCheckText.setTextColor(
-                    if (checks.all { it.status == GoogleApiSetupStatus.OK }) COLOR_SUCCESS else COLOR_WARNING,
-                )
-                renderStatus()
-            }
-        }.start()
-    }
-
-    private fun openGooglePhotosPicker() {
-        googlePhotosPickerText.text = "Creating Google Photos Picker session..."
-        googlePhotosPickerText.setTextColor(COLOR_MUTED)
-        Thread {
-            val result = GooglePhotosApiTools(GoogleAccessTokenProvider(this)).createPickerSession()
-            runOnUiThread {
-                when (result) {
-                    is GooglePhotosPickerCreateResult.Success -> {
-                        GooglePhotosPickerStore(this).save(result.session)
-                        googlePhotosPickerText.text = result.summary
-                        googlePhotosPickerText.setTextColor(COLOR_SUCCESS)
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(result.session.pickerUri)))
-                    }
-                    is GooglePhotosPickerCreateResult.NeedsScope -> {
-                        googlePhotosPickerText.text = result.summary
-                        googlePhotosPickerText.setTextColor(COLOR_WARNING)
-                    }
-                    is GooglePhotosPickerCreateResult.Failed -> {
-                        googlePhotosPickerText.text = result.reason
-                        googlePhotosPickerText.setTextColor(COLOR_WARNING)
-                    }
-                }
-                renderStatus()
-            }
-        }.start()
-    }
-
-    private fun loadGoogleProfile() {
-        profileStatusText.text = "Loading Google profile..."
-        profileStatusText.setTextColor(COLOR_MUTED)
-        Thread {
-            val result = GooglePeopleApiTools(GoogleAccessTokenProvider(this)).fetchOwnProfile()
-            runOnUiThread {
-                when (result) {
-                    is GooglePeopleResult.Success -> {
-                        val profile = userProfileStore.mergeGoogleProfile(result.payload)
-                        profileStatusText.text = "Loaded Google profile.\n${profile.statusSummary()}"
-                        profileStatusText.setTextColor(COLOR_SUCCESS)
-                    }
-                    is GooglePeopleResult.NeedsScope -> {
-                        profileStatusText.text = "Google profile access needs consent. Grant it, then tap Load Google profile again."
-                        profileStatusText.setTextColor(COLOR_WARNING)
-                        authorizeGoogleApiAccess(result.scopes)
-                        profileStatusText.text = "Google profile access needs consent. Grant it, then tap Load Google profile again."
-                        profileStatusText.setTextColor(COLOR_WARNING)
-                    }
-                    is GooglePeopleResult.Rejected -> {
-                        profileStatusText.text = result.reason
-                        profileStatusText.setTextColor(COLOR_WARNING)
-                    }
-                    is GooglePeopleResult.Failed -> {
-                        profileStatusText.text = result.reason
-                        profileStatusText.setTextColor(COLOR_WARNING)
-                    }
-                }
-                renderStatus()
-            }
-        }.start()
-    }
-
-    private fun showAddMemoryDialog() {
-        val input = EditText(this).apply {
-            hint = "Example: My dog is named Scout."
-            textSize = 16f
-            minLines = 3
-            maxLines = 6
-            isSingleLine = false
-            setHorizontallyScrolling(false)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            setTextColor(COLOR_TEXT)
-            setHintTextColor(COLOR_MUTED)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = rounded(COLOR_FIELD, dp(10).toFloat(), COLOR_STROKE)
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Add Billy memory")
-            .setMessage("Save a short durable fact or preference Billy should use in future answers.")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val memory = userProfileStore.addMemory(input.text.toString(), source = "companion")
-                profileStatusText.text = if (memory == null) {
-                    "No memory saved."
+            accessRow("Location", "Weather, \"near me\", maps.", hasLocation() && hasBackgroundLocation()) {
+                if (!hasLocation()) {
+                    permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                 } else {
-                    "Remembered: ${memory.fact}\n${userProfileStore.load().statusSummary()}"
+                    openAppSettings("Choose \"Allow all the time\" so Billy can use location while the screen is off.")
                 }
-                profileStatusText.setTextColor(if (memory == null) COLOR_WARNING else COLOR_SUCCESS)
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            accessRow("Photos", "Find and show your photos.", hasPhotos()) { permissionLauncher.launch(photoPermissions()) }
+            accessRow("Contacts", "Text and call people by name.", granted(Manifest.permission.READ_CONTACTS)) {
+                permissionLauncher.launch(arrayOf(Manifest.permission.READ_CONTACTS))
+            }
+            accessRow("Text messages", "Send SMS (you confirm on the watch).", granted(Manifest.permission.SEND_SMS)) {
+                permissionLauncher.launch(arrayOf(Manifest.permission.SEND_SMS))
+            }
+            accessRow("Phone calls", "Call contacts (you confirm on the watch).", granted(Manifest.permission.CALL_PHONE)) {
+                permissionLauncher.launch(arrayOf(Manifest.permission.CALL_PHONE))
+            }
+            accessRow("Notifications & music", "Read and reply to messages, control what's playing.", BillyNotificationListener.isEnabled(this@MainActivity)) {
+                explainThen("Find Billy in the list and turn it on.") {
+                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                }
+            }
+            accessRow("Open apps from the watch", "Navigation, music, and opening apps while the phone is locked.", Settings.canDrawOverlays(this@MainActivity)) {
+                explainThen("Turn on \"Allow display over other apps\" for Billy. Android needs this to open apps from the background.") {
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                }
+            }
+        }
+
+        card("4  Memory") {
+            addView(text(memoryStatus.ifBlank { profileStore.load().statusSummary() }, 14f, COLOR_MUTED))
+            addView(row(
+                button("Add memory") { addMemory() },
+                button("Import Profile Pack", primary = false) { profilePackLauncher.launch(arrayOf("text/markdown", "text/plain", "*/*")) },
+            ))
+            addView(row(
+                button("What's a Profile Pack?", primary = false) { profilePackHelp() },
+                button("Clear", primary = false) { confirmClear() },
+            ))
+        }
+
+        content.addView(button(if (showAdvanced) "Hide advanced" else "Advanced", primary = false) {
+            showAdvanced = !showAdvanced
+            render()
+        }.let { it.layoutParams = matchWrap().apply { topMargin = dp(16) }; it })
+
+        if (showAdvanced) {
+            card("Google Maps key (optional)") {
+                addView(text("Only adds route lines to watch maps. Places, hours, and travel questions already work without it.", 14f, COLOR_MUTED))
+                val mapsInput = EditText(this@MainActivity).apply {
+                    setText(settingsStore.load().googleMapsApiKey)
+                    hint = "Maps API key"
+                    isSingleLine = true
+                    setTextColor(COLOR_TEXT)
+                    setHintTextColor(COLOR_MUTED)
+                    background = rounded(COLOR_FIELD, COLOR_STROKE)
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                }
+                addView(mapsInput, matchWrap())
+                addView(row(button("Save", primary = false) {
+                    settingsStore.save(settingsStore.load().copy(googleMapsApiKey = mapsInput.text.toString().trim()))
+                    toastStatus("Maps key saved.")
+                }))
+            }
+            card("Test from the phone") {
+                addView(text("Type a prompt and Billy opens on the watch with it.", 14f, COLOR_MUTED))
+                val promptInput = EditText(this@MainActivity).apply {
+                    hint = "What's the weather tomorrow?"
+                    setTextColor(COLOR_TEXT)
+                    setHintTextColor(COLOR_MUTED)
+                    background = rounded(COLOR_FIELD, COLOR_STROKE)
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                }
+                addView(promptInput, matchWrap())
+                addView(row(button("Send to watch") { sendToWatch(promptInput.text.toString()) }))
+                addView(status(testStatus))
+            }
+            card("About this install") {
+                addView(text("Package: $packageName\nSigning SHA-1: ${signingSha1()}", 13f, COLOR_MUTED).also { it.setTextIsSelectable(true) })
+                addView(row(button("Forget Google sign-in", primary = false) {
+                    authStore.clear()
+                    googleStatus = "Forgotten. Tap Connect Google to sign in again."
+                    render()
+                }))
+            }
+        }
     }
 
-    private fun openProfilePackPicker() {
-        profileStatusText.text = "Choose a filled Billy Profile Pack Markdown file."
-        profileStatusText.setTextColor(COLOR_MUTED)
-        profilePackImportLauncher.launch(PROFILE_PACK_MIME_TYPES)
+    private fun missingSteps(): List<String> = buildList {
+        if (settingsStore.load().geminiApiKey.isBlank()) add("Gemini key")
+        if (!authStore.grantedScopes().containsAll(GoogleApiScopes.allUseful)) add("Google")
+        if (!hasLocation()) add("Location")
     }
 
-    private fun importProfilePackFromUri(uri: Uri) {
-        profileStatusText.text = "Reading Profile Pack..."
-        profileStatusText.setTextColor(COLOR_MUTED)
+    // ---- actions --------------------------------------------------------------
+
+    private fun saveAndTestKey(raw: String) {
+        val key = raw.filterNot { it.isWhitespace() }
+        settingsStore.save(settingsStore.load().copy(geminiApiKey = key))
+        keyStatus = "Testing..."
+        render()
         Thread {
-            val result = runCatching {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    val bytes = input.readBytes()
-                    if (bytes.size > MAX_PROFILE_PACK_BYTES) {
-                        throw IllegalArgumentException("Profile Pack is too large (${bytes.size} bytes).")
-                    }
-                    BillyProfilePackParser.parseMarkdown(bytes.toString(Charsets.UTF_8))
-                } ?: throw IllegalArgumentException("Could not open selected file.")
-            }
+            val result = GeminiClient().testKey(key)
             runOnUiThread {
-                result.fold(
-                    onSuccess = { parsed -> confirmProfilePackImport(parsed) },
-                    onFailure = { error ->
-                        profileStatusText.text = "Profile Pack import failed: ${error.message ?: error.javaClass.simpleName}"
-                        profileStatusText.setTextColor(COLOR_WARNING)
-                    },
-                )
+                keyStatus = when (result) {
+                    is GeminiKeyTestResult.Passed -> "✓ ${result.message}"
+                    is GeminiKeyTestResult.Failed -> "✗ ${result.reason}"
+                }
+                render()
             }
         }.start()
     }
 
-    private fun confirmProfilePackImport(parsed: BillyProfilePackParseResult) {
-        if (parsed.facts.isEmpty()) {
-            profileStatusText.text = parsed.summary()
-            profileStatusText.setTextColor(COLOR_WARNING)
-            return
+    private fun connectGoogle() {
+        googleStatus = "Opening Google sign-in..."
+        render()
+        googleAuth.requestAccess(GoogleApiScopes.allUseful) { result ->
+            runOnUiThread { handleGoogleResult(result, allowConsentUi = true) }
         }
-        val examples = parsed.facts
-            .take(5)
-            .joinToString(separator = "\n") { "- ${it.fact}" }
-        AlertDialog.Builder(this)
-            .setTitle("Import Billy Profile Pack?")
-            .setMessage(
-                parsed.summary() +
-                    "\n\nThis replaces the previous imported Profile Pack facts but keeps manual memories and Google profile data." +
-                    "\n\nSample:\n$examples",
-            )
-            .setPositiveButton("Import") { _, _ ->
-                val stored = userProfileStore.importProfilePack(parsed.facts)
-                profileStatusText.text = buildString {
-                    append("Imported ${stored.imported} Profile Pack facts.")
-                    if (stored.replaced > 0) {
-                        append(" Replaced ${stored.replaced} older imported facts.")
-                    }
-                    if (stored.sensitive > 0) {
-                        append(" ${stored.sensitive} marked sensitive.")
-                    }
-                    append("\n${userProfileStore.load().statusSummary()}")
+    }
+
+    private fun handleGoogleResult(result: GoogleApiAuthorizationResult, allowConsentUi: Boolean) {
+        when (result) {
+            is GoogleApiAuthorizationResult.Authorized -> {
+                authStore.saveGrant(result.grantedScopes.filter { it.isNotBlank() }, result.accessToken)
+                googleStatus = "✓ Connected."
+            }
+            is GoogleApiAuthorizationResult.NeedsUserConsent -> {
+                if (allowConsentUi) {
+                    runCatching {
+                        consentLauncher.launch(IntentSenderRequest.Builder(result.pendingIntent.intentSender).build())
+                    }.onFailure { googleStatus = "✗ Couldn't open Google consent: ${it.message}" }
+                } else {
+                    googleStatus = "✗ Google still wants consent. If this repeats, the Google Cloud OAuth client may not match this app's SHA-1 (see Advanced)."
                 }
-                profileStatusText.setTextColor(COLOR_SUCCESS)
             }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun showProfilePackInstructions() {
-        AlertDialog.Builder(this)
-            .setTitle("Billy Profile Pack")
-            .setMessage(
-                "1. Open the Billy Profile Pack template from Drive or docs.\n\n" +
-                    "2. Give it to the consumer Gemini app and ask Gemini to fill it from what it knows about you.\n\n" +
-                    "3. Review the filled result and delete anything you do not want Billy to store.\n\n" +
-                    "4. Save it as Markdown or plain text, then import it here.\n\n" +
-                    "Billy stores imported facts locally on this phone and retrieves only relevant slices for each watch request.",
-            )
-            .setPositiveButton("Done", null)
-            .show()
-    }
-
-    private fun confirmClearProfile() {
-        AlertDialog.Builder(this)
-            .setTitle("Clear Billy profile?")
-            .setMessage("This removes the local Google profile summary, imported Profile Pack facts, and Billy memories stored by the companion.")
-            .setPositiveButton("Clear") { _, _ ->
-                userProfileStore.clear()
-                renderStatus()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun sendTypedPromptToWatch() {
-        val prompt = watchPromptInput.text.toString().trim()
-        if (prompt.isBlank()) {
-            watchPromptStatusText.text = "Enter a prompt first."
-            watchPromptStatusText.setTextColor(COLOR_WARNING)
-            return
+            is GoogleApiAuthorizationResult.Failed -> googleStatus = "✗ ${result.reason}"
         }
-        watchPromptStatusText.text = "Sending prompt to Pebble..."
-        watchPromptStatusText.setTextColor(COLOR_MUTED)
+        render()
+    }
+
+    private fun sendToWatch(prompt: String) {
+        val text = prompt.trim()
+        if (text.isEmpty()) return
+        testStatus = "Sending..."
+        render()
         lifecycleScope.launch {
-            val pendingPromptStore = PendingWatchPromptStore(this@MainActivity)
-            pendingPromptStore.save(prompt)
-            val watch = PebbleWatchStore(this@MainActivity).lastWatch()
-            val watches = watch?.let { listOf(it) }
-            val targetLabel = watch?.value ?: "all connected watches"
+            val store = PendingWatchPromptStore(this@MainActivity)
+            store.save(text)
+            val watches = PebbleWatchStore(this@MainActivity).lastWatch()?.let { listOf(it) }
             val sender = DefaultPebbleSender(this@MainActivity)
             try {
-                val launchResults = if (watches == null) {
-                    sender.startAppOnTheWatch(BillyPebbleProtocol.APP_UUID)
-                } else {
-                    sender.startAppOnTheWatch(BillyPebbleProtocol.APP_UUID, watches)
+                sender.startAppOnTheWatch(BillyPebbleProtocol.APP_UUID, watches)
+                delay(900)
+                if (store.peek() == text) {
+                    sender.sendDataToPebble(
+                        BillyPebbleProtocol.APP_UUID,
+                        mapOf(BillyPebbleProtocol.WATCH_PROMPT to PebbleDictionaryItem.Text(text.take(240))),
+                        watches,
+                    )
+                    store.clearIf(text)
                 }
-                delay(WATCH_PROMPT_SEND_DELAY_MS)
-                if (pendingPromptStore.peek() != prompt) {
-                    watchPromptStatusText.text = "Prompt delivered after Billy opened on the watch."
-                    watchPromptStatusText.setTextColor(COLOR_SUCCESS)
-                    return@launch
-                }
-                val payload = mapOf(BillyPebbleProtocol.WATCH_PROMPT to PebbleDictionaryItem.Text(prompt.take(WATCH_PROMPT_MAX_LENGTH)))
-                val sendResults = if (watches == null) {
-                    sender.sendDataToPebble(BillyPebbleProtocol.APP_UUID, payload)
-                } else {
-                    sender.sendDataToPebble(BillyPebbleProtocol.APP_UUID, payload, watches)
-                }
-                if (!sendResults.isNullOrEmpty()) {
-                    pendingPromptStore.clearIf(prompt)
-                }
-                val sendSucceeded = sendResults.allSucceeded()
-                watchPromptStatusText.text = if (sendSucceeded) {
-                    "Prompt sent to $targetLabel.\n${sendResults.describePebbleResults("Send")}"
-                } else {
-                    "Prompt queued for $targetLabel.\n${launchResults.describePebbleResults("Launch")}\n${sendResults.describePebbleResults("Send")}"
-                }
-                watchPromptStatusText.setTextColor(if (sendSucceeded) COLOR_SUCCESS else COLOR_WARNING)
+                testStatus = "✓ Sent. Check your watch."
             } catch (e: Exception) {
-                watchPromptStatusText.text = "Prompt send failed: ${e.message ?: e.javaClass.simpleName}"
-                watchPromptStatusText.setTextColor(COLOR_WARNING)
+                testStatus = "✗ ${e.message ?: e.javaClass.simpleName}"
             } finally {
                 sender.close()
             }
+            render()
         }
     }
 
-    private fun showGeminiKeyInstructions() {
+    private fun addMemory() {
+        val input = EditText(this@MainActivity).apply {
+            hint = "My dog is named Scout."
+            minLines = 2
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
         AlertDialog.Builder(this)
-            .setTitle("Gemini API key")
-            .setMessage(
-                "1. Open Google AI Studio:\n$GEMINI_API_KEY_URL\n\n" +
-                    "2. Sign in with the Google account that should pay for Gemini API usage.\n\n" +
-                    "3. Create a Gemini API key and copy it.\n\n" +
-                    "4. Paste that same key into Billy Companion and the Billy watch settings.\n\n" +
-                    "The key is stored locally. Billy builds do not include a shared Gemini API key.",
-            )
-            .setPositiveButton("Open AI Studio") { _, _ ->
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GEMINI_API_KEY_URL)))
-            }
-            .setNegativeButton("Done", null)
-            .show()
-    }
-
-    private fun showMapsKeyInstructions() {
-        AlertDialog.Builder(this)
-            .setTitle("Google Maps API key")
-            .setMessage(
-                "This is optional and separate from the Gemini key.\n\n" +
-                    "1. Open Google Cloud Console Maps credentials.\n\n" +
-                    "2. Create an API key in the project that should pay for Maps usage.\n\n" +
-                    "3. Enable billing on that same project. Billing on a different project will not satisfy the pasted key.\n\n" +
-                    "4. Enable Places API, Routes API, Geocoding API, Time Zone API, and Maps Static API on that same project.\n\n" +
-                    "5. Restrict the key to those APIs when possible, then paste it here.\n\n" +
-                    "Billy stores this key locally. It is not bundled into the app.",
-            )
-            .setPositiveButton("Open Console") { _, _ ->
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GOOGLE_MAPS_API_KEY_URL)))
-            }
-            .setNegativeButton("Done", null)
-            .show()
-    }
-
-    private fun showGoogleAccessDialog() {
-        val grantedScopes = googleAuthStore.grantedScopes()
-        val checked = GOOGLE_SERVICES.map { service ->
-            !grantedScopes.containsAll(service.scopes) && service.defaultCheckedWhenMissing
-        }.toBooleanArray()
-
-        AlertDialog.Builder(this)
-            .setTitle("Grant Google access")
-            .setMultiChoiceItems(
-                GOOGLE_SERVICES.map { it.label }.toTypedArray(),
-                checked,
-            ) { _, which, isChecked ->
-                checked[which] = isChecked
-            }
-            .setPositiveButton("Grant") { _, _ ->
-                val scopes = GOOGLE_SERVICES
-                    .filterIndexed { index, _ -> checked[index] }
-                    .flatMap { it.scopes }
-                    .distinct()
-                if (scopes.isEmpty()) {
-                    googleApiAccessState = "no Google services selected"
-                    renderStatus()
-                } else {
-                    authorizeGoogleApiAccess(scopes)
-                }
+            .setTitle("Something Billy should remember")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val memory = profileStore.addMemory(input.text.toString(), source = "companion")
+                memoryStatus = if (memory == null) "Nothing saved." else "Remembered: ${memory.fact}"
+                render()
             }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
-    private fun authorizeGoogleApiAccess(scopes: List<String>) {
-        pendingGoogleScopes = scopes
-        googleApiAccessState = "requesting access..."
-        renderStatus()
-        googleApiAuthorization.requestAccess(scopes) { result ->
-            runOnUiThread {
-                handleGoogleAuthorizationResult(result, allowConsentUi = true)
-            }
-        }
-    }
-
-    private fun handleGoogleAuthorizationResult(
-        result: GoogleApiAuthorizationResult,
-        allowConsentUi: Boolean,
-    ) {
-        when (result) {
-            is GoogleApiAuthorizationResult.Authorized -> {
-                val scopesToSave = result.grantedScopes.filter { it.isNotBlank() }.distinct()
-                googleAuthStore.saveGrant(
-                    scopes = scopesToSave,
-                    accessToken = result.accessToken,
-                )
-                val tokenState = if (result.accessToken.isNullOrBlank()) "no access token returned" else "access token ready"
-                googleApiAccessState = "$tokenState; ${scopesToSave.size} scopes saved"
-                pendingGoogleScopes = emptyList()
-                renderStatus()
-                hydrateGoogleProfileAfterGrant()
-            }
-            is GoogleApiAuthorizationResult.NeedsUserConsent -> {
-                if (!allowConsentUi) {
-                    googleApiAccessState = "Google still requires consent after returning from account picker. Check OAuth package/SHA-1, enabled APIs, allowed users, and requested scopes."
-                    renderStatus()
-                    return
-                }
-                googleApiAccessState = "waiting for Google consent"
-                renderStatus()
-                try {
-                    googleAuthorizationLauncher.launch(
-                        IntentSenderRequest.Builder(result.pendingIntent.intentSender).build(),
-                    )
-                } catch (e: Exception) {
-                    googleApiAccessState = "failed to launch Google consent: ${e.message ?: e.javaClass.simpleName}"
-                    renderStatus()
-                }
-            }
-            is GoogleApiAuthorizationResult.Failed -> {
-                googleApiAccessState = "failed: ${result.reason}"
-                renderStatus()
-            }
-        }
-    }
-
-    private fun hydrateGoogleProfileAfterGrant() {
-        if (!googleAuthStore.hasScopes(GoogleApiScopes.identity)) {
-            return
-        }
-        profileStatusText.text = "Loading Google profile..."
-        profileStatusText.setTextColor(COLOR_MUTED)
+    private fun importProfilePack(uri: Uri) {
         Thread {
-            val result = GooglePeopleApiTools(GoogleAccessTokenProvider(this)).fetchOwnProfile(includePeopleEnrichment = false)
+            val parsed = runCatching {
+                contentResolver.openInputStream(uri)?.use { stream ->
+                    val bytes = stream.readBytes()
+                    require(bytes.size <= 4 * 1024 * 1024) { "File is too large." }
+                    BillyProfilePackParser.parseMarkdown(bytes.toString(Charsets.UTF_8))
+                } ?: error("Couldn't open the file.")
+            }
             runOnUiThread {
-                when (result) {
-                    is GooglePeopleResult.Success -> {
-                        val profile = userProfileStore.mergeGoogleProfile(result.payload)
-                        profileStatusText.text = "Loaded Google profile.\n${profile.statusSummary()}"
-                        profileStatusText.setTextColor(COLOR_SUCCESS)
-                    }
-                    is GooglePeopleResult.NeedsScope -> renderStatus()
-                    is GooglePeopleResult.Rejected -> renderStatus()
-                    is GooglePeopleResult.Failed -> {
-                        if (!userProfileStore.load().hasPromptContext()) {
-                            profileStatusText.text = result.reason
-                            profileStatusText.setTextColor(COLOR_WARNING)
-                        } else {
-                            renderStatus()
-                        }
-                    }
-                }
+                parsed.fold(onSuccess = ::confirmProfilePack, onFailure = {
+                    memoryStatus = "Import failed: ${it.message}"
+                    render()
+                })
             }
         }.start()
     }
 
-    private fun handleGoogleAuthorizationActivityResult(resultCode: Int, data: Intent?) {
-        val extracted = googleApiAuthorization.completeAccessRequest(data)
-        if (resultCode != RESULT_OK) {
-            val detail = when (extracted) {
-                is GoogleApiAuthorizationResult.Failed -> " ${extracted.reason}"
-                is GoogleApiAuthorizationResult.NeedsUserConsent -> " Google still requires consent after the account picker."
-                is GoogleApiAuthorizationResult.Authorized -> " Authorization data was present despite canceled result; saving it."
-            }
-            if (extracted is GoogleApiAuthorizationResult.Authorized) {
-                handleGoogleAuthorizationResult(extracted, allowConsentUi = false)
-                return
-            }
-            googleApiAccessState = "Google consent did not complete. resultCode=$resultCode.$detail"
-            renderStatus()
+    private fun confirmProfilePack(parsed: BillyProfilePackParseResult) {
+        if (parsed.facts.isEmpty()) {
+            memoryStatus = parsed.summary()
+            render()
             return
         }
-        handleGoogleAuthorizationResult(
-            extracted,
-            allowConsentUi = false,
-        )
+        AlertDialog.Builder(this)
+            .setTitle("Import Profile Pack?")
+            .setMessage(parsed.summary() + "\n\n" + parsed.facts.take(5).joinToString("\n") { "- ${it.fact}" })
+            .setPositiveButton("Import") { _, _ ->
+                val stored = profileStore.importProfilePack(parsed.facts)
+                memoryStatus = "Imported ${stored.imported} facts."
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
-    @Deprecated("Existing runtime permission path; Google authorization already uses Activity Result APIs.")
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<String>,
-        grantResults: IntArray,
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (
-            requestCode == REQUEST_CALENDAR_PERMISSIONS ||
-            requestCode == REQUEST_LOCATION_PERMISSIONS ||
-            requestCode == REQUEST_BACKGROUND_LOCATION_PERMISSION ||
-            requestCode == REQUEST_PHOTO_PERMISSIONS
-        ) {
-            renderStatus()
-        }
-    }
-
-    private fun hasCalendarPermissions(): Boolean {
-        return checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED &&
-            checkSelfPermission(Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun hasForegroundLocationPermission(): Boolean {
-        return checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun hasBackgroundLocationPermission(): Boolean {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
-            checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun requestLocationPermissions(
-        foregroundLocationGranted: Boolean = hasForegroundLocationPermission(),
-        backgroundLocationGranted: Boolean = hasBackgroundLocationPermission(),
-    ) {
-        if (!foregroundLocationGranted) {
-            requestPermissions(
-                arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION),
-                REQUEST_LOCATION_PERMISSIONS,
+    private fun profilePackHelp() {
+        AlertDialog.Builder(this)
+            .setTitle("Profile Pack")
+            .setMessage(
+                "Give the Billy Profile Pack template (docs folder in the Billy repo) to the Gemini app and ask it to fill it in from what it knows about you. " +
+                    "Review it, delete anything you don't want stored, save it as a text file, and import it here. It stays on this phone.",
             )
-            return
-        }
-        if (!backgroundLocationGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                AlertDialog.Builder(this)
-                    .setTitle("Allow locked-phone weather")
-                    .setMessage("Open Android settings, choose Permissions > Location, then select Allow all the time.")
-                    .setPositiveButton("Open settings") { _, _ -> openAppSettings() }
-                    .setNegativeButton("Cancel", null)
-                    .show()
-            } else {
-                requestPermissions(
-                    arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
-                    REQUEST_BACKGROUND_LOCATION_PERMISSION,
-                )
+            .setPositiveButton("OK", null)
+            .show()
+    }
+
+    private fun confirmClear() {
+        AlertDialog.Builder(this)
+            .setTitle("Clear Billy's memory?")
+            .setMessage("Removes everything Billy remembers about you on this phone.")
+            .setPositiveButton("Clear") { _, _ ->
+                profileStore.clear()
+                memoryStatus = ""
+                render()
             }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun explainThen(message: String, action: () -> Unit) {
+        AlertDialog.Builder(this)
+            .setMessage(message)
+            .setPositiveButton("Open settings") { _, _ -> runCatching(action) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun openAppSettings(message: String) {
+        explainThen(message) {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
         }
     }
 
-    private fun openAppSettings() {
-        startActivity(
-            Intent(
-                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:$packageName"),
-            ),
-        )
+    private fun open(url: String) {
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     }
 
-    private fun oauthClientIdentity(): String {
-        return "Package\n$packageName\n\nSHA-1\n${installedSigningSha1()}"
+    private fun toastStatus(message: String) {
+        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 
-    private fun appVersionLabel(): String {
-        return try {
-            val info = packageManager.getPackageInfo(packageName, 0)
-            "v${info.versionName} (${versionCodeLabel()})"
-        } catch (_: Exception) {
-            ""
-        }
+    // ---- permission checks ----------------------------------------------------
+
+    private fun granted(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasLocation() = granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_COARSE_LOCATION)
+
+    private fun hasBackgroundLocation() = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+
+    private fun photoPermissions(): Array<String> = if (Build.VERSION.SDK_INT >= 33) {
+        arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+    } else {
+        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
-    @Suppress("DEPRECATION")
-    private fun versionCodeLabel(): Long {
-        val info = packageManager.getPackageInfo(packageName, 0)
-        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            info.longVersionCode
-        } else {
-            info.versionCode.toLong()
-        }
-    }
+    private fun hasPhotos() = photoPermissions().all(::granted)
 
-    @Suppress("DEPRECATION")
-    private fun installedSigningSha1(): String {
-        return try {
-            val signatures = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
-                    .signingInfo
-                    ?.apkContentsSigners
-                    .orEmpty()
-            } else {
-                packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES).signatures.orEmpty()
-            }
-            val certificate = signatures.firstOrNull()?.toByteArray() ?: return "unknown"
-            MessageDigest.getInstance("SHA-1")
-                .digest(certificate)
-                .joinToString(":") { byte -> "%02X".format(byte) }
-        } catch (e: Exception) {
-            "unavailable (${e.message ?: e.javaClass.simpleName})"
-        }
-    }
+    private fun runtimePermissionsMissing(): List<String> =
+        (listOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.CALL_PHONE,
+        ) + photoPermissions()).filterNot(::granted)
 
-    private fun section(title: String): LinearLayout {
-        return LinearLayout(this).apply {
+    // ---- view helpers -----------------------------------------------------------
+
+    private fun card(title: String, build: LinearLayout.() -> Unit) {
+        val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(sectionTitle(title))
+            background = rounded(COLOR_CARD, COLOR_STROKE)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            addView(text(title, 18f, COLOR_TEXT, bold = true).also { it.setPadding(0, 0, 0, dp(6)) })
+            build()
         }
+        content.addView(box, matchWrap().apply { topMargin = dp(16) })
     }
 
-    private fun apiKeyLabel(textValue: String): TextView {
-        return TextView(this).apply {
-            text = textValue
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(COLOR_TEXT)
-            setPadding(0, dp(8), 0, dp(6))
-        }
-    }
-
-    private fun sectionTitle(textValue: String): TextView {
-        return TextView(this).apply {
-            text = textValue
-            textSize = 18f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(COLOR_TEXT)
-            setPadding(0, 0, 0, dp(8))
-        }
-    }
-
-    private fun title(textValue: String, size: Float): TextView {
-        return TextView(this).apply {
-            text = textValue
-            textSize = size
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(COLOR_TEXT)
-        }
-    }
-
-    private fun body(textValue: String): TextView {
-        return TextView(this).apply {
-            text = textValue
-            textSize = 15f
-            setTextColor(COLOR_MUTED)
-            setLineSpacing(0f, 1.08f)
-        }
-    }
-
-    private fun muted(textValue: String): TextView {
-        return TextView(this).apply {
-            text = textValue
-            textSize = 14f
-            setTextColor(COLOR_MUTED)
-            setPadding(0, dp(8), 0, dp(2))
-        }
-    }
-
-    private fun statusLine(textValue: String, granted: Boolean): TextView {
-        return TextView(this).apply {
-            text = textValue
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(if (granted) COLOR_SUCCESS else COLOR_WARNING)
-            setPadding(0, 0, 0, dp(6))
-        }
-    }
-
-    private fun googleStatusRow(label: String, granted: Boolean): View {
-        return LinearLayout(this).apply {
+    private fun LinearLayout.accessRow(title: String, detail: String, ok: Boolean, onAllow: () -> Unit) {
+        addView(LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(0, dp(6), 0, dp(6))
-            addView(TextView(this@MainActivity).apply {
-                text = label
-                textSize = 15f
-                setTextColor(COLOR_TEXT)
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(TextView(this@MainActivity).apply {
-                text = if (granted) "✓ Granted" else "Grant needed"
-                textSize = 15f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(if (granted) COLOR_SUCCESS else COLOR_WARNING)
-            })
-        }
-    }
-
-    private fun accessRow(
-        title: String,
-        detail: String,
-        granted: Boolean,
-        grantText: String,
-        onGrant: () -> Unit,
-    ): View {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(6), 0, dp(10))
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, dp(4))
             addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                addView(TextView(this@MainActivity).apply {
-                    text = title
-                    textSize = 15f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(COLOR_TEXT)
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                })
-                if (granted) {
-                    addView(TextView(this@MainActivity).apply {
-                        text = "✓ Granted"
-                        textSize = 15f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setTextColor(COLOR_SUCCESS)
-                    })
-                } else {
-                    addView(actionButton(grantText) { onGrant() })
-                }
-            })
-            addView(body(detail))
-        }
-    }
-
-    private fun horizontalActions(): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(12), 0, 0)
-        }
-    }
-
-    private fun actionButton(textValue: String, emphasis: Boolean = true, onClick: () -> Unit): Button {
-        return Button(this).apply {
-            text = textValue
-            textSize = 14f
-            isAllCaps = false
-            setTextColor(if (emphasis) COLOR_ACCENT_TEXT else COLOR_TEXT)
-            background = rounded(if (emphasis) COLOR_ACCENT else COLOR_FIELD, dp(10).toFloat(), if (emphasis) COLOR_ACCENT else COLOR_STROKE)
-            setOnClickListener { onClick() }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply {
-                setMargins(0, 0, dp(8), 0)
+                orientation = LinearLayout.VERTICAL
+                addView(text(title, 15f, COLOR_TEXT, bold = true))
+                addView(text(detail, 13f, COLOR_MUTED))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (ok) {
+                addView(text("✓", 20f, COLOR_GOOD, bold = true))
+            } else {
+                addView(button("Allow") { onAllow() })
             }
+        })
+    }
+
+    private fun checkRow(label: String, ok: Boolean): View = text(
+        "${if (ok) "✓" else "○"}  $label",
+        15f,
+        if (ok) COLOR_GOOD else COLOR_MUTED,
+    ).padTop(4)
+
+    private fun status(message: String): View = text(
+        message,
+        14f,
+        when {
+            message.startsWith("✓") -> COLOR_GOOD
+            message.startsWith("✗") -> COLOR_WARN
+            else -> COLOR_MUTED
+        },
+    ).padTop(6).also { it.visibility = if (message.isBlank()) View.GONE else View.VISIBLE }
+
+    private fun row(vararg buttons: Button): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(0, dp(10), 0, 0)
+        buttons.forEach { addView(it) }
+    }
+
+    private fun button(label: String, primary: Boolean = true, onClick: () -> Unit) = Button(this).apply {
+        text = label
+        isAllCaps = false
+        textSize = 14f
+        setTextColor(if (primary) COLOR_ACCENT_TEXT else COLOR_TEXT)
+        background = rounded(if (primary) COLOR_ACCENT else COLOR_FIELD, if (primary) COLOR_ACCENT else COLOR_STROKE)
+        setPadding(dp(14), 0, dp(14), 0)
+        minWidth = 0
+        minimumWidth = 0
+        setOnClickListener { onClick() }
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(8) }
+    }
+
+    private fun text(value: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
+        text = value
+        textSize = size
+        setTextColor(color)
+        if (bold) typeface = Typeface.DEFAULT_BOLD
+        setLineSpacing(0f, 1.1f)
+    }
+
+    private fun TextView.padTop(value: Int): TextView = apply { setPadding(0, dp(value), 0, 0) }
+
+    private fun rounded(color: Int, stroke: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(12).toFloat()
+        setStroke(dp(1), stroke)
+    }
+
+    private fun matchWrap() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    private fun versionLabel(): String = runCatching {
+        "Version " + packageManager.getPackageInfo(packageName, 0).versionName
+    }.getOrDefault("")
+
+    @Suppress("DEPRECATION")
+    private fun signingSha1(): String = runCatching {
+        val signers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo?.apkContentsSigners.orEmpty()
+        } else {
+            packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES).signatures.orEmpty()
         }
-    }
-
-    private fun sectionDivider(): View {
-        return View(this).apply {
-            setBackgroundColor(COLOR_STROKE)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                setMargins(0, dp(20), 0, dp(20))
-            }
-        }
-    }
-
-    private fun spacer(height: Int): View {
-        return View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(1, dp(height))
-        }
-    }
-
-    private fun rounded(color: Int, radius: Float, strokeColor: Int? = null): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(color)
-            cornerRadius = radius
-            strokeColor?.let { setStroke(dp(1), it) }
-        }
-    }
-
-    private fun matchWrap(): LinearLayout.LayoutParams {
-        return LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        )
-    }
-
-    private fun statusBarHeight(): Int {
-        val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
-        return if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
-    }
-
-    private fun dp(value: Int): Int {
-        return (value * resources.displayMetrics.density).toInt()
-    }
-
-    private fun Map<WatchIdentifier, TransmissionResult>?.allSucceeded(): Boolean {
-        return !isNullOrEmpty() && values.all { it is TransmissionResult.Success }
-    }
-
-    private fun Map<WatchIdentifier, TransmissionResult>?.describePebbleResults(action: String): String {
-        if (this == null) {
-            return "$action: no PebbleKit result"
-        }
-        if (isEmpty()) {
-            return "$action: no watch result"
-        }
-        return "$action: " + entries.joinToString { (watch, result) -> "${watch.value}=$result" }
-    }
+        MessageDigest.getInstance("SHA-1").digest(signers.first().toByteArray()).joinToString(":") { "%02X".format(it) }
+    }.getOrDefault("unknown")
 
     companion object {
-        private const val REQUEST_CALENDAR_PERMISSIONS = 1001
-        private const val REQUEST_PHOTO_PERMISSIONS = 1002
-        private const val REQUEST_LOCATION_PERMISSIONS = 1003
-        private const val REQUEST_BACKGROUND_LOCATION_PERMISSION = 1004
-        private const val WATCH_PROMPT_MAX_LENGTH = 240
-        private const val WATCH_PROMPT_SEND_DELAY_MS = 900L
-        private const val MAX_PROFILE_PACK_BYTES = 4 * 1024 * 1024
-        private const val GEMINI_API_KEY_URL = "https://aistudio.google.com/app/apikey"
-        private const val GOOGLE_MAPS_API_KEY_URL = "https://console.cloud.google.com/google/maps-apis/credentials"
-        private val PROFILE_PACK_MIME_TYPES = arrayOf(
-            "text/markdown",
-            "text/plain",
-            "application/octet-stream",
-            "*/*",
-        )
-        private val COLOR_PANEL = Color.rgb(17, 24, 39)
-        private val COLOR_FIELD = Color.rgb(31, 41, 55)
-        private val COLOR_STROKE = Color.rgb(75, 85, 99)
-        private val COLOR_TEXT = Color.rgb(248, 250, 252)
-        private val COLOR_MUTED = Color.rgb(203, 213, 225)
-        private val COLOR_SUCCESS = Color.rgb(74, 222, 128)
-        private val COLOR_WARNING = Color.rgb(251, 191, 36)
+        private val COLOR_BG = Color.rgb(15, 20, 30)
+        private val COLOR_CARD = Color.rgb(24, 31, 45)
+        private val COLOR_FIELD = Color.rgb(35, 44, 60)
+        private val COLOR_STROKE = Color.rgb(60, 72, 92)
+        private val COLOR_TEXT = Color.rgb(245, 247, 250)
+        private val COLOR_MUTED = Color.rgb(170, 180, 195)
+        private val COLOR_GOOD = Color.rgb(74, 222, 128)
+        private val COLOR_WARN = Color.rgb(251, 191, 36)
         private val COLOR_ACCENT = Color.rgb(170, 255, 255)
         private val COLOR_ACCENT_TEXT = Color.rgb(15, 23, 42)
         private val GOOGLE_SERVICES = listOf(
-            GoogleService("Calendar", GoogleApiScopes.calendar),
-            GoogleService("Tasks", GoogleApiScopes.tasks),
-            GoogleService("Gmail", GoogleApiScopes.gmail),
-            GoogleService("Drive", GoogleApiScopes.drive),
-            GoogleService("Contacts", GoogleApiScopes.people),
-            GoogleService("Docs", GoogleApiScopes.docs),
-            GoogleService("Sheets", GoogleApiScopes.sheets),
-            GoogleService("Slides", GoogleApiScopes.slides),
-            GoogleService("Forms", GoogleApiScopes.forms, defaultCheckedWhenMissing = false),
-            GoogleService("Google Photos APIs", GoogleApiScopes.photos, defaultCheckedWhenMissing = false),
+            "Calendar" to GoogleApiScopes.calendar,
+            "Tasks" to GoogleApiScopes.tasks,
+            "Gmail" to GoogleApiScopes.gmail,
+            "Drive & Docs" to (GoogleApiScopes.drive + GoogleApiScopes.docs + GoogleApiScopes.sheets),
+            "Contacts" to GoogleApiScopes.people,
         )
-        private val COLOR_STATUS_SCRIM = Color.rgb(3, 7, 18)
     }
 }
-
-private data class GoogleService(
-    val label: String,
-    val scopes: List<String>,
-    val defaultCheckedWhenMissing: Boolean = true,
-)

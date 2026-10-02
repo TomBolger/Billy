@@ -330,14 +330,29 @@ test('clarification picker ends the turn; the answer comes back as a sentence', 
         'My answer to your question "Which alarm?": 8:00');
 });
 
-test('model rejecting Search+functions retries without Search instead of flattening', async function() {
-    gemini.script.push({status: 400, json: {error: {message: 'Tool use with function calling and google_search is unsupported', status: 'INVALID_ARGUMENT'}}});
+test('built-in tools: Search, Maps, URL reading and code ride along with functions', async function() {
     gemini.script.push(text('ok'));
     newSession('hello').run();
     await waitFor(done);
-    assert.strictEqual(gemini.requests.length, 2);
-    assert(!gemini.requests[1].body.tools.some(function(t) { return t.googleSearch; }));
-    assert(/:generateContent/.test(gemini.requests[1].url));
+    var keys = gemini.requests[0].body.tools.map(function(t) { return Object.keys(t)[0]; });
+    ['googleSearch', 'googleMaps', 'urlContext', 'codeExecution', 'functionDeclarations'].forEach(function(k) {
+        assert(keys.indexOf(k) !== -1, 'missing ' + k + ' in ' + keys);
+    });
+});
+
+test('model rejecting built-ins steps down (all -> Search only -> none) instead of flattening', async function() {
+    var reject = {status: 400, json: {error: {message: 'Tool combination is unsupported', status: 'INVALID_ARGUMENT'}}};
+    gemini.script.push(reject);
+    gemini.script.push(reject);
+    gemini.script.push(text('ok'));
+    newSession('hello').run();
+    await waitFor(done);
+    assert.strictEqual(gemini.requests.length, 3);
+    var second = gemini.requests[1].body.tools;
+    assert(second.some(function(t) { return t.googleSearch; }), 'tier 1 keeps Search');
+    assert(!second.some(function(t) { return t.googleMaps; }), 'tier 1 drops Maps');
+    assert(!gemini.requests[2].body.tools.some(function(t) { return t.googleSearch; }), 'tier 2 drops Search');
+    assert(/:generateContent/.test(gemini.requests[2].url));
 });
 
 test('overloaded model falls back to the next model on the first call only', async function() {

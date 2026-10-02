@@ -69,9 +69,18 @@ function buildBody(model, contents, options) {
         };
     });
     var tools = [];
-    var useSearch = !!options.search && (declarations.length === 0 || isGemini3(model));
+    // tier 0: Search + Maps + URL reading + code; tier 1: Search only; tier 2: none.
+    var tier = options.builtInTier || 0;
+    var builtIns = tier < 2 && (declarations.length === 0 || isGemini3(model));
+    var useSearch = !!options.search && builtIns;
+    var extras = useSearch && tier === 0 && declarations.length > 0;
     if (useSearch) {
         tools.push({googleSearch: {}});
+    }
+    if (extras) {
+        tools.push({googleMaps: {}});
+        tools.push({urlContext: {}});
+        tools.push({codeExecution: {}});
     }
     if (declarations.length > 0) {
         tools.push({functionDeclarations: declarations});
@@ -81,6 +90,9 @@ function buildBody(model, contents, options) {
     }
     if (useSearch && declarations.length > 0) {
         body.toolConfig = {includeServerSideToolInvocations: true};
+    }
+    if (extras && options.latLng) {
+        body.toolConfig.retrievalConfig = {latLng: {latitude: options.latLng.lat, longitude: options.latLng.lon}};
     }
     if (options.forceText && declarations.length > 0) {
         body.toolConfig = body.toolConfig || {};
@@ -185,19 +197,20 @@ exports.generateWithModel = function(model, contents, options, callback) {
         return;
     }
     var attempt = 0;
-    var searchEnabled = !!options.search;
+    var tier = 0;
     function run() {
         attempt++;
         var effective = {};
         Object.keys(options).forEach(function(key) {
             effective[key] = options[key];
         });
-        effective.search = searchEnabled;
+        effective.builtInTier = tier;
         post(apiKey, model, buildBody(model, contents, effective), function(err, raw) {
             if (err) {
-                if (searchEnabled && err.status === 400 && /search|tool|server.?side|combination|function/i.test(err.messageText || '')) {
-                    console.log('Gemini rejected Search + functions on ' + model + '; retrying without Search.');
-                    searchEnabled = false;
+                if (options.search && tier < 2 && err.status === 400 &&
+                    /search|tool|server.?side|combination|function|maps|url|code/i.test(err.messageText || '')) {
+                    tier++;
+                    console.log('Gemini rejected built-in tools on ' + model + '; retrying with tier ' + tier + '.');
                     run();
                     return;
                 }

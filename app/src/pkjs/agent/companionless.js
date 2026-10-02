@@ -22,6 +22,8 @@ var localHistory = require('./local_history');
 var promptBuilder = require('./prompt');
 var registry = require('./tool_registry');
 var usage = require('./usage');
+var config = require('../config');
+var location = require('../location');
 
 var MAX_STEPS = 8;
 var CHUNK_LENGTH = 80;
@@ -64,6 +66,17 @@ function describeAction(name, args, result) {
     return name + ' ' + brief + ' -> ' + status;
 }
 
+function currentLatLng() {
+    try {
+        if (config.isLocationEnabled() && location.isReady()) {
+            return location.getPos();
+        }
+    } catch (e) {
+        // no location
+    }
+    return null;
+}
+
 function Turn(session) {
     this.session = session;
     this.userText = normalizePrompt(session.prompt);
@@ -85,7 +98,8 @@ Turn.prototype.start = function() {
     this.options = {
         functions: registry.declarations(),
         systemInstruction: promptBuilder.buildSystemInstruction(),
-        search: true
+        search: true,
+        latLng: currentLatLng()
     };
     this.progress('Thinking');
     var self = this;

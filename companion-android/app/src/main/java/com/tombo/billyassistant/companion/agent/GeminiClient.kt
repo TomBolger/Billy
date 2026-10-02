@@ -34,6 +34,10 @@ class GeminiClient(preferredModel: String? = null) {
 
     val primaryModel: String get() = models.first()
 
+    // Per-turn context; a GeminiClient serves one watch request at a time.
+    private var turnContext: String = ""
+    private var turnLatLng: Pair<Double, Double>? = null
+
     fun describeConfiguration(apiKey: String): String {
         return if (apiKey.isBlank()) {
             "Gemini API key is not configured."
@@ -108,7 +112,12 @@ class GeminiClient(preferredModel: String? = null) {
         toolDeclarations: JSONArray,
         toolExecutor: (String, JSONObject) -> CompanionToolExecution,
         history: JSONArray = JSONArray(),
+        extraContext: String = "",
+        latitude: Double? = null,
+        longitude: Double? = null,
     ): CompanionAgentResult {
+        turnContext = extraContext
+        turnLatLng = if (latitude != null && longitude != null) latitude to longitude else null
         val key = normalizeApiKey(apiKey)
         if (key.isBlank()) {
             return CompanionAgentResult.Failed("Gemini API key is missing in Billy Companion.")
@@ -240,11 +249,13 @@ class GeminiClient(preferredModel: String? = null) {
         declarations: JSONArray,
         forceText: Boolean,
     ): StepResult {
-        var useSearch = true
+        // Built-in tool tiers: everything, then Search only, then none, in case a
+        // model rejects a combination.
+        var tier = 0
         var attempt = 0
         while (true) {
             attempt++
-            val body = buildBody(model, contents, declarations, useSearch, forceText)
+            val body = buildBody(model, contents, declarations, tier, forceText)
             when (val http = post(apiKey, model, body)) {
                 is HttpResult.Ok -> {
                     val parsed = parseResponse(model, http.json)
@@ -258,10 +269,10 @@ class GeminiClient(preferredModel: String? = null) {
                 }
                 is HttpResult.Error -> {
                     val lower = http.raw.lowercase()
-                    if (useSearch && http.code == 400 &&
-                        listOf("search", "tool", "server_side", "server-side", "combination", "function").any { it in lower }
+                    if (tier < 2 && http.code == 400 &&
+                        listOf("search", "tool", "server_side", "server-side", "combination", "function", "maps", "url", "code").any { it in lower }
                     ) {
-                        useSearch = false
+                        tier++
                         continue
                     }
                     if (http.transient && attempt < 2) {
@@ -280,7 +291,7 @@ class GeminiClient(preferredModel: String? = null) {
         model: String,
         contents: JSONArray,
         declarations: JSONArray,
-        useSearch: Boolean,
+        tier: Int,
         forceText: Boolean,
     ): JSONObject {
         val body = JSONObject()
@@ -288,9 +299,16 @@ class GeminiClient(preferredModel: String? = null) {
             .put("contents", contents)
             .put("generationConfig", generationConfig(model, forceJson = false))
         val tools = JSONArray()
-        val search = useSearch && (declarations.length() == 0 || isGemini3(model))
+        val builtIns = tier < 2 && (declarations.length() == 0 || isGemini3(model))
+        val search = builtIns
+        val extras = builtIns && tier == 0 && declarations.length() > 0
         if (search) {
             tools.put(JSONObject().put("googleSearch", JSONObject()))
+        }
+        if (extras) {
+            tools.put(JSONObject().put("googleMaps", JSONObject()))
+            tools.put(JSONObject().put("urlContext", JSONObject()))
+            tools.put(JSONObject().put("codeExecution", JSONObject()))
         }
         if (declarations.length() > 0) {
             tools.put(JSONObject().put("functionDeclarations", declarations))
@@ -301,6 +319,13 @@ class GeminiClient(preferredModel: String? = null) {
         val toolConfig = JSONObject()
         if (search && declarations.length() > 0) {
             toolConfig.put("includeServerSideToolInvocations", true)
+        }
+        val latLng = turnLatLng
+        if (extras && latLng != null) {
+            toolConfig.put(
+                "retrievalConfig",
+                JSONObject().put("latLng", JSONObject().put("latitude", latLng.first).put("longitude", latLng.second)),
+            )
         }
         if (forceText && declarations.length() > 0) {
             toolConfig.put("functionCallingConfig", JSONObject().put("mode", "NONE"))
@@ -386,7 +411,9 @@ class GeminiClient(preferredModel: String? = null) {
         return SYSTEM_INSTRUCTION +
             "\n\nCONTEXT\n- Now: ${now.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }} " +
             "${DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(now.withNano(0))} (${now.zone.id}). " +
-            "Use this offset for every time you pass to a tool unless the user names another timezone."
+            "Use this offset for every time you pass to a tool unless the user names another timezone." +
+            (if (turnLatLng != null) "\n- The phone's current location is known; Google Maps grounding uses it for \"near me\" questions." else "") +
+            (if (turnContext.isNotBlank()) "\n- " + turnContext.replace("\n", "\n- ") else "")
     }
 
     private fun friendlyError(code: Int, raw: String, model: String): String {
@@ -427,42 +454,38 @@ class GeminiClient(preferredModel: String? = null) {
         private val MUTATING_TOOLS = WatchToolsCompanionTool.MUTATING + setOf(
             "create_calendar_event", "create_google_task", "complete_google_task", "create_gmail_draft",
             "create_google_doc", "create_google_sheet", "create_google_slides", "update_google_doc",
-            "create_google_keep_note", "remember_billy_user_fact", "forget_billy_user_fact",
+            "update_calendar_event", "remember_billy_user_fact", "forget_billy_user_fact", "set_flashlight", "set_phone_volume",
         )
 
         private val SYSTEM_INSTRUCTION = listOf(
             // Core rules: keep in sync with app/src/pkjs/agent/prompt.js (CORE_RULES).
-            "You are Billy, a helpful, capable assistant that lives on the user's Pebble smartwatch. Aim to be as useful as Gemini on a phone.",
+            "You are Billy, the user's personal assistant on their Pebble smartwatch, running through their Android phone. Be as capable as Gemini on a phone: answer anything, and act on the phone and the user's Google account.",
             "Input is voice dictation. Silently fix obvious transcription mistakes and never comment on them.",
             "",
             "TOOLS",
-            "- You have real tools. When the user asks you to DO something (set, start, add, remind, cancel, change, show, find, send, create), call the matching tool. Do not describe what you would do, do not tell the user to do it themselves, and do not claim success unless the tool returned status ok.",
-            "- If a request needs several steps, call several tools in a row (e.g. list alarms, then delete the right one; find a place, then show directions).",
-            "- Follow-ups like \"cancel it\", \"make that 10 minutes\", or \"one more for 8\" refer to earlier turns. Use the conversation context.",
-            "- If a tool returns an error, fix the arguments and retry once, or tell the user plainly what went wrong. If a result has suggested_watch_reply you may use it as your reply.",
-            "- Timers are durations (\"in 10 minutes\", \"for 5 min\"); alarms are clock times (\"at 7am\"); \"remind me to X\" uses set_reminder (watch timeline), not Calendar or Tasks, unless the user names Calendar or Tasks.",
-            "- Ask with ask_clarifying_question only when a wrong guess would create, send, or delete the wrong thing and there is no sensible default. Otherwise pick the most reasonable reading and act.",
-            "- Use Google Search for anything current or factual you are not sure about: news, sports, prices, hours, recent releases.",
+            "- You have real tools. When the user asks you to DO something, call the tool. Don't describe what you would do, don't tell the user to do it themselves, and don't claim success unless the tool returned status ok.",
+            "- Chain tools when needed: find the event, then change or delete it; look up the contact, then text them; find the place, then navigate.",
+            "- Follow-ups (\"cancel it\", \"move that to 4\", \"text her back\") refer to earlier turns and their [Actions taken], which include ids. Reuse them.",
+            "- If a tool returns an error, fix the arguments and retry once, or say plainly what went wrong. needs_sign_in / needs_permission results: tell the user exactly what to turn on in Billy Companion.",
+            "- Sending a text/email/reply, calling, and deleting events show a confirmation on the watch automatically; just call the tool.",
+            "- Use ask_clarifying_question only when a wrong guess would send, create, or delete the wrong thing and there's no sensible default.",
+            "- Built in: Google Search for anything current; Google Maps for places, hours, ratings, and travel questions (it knows the phone's location); reading web pages from URLs; and running code for exact math.",
+            "",
+            "WHICH TOOL",
+            "- Timers = durations; alarms = clock times; \"remind me to...\" = set_reminder (watch timeline) unless the user says Google Tasks or Calendar.",
+            "- Calendar: get_calendar_events to read or find; create_calendar_event; update_calendar_event to move/rename; delete_calendar_event to remove; find_free_time for availability.",
+            "- Phone: send_text_message (SMS), reply_to_notification (WhatsApp/Signal/etc.), call_contact, get_notifications, control_media / play_music, set_phone_volume, set_flashlight, get_phone_status, find_my_phone, open_app, start_navigation (+ show_map for the watch).",
+            "- Photos: find_photo with a date window and/or description; you'll see the photo, so describe it or answer questions about it.",
+            "- Google: Gmail (search_gmail, prepare_gmail_send to send, create_gmail_draft only when a draft is asked for), Tasks, Drive/Docs/Sheets/Slides.",
+            "- Google Keep and cloud Google Photos search aren't available to third-party apps; say so briefly if asked.",
             "",
             "INFO CARDS",
-            "- Prefer a card when one fits: get_weather (weather card), show_number (one big number for calculations, conversions, counts, prices), set_timer (live countdown), show_map_directions (map), photo tools (photo). When a card is shown, your text should add context, not repeat the card.",
+            "- Prefer a card when one fits: get_weather, show_number (one big number), set_timer (countdown), show_map, find_photo, show_web_image_search. When a card is shown, add context in text; don't repeat it.",
             "",
             "REPLIES",
-            "- Replies appear on a tiny screen: usually 1-4 short lines. Lead with the answer. Plain text only: no markdown, bold, tables, headings, links, or citations. Use \"- \" bullets for short lists.",
-            "- Text you pass into tools that create content elsewhere (emails, documents, tasks, events) is not limited by the watch screen; write it fully.",
-            "- Do not end with an open question. If you truly need an answer, use ask_clarifying_question.",
-            "",
-            "PHONE AND GOOGLE SERVICES (this is the Android companion runtime)",
-            "- Google Calendar, Tasks, Gmail, Drive, Docs, Sheets, Slides, Forms, Contacts, and Photos work through the provided tools using the user's Google sign-in in Billy Companion. If a tool reports needs_sign_in or needs_scope, say which service to grant in Billy Companion.",
-            "- Calendar: to create, call create_calendar_event directly (pass calendar_hint if the user names a calendar; the tool asks if unclear). Use query_calendar_freebusy or find_calendar_availability for free/busy questions. Name events and times in answers, not just counts.",
-            "- Tasks: create_google_task, list_google_tasks, complete_google_task (do not answer a completion request by listing).",
-            "- Gmail: search_gmail to read; to send, use prepare_gmail_send (the watch asks the user to confirm). Only use create_gmail_draft when a draft is requested. Resolve contact names through the tools before asking for an address.",
-            "- Drive/Docs: search_google_drive or list_recent_google_drive_files to find files; read_google_doc/sheet/slides/form to read. To edit a Doc, read it if needed, then update_google_doc with the complete new text. Create files only when asked.",
-            "- Places and maps: \"near me\" -> find_nearby_google_places; near another origin (home, work, an address) -> find_google_places_near_address. Pass the travel_mode enum (DRIVE, WALK, BICYCLE, TRANSIT, TWO_WHEELER) for any route. Navigate: open_maps_directions then show_map_directions. Travel time: get_google_route. Map preview only: show_map_directions. If a Maps tool says needs_api_key, say so.",
-            "- Photos: local camera roll via the photo tools; for date requests pass both taken_after_millis and taken_before_millis. Use Google Photos tools only when the user says Google Photos. Open-web pictures: show_web_image_search.",
-            "- Google Keep is not available for personal accounts; say so briefly and do not substitute another app unless asked.",
-            "- What Billy remembers: get_billy_user_profile; save only when asked with remember_billy_user_fact; forget with forget_billy_user_fact.",
-            "- Some app tools only open a draft or screen on the phone; describe those as opened, never as completed.",
+            "- The watch screen is tiny: usually 1-4 short lines. Lead with the answer. Plain text only, no markdown, links, or citations. \"- \" bullets for short lists.",
+            "- Content you write into emails, documents, texts, or events is not limited by the watch; write it fully and naturally.",
+            "- Don't end with an open question. If you truly need an answer, use ask_clarifying_question.",
         ).joinToString("\n")
     }
 }

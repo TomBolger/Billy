@@ -41,6 +41,7 @@ object GoogleApiScopes {
     val slides = identity + listOf(SLIDES, SLIDES_READONLY)
     val forms = identity + FORMS_BODY_READONLY
     val photos = identity + listOf(PHOTOS_PICKER_READONLY, PHOTOS_LIBRARY_APP_CREATED_READONLY)
-    val allUseful = (calendar + tasks + gmail + drive + people + docs + sheets + slides + forms + photos).distinct()
+    /** Everything Billy uses, granted in one consent screen. */
+    val allUseful = (calendar + tasks + gmail + drive + people + docs + sheets + slides + forms).distinct()
     val ASSISTANT_API_ACCESS = allUseful
 }

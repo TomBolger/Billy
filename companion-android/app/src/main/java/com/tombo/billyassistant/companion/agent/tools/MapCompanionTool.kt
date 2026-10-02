@@ -8,7 +8,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PointF
 import com.tombo.billyassistant.companion.google.GoogleMapsTravelMode
-import com.tombo.billyassistant.companion.google.googleMapsTravelModeValues
 import com.tombo.billyassistant.companion.google.toCanonicalGoogleMapsTravelMode
 import org.json.JSONArray
 import org.json.JSONObject
@@ -32,17 +31,17 @@ class MapCompanionTool(
 ) : CompanionTool {
     override val declarations: List<JSONObject> = listOf(
         JSONObject()
-            .put("name", "show_map_directions")
-            .put("description", "Create a watch map card for an exact destination. Preserve the user's requested travel mode by passing the canonical travel_mode enum. This does not open phone navigation; use open_maps_directions separately for navigation. For nearest/nearby/local requests, first use find_nearby_google_places and pass the selected place coordinates here.")
+            .put("name", "show_map")
+            .put("description", "Show a map card on the watch for a place or destination (\"where is...\", \"show me a map of...\", or alongside start_navigation). Pass coordinates if you already know them.")
             .put(
                 "parameters",
                 objectSchema(
                     required = listOf("destination"),
                     properties = mapOf(
-                        "destination" to stringSchema("Destination, place name, or selected place label."),
-                        "destination_latitude" to numberSchema("Optional destination latitude from a prior Places or Geocoding result. Prefer this when known."),
-                        "destination_longitude" to numberSchema("Optional destination longitude from a prior Places or Geocoding result. Prefer this when known."),
-                        "travel_mode" to enumStringSchema("Canonical travel mode selected from the user's intent. Use WALK for walking directions or on-foot requests.", googleMapsTravelModeValues),
+                        "destination" to stringSchema("Place name or address."),
+                        "destination_latitude" to numberSchema("Optional latitude if known."),
+                        "destination_longitude" to numberSchema("Optional longitude if known."),
+                        "travel_mode" to stringSchema("Optional: drive, walk, bicycle, or transit, for the route line."),
                     ),
                 ),
             ),
@@ -50,16 +49,11 @@ class MapCompanionTool(
 
     override fun execute(name: String, args: JSONObject): CompanionToolExecution? {
         return when (name) {
-            "show_map_directions" -> showDestination(
+            "show_map", "show_map_directions" -> showDestination(
                 destination = args.optString("destination"),
                 destinationLatitude = args.optionalDouble("destination_latitude"),
                 destinationLongitude = args.optionalDouble("destination_longitude"),
-                travelMode = args.canonicalTravelMode() ?: return CompanionToolExecution(
-                    JSONObject()
-                        .put("status", "rejected")
-                        .put("summary", "Invalid travel_mode \"${args.optString("travel_mode")}\". Use DRIVE, WALK, BICYCLE, TRANSIT, or TWO_WHEELER."),
-                    finalText = "Invalid Maps travel mode.",
-                ),
+                travelMode = runCatching { args.canonicalTravelMode() }.getOrNull() ?: GoogleMapsTravelMode.DRIVE,
             )
             else -> null
         }
