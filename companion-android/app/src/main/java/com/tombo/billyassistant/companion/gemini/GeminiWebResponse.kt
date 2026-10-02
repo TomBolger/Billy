@@ -80,7 +80,7 @@ object GeminiWebResponse {
 
     /** The user's own photos first, then generated images, then web pictures. */
     private fun rank(url: String): Int = when {
-        url.contains(".usercontent.google.com/") || url.contains("googleusercontent.com/pw/") -> 0
+        url.contains("photos-askphotos") || url.contains(".usercontent.google.com/") || url.contains("googleusercontent.com/pw/") -> 0
         url.contains("googleusercontent.com/gg") || url.contains("/gg-dl/") -> 1
         url.contains("encrypted-tbn") -> 3
         else -> 2

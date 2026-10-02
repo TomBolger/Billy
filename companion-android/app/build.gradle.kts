@@ -23,8 +23,8 @@ android {
         applicationId = "com.tombo.billyassistant.companion"
         minSdk = 26
         targetSdk = 36
-        versionCode = 70
-        versionName = "0.4.3"
+        versionCode = 71
+        versionName = "0.4.4"
     }
 
     compileOptions {

@@ -196,6 +196,7 @@ object GeminiAccountBridge {
         }
         val body = result.optString("body")
         saveLastReply(context, body)
+        runCatching { imageLogFile(context).delete() }
         val status = result.optInt("status")
         if (status != 200) {
             main.post { pageLoadedAt = 0L }
@@ -465,8 +466,85 @@ object GeminiAccountBridge {
                 log.append("page ").append(candidate.takeLast(12)).append(": ").append(result?.optString("error") ?: "no answer").append('\n')
             }
         }
+        val left = deadline - System.currentTimeMillis()
+        if (left >= 3_000) {
+            val rendered = renderInBrowser(app, url, left.coerceAtMost(12_000), log)
+            if (rendered != null) {
+                saveImageLog(app, log.append("rendered ok").toString())
+                return rendered
+            }
+        } else {
+            log.append("no time left to render\n")
+        }
         saveImageLog(app, log.toString())
         return null
+    }
+
+    /**
+     * Last resort: show the picture in an off-screen browser page that has the
+     * user's Google sign-in, and copy the pixels. Works whenever a browser can
+     * display the picture, whatever the reason a plain download can't.
+     */
+    @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
+    private fun renderInBrowser(context: Context, url: String, timeoutMs: Long, log: StringBuilder): Bitmap? {
+        val size = 480
+        val latch = CountDownLatch(1)
+        var result: Bitmap? = null
+        var view: WebView? = null
+        main.post {
+            try {
+                val v = WebView(context)
+                view = v
+                v.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
+                v.settings.javaScriptEnabled = true
+                v.settings.userAgentString = chromeUserAgent(context)
+                CookieManager.getInstance().setAcceptThirdPartyCookies(v, true)
+                v.setBackgroundColor(android.graphics.Color.BLACK)
+                v.measure(
+                    android.view.View.MeasureSpec.makeMeasureSpec(size, android.view.View.MeasureSpec.EXACTLY),
+                    android.view.View.MeasureSpec.makeMeasureSpec(size, android.view.View.MeasureSpec.EXACTLY),
+                )
+                v.layout(0, 0, size, size)
+                v.addJavascriptInterface(object {
+                    @JavascriptInterface
+                    fun loaded(width: Int, height: Int) {
+                        main.postDelayed({
+                            try {
+                                val full = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                                v.draw(android.graphics.Canvas(full))
+                                // Crop the letterbox: the picture is centred and scaled to fit.
+                                val scale = minOf(size.toFloat() / width.coerceAtLeast(1), size.toFloat() / height.coerceAtLeast(1))
+                                val w = (width * scale).toInt().coerceIn(1, size)
+                                val h = (height * scale).toInt().coerceIn(1, size)
+                                result = Bitmap.createBitmap(full, (size - w) / 2, (size - h) / 2, w, h)
+                                if (result !== full) full.recycle()
+                            } catch (e: Exception) {
+                                log.append("render: ").append(e.javaClass.simpleName).append(' ').append(e.message).append('\n')
+                            }
+                            latch.countDown()
+                        }, 400)
+                    }
+
+                    @JavascriptInterface
+                    fun failed() {
+                        log.append("render: the picture didn't load in the browser either\n")
+                        latch.countDown()
+                    }
+                }, "BillyImage")
+                val html = "<html><head><meta name='viewport' content='width=$size'></head>" +
+                    "<body style='margin:0;background:#000;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center'>" +
+                    "<img id='i' style='max-width:${size}px;max-height:${size}px' " +
+                    "onload='BillyImage.loaded(this.naturalWidth,this.naturalHeight)' onerror='BillyImage.failed()' src=\"" +
+                    sizedForWatch(url).replace("&", "&amp;").replace("\"", "&quot;") + "\"></body></html>"
+                v.loadDataWithBaseURL("https://gemini.google.com/", html, "text/html", "utf-8", null)
+            } catch (e: Exception) {
+                log.append("render setup: ").append(e.message).append('\n')
+                latch.countDown()
+            }
+        }
+        if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) log.append("render: timed out\n")
+        main.post { view?.destroy() }
+        return result
     }
 
     private fun imageScript(id: Int, url: String): String = """
@@ -522,7 +600,7 @@ object GeminiAccountBridge {
     private fun imageLogFile(context: Context) = File(context.applicationContext.filesDir, "gemini-last-image.txt")
 
     private fun saveImageLog(context: Context, text: String) {
-        runCatching { imageLogFile(context).writeText(text) }
+        runCatching { imageLogFile(context).appendText(text.trimEnd() + "\n\n") }
     }
 
     /** Google image hosts take a size suffix after "="; ask for a watch-sized copy. */

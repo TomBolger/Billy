@@ -41,14 +41,16 @@ class MyGeminiCompanionTool(
         if (name != "ask_my_gemini") return null
         val question = args.optString("question").trim()
         if (question.isBlank()) return error("No question given.")
-        val prompt = "$question\n\n(Reply for a small smartwatch screen: 1-3 short plain sentences, no markdown, lists, or tables. " +
-            "If I asked to see a photo or picture, show it, not just a description.)"
+        val prompt = "$question\n\n(Brief answer, it's for my smartwatch.)"
         return when (val reply = GeminiAccountBridge.ask(context, prompt)) {
             is GeminiAccountBridge.Reply.Failed -> error(
                 if (reply.reason == "signed_out") "The user's Gemini account is signed out." else reply.reason,
             )
             is GeminiAccountBridge.Reply.Answer -> {
-                val image = reply.imageUrls.firstNotNullOfOrNull { url ->
+                // The user's own photos come first; if Gemini found one, never fall
+                // back to an unrelated web picture it attached alongside.
+                val personal = reply.imageUrls.filter(::isPersonalPhoto)
+                val image = personal.ifEmpty { reply.imageUrls }.take(3).firstNotNullOfOrNull { url ->
                     GeminiAccountBridge.downloadImage(context, url)?.let { bitmap ->
                         try {
                             bitmap.toWatchImage(watchMediaSpec)
@@ -71,6 +73,9 @@ class MyGeminiCompanionTool(
             }
         }
     }
+
+    private fun isPersonalPhoto(url: String) =
+        url.contains("photos-askphotos") || url.contains(".usercontent.google.com/") || url.contains("googleusercontent.com/pw/")
 
     /** The watch shows plain text: drop markdown Gemini may still add. */
     private fun plain(text: String): String = text
