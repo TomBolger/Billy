@@ -19,6 +19,8 @@ object GeminiWebResponse {
 
     private val ARTIFACTS = Regex("""https?://googleusercontent\.com/(?:\w+/)+\d+\n*""")
     private val CITES = Regex("""\s*\[cite(?::[^\]]*)?]""")
+    // Internal markup the website renders itself, e.g. "<elicitation = ...>".
+    private val TAGS = Regex("""</?[A-Za-z][\w-]*(?:\s*[=:]\s*[^<>]*|\s+[^<>]*)?/?>""")
     private val URL = Regex("""https://[^\s"'<>()\[\]\\]+""")
 
     fun parse(body: String): Parsed {
@@ -46,6 +48,9 @@ object GeminiWebResponse {
         val clean = text
             .replace(ARTIFACTS, "")
             .replace(CITES, "")
+            .replace(TAGS, "")
+            .replace(Regex("""[ \t]{2,}"""), " ")
+            .replace(Regex("""\n{3,}"""), "\n\n")
             .trim()
         val ranked = (images.filter(::isPicture).sortedBy(::rank) + web).distinct()
         return Parsed(clean, ranked.take(6), errorCode)

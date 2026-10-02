@@ -20,6 +20,7 @@ import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WeatherCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WebImageCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.MyGeminiCompanionTool
+import com.tombo.billyassistant.companion.gemini.GeminiAccountBridge
 import com.tombo.billyassistant.companion.agent.tools.currentAndroidLocation
 import com.tombo.billyassistant.companion.auth.GoogleAccessTokenProvider
 import com.tombo.billyassistant.companion.auth.GoogleApiScopes
@@ -51,6 +52,8 @@ class CompanionAgent(
     private val conversations = ConversationStore(context)
     private var actions = mutableListOf<String>()
 
+    private val myGemini = MyGeminiCompanionTool(context, watchMediaSpec)
+
     private val tools = CompanionToolRegistry(
         listOf(
             ClarificationCompanionTool(optionLabelMaxChars = watchMediaSpec.pickerOptionChars) { "" },
@@ -71,7 +74,7 @@ class CompanionAgent(
             PhotoCompanionTool(context, watchMediaSpec, geminiClient) { settingsStore.load().geminiApiKey },
             MapCompanionTool(context, watchMediaSpec) { settingsStore.load().googleMapsApiKey },
             WebImageCompanionTool(watchMediaSpec),
-            MyGeminiCompanionTool(context, watchMediaSpec),
+            myGemini,
             UserProfileCompanionTool(profileStore),
         ),
     )
@@ -106,7 +109,7 @@ class CompanionAgent(
             userText = "My answer to your question \"${picked.question}\": ${picked.answer}"
         }
 
-        com.tombo.billyassistant.companion.gemini.GeminiAccountBridge.warmUp(context)
+        GeminiAccountBridge.warmUp(context)
         hydrateGoogleProfile()
         actions = mutableListOf()
         val location = currentAndroidLocation(context)
@@ -128,7 +131,7 @@ class CompanionAgent(
     }
 
     private fun runTool(name: String, args: JSONObject): CompanionToolExecution {
-        val execution = tools.execute(name, args)
+        val execution = routed(name, args)
         val status = execution.response.optString("status", "ok")
         // Keep ids in the action note so follow-ups can reuse them.
         val ids = listOf("event_id", "calendar_id").mapNotNull { key ->
@@ -141,9 +144,44 @@ class CompanionAgent(
         return execution
     }
 
+    /**
+     * With the Gemini account linked, photo lookups go to the user's whole
+     * Google Photos library through Gemini (which can show the photo on the
+     * watch) before falling back to the camera roll or opening the Photos app.
+     */
+    private fun routed(name: String, args: JSONObject): CompanionToolExecution {
+        val linked = GeminiAccountBridge.isUsable(context)
+        if (linked && name == "open_google_photos_search") {
+            askGeminiForPhoto(args.optString("query"))?.let { return it }
+        }
+        val execution = tools.execute(name, args)
+        if (linked && name == "find_photo" && !execution.response.optString("status", "ok").equals("ok", ignoreCase = true)) {
+            val when_ = listOf(args.optString("taken_after"), args.optString("taken_before")).filter { it.isNotBlank() }
+            val described = args.optString("description").ifBlank { "my most recent photo" } +
+                if (when_.isNotEmpty()) " (taken between ${when_.joinToString(" and ")})" else ""
+            askGeminiForPhoto(described)?.let { return it }
+        }
+        return execution
+    }
+
+    private fun askGeminiForPhoto(description: String): CompanionToolExecution? {
+        val result = myGemini.execute("ask_my_gemini", JSONObject().put("question", "Find and show me this photo from my Google Photos: $description")) ?: return null
+        actions += "ask_my_gemini (photo: ${description.take(80)}) -> ${result.response.optString("status")}"
+        return result.takeIf { it.response.optString("status") == "ok" }
+    }
+
     private fun buildContext(prompt: String): String {
         val parts = mutableListOf<String>()
-        profileStore.promptContext(prompt)?.let { parts += "What Billy knows about the user (use when relevant, don't recite): $it" }
+        val linked = GeminiAccountBridge.isUsable(context)
+        if (linked) {
+            parts += "The user's own Gemini account is linked (ask_my_gemini). Use it FIRST for: the user's photos, unless taken in the last day or two " +
+                "(it searches the whole Google Photos library and shows the photo on the watch); facts about the user and their life " +
+                "(home or work address, family, birthdays, preferences, anything Gemini has saved); their past Gemini chats, Gems, Keep, YouTube, and Google Home. " +
+                "Billy's own notes below are partial: if they don't clearly answer a question about the user, use ask_my_gemini instead of saying you don't know."
+        }
+        profileStore.promptContext(prompt)?.let {
+            parts += (if (linked) "Billy's own notes about the user (partial): " else "What Billy knows about the user (use when relevant, don't recite): ") + it
+        }
         val granted = GoogleAuthStore(context).grantedScopes()
         if (!granted.contains(GoogleApiScopes.CALENDAR)) {
             parts += "Google account is not connected yet; Google Calendar/Tasks/Gmail/Drive tools will ask the user to connect it."
