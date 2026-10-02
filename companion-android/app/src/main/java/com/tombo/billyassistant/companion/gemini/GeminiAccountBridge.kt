@@ -235,7 +235,7 @@ object GeminiAccountBridge {
     /** Copies the last raw reply into the phone's Downloads folder. Returns the file name, or null. */
     fun exportLastReply(context: Context): String? = runCatching {
         val source = lastReplyFile(context)
-        if (!source.exists()) return null
+        if (!source.exists() || android.os.Build.VERSION.SDK_INT < 29) return null
         val name = "billy-gemini-reply-${System.currentTimeMillis() / 1000}.txt"
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
