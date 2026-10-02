@@ -243,6 +243,16 @@ class MainActivity : ComponentActivity() {
                     addView(row(button("Use Chrome's sign-in (root)", primary = false) { importChromeSignIn() }))
                 }
             }
+            GeminiAccountBridge.lastModel.takeIf { it.isNotBlank() && signedIn }?.let {
+                addView(text("Last answer used: $it", 13f, COLOR_MUTED).padTop(6))
+            }
+            if (signedIn && GeminiAccountBridge.hasLastReply(this@MainActivity)) {
+                addView(row(button("Save last reply (for fixing)", primary = false) {
+                    val name = GeminiAccountBridge.exportLastReply(this@MainActivity)
+                    myGeminiStatus = if (name != null) "✓ Saved to Downloads as $name" else "✗ Couldn't save it."
+                    render()
+                }))
+            }
             addView(status(myGeminiStatus))
         }
 

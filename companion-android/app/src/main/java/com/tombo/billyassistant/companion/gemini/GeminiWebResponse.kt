@@ -19,11 +19,12 @@ object GeminiWebResponse {
 
     private val ARTIFACTS = Regex("""https?://googleusercontent\.com/(?:\w+/)+\d+\n*""")
     private val CITES = Regex("""\s*\[cite(?::[^\]]*)?]""")
-    private val IMAGE_URL = Regex("""https://(?:lh\d|encrypted-tbn\d)\.(?:googleusercontent|gstatic)\.com/[A-Za-z0-9_\-./=?&%:]+""")
+    private val URL = Regex("""https://[^\s"'<>()\[\]\\]+""")
 
     fun parse(body: String): Parsed {
         var text = ""
         val images = LinkedHashSet<String>()
+        val web = LinkedHashSet<String>()
         var errorCode: Int? = null
         envelopes(body).forEach { envelope ->
             var code = nested(envelope, 5, 2, 0, 1, 0)
@@ -31,20 +32,53 @@ object GeminiWebResponse {
             (code as? Number)?.toInt()?.let { errorCode = it }
             val innerText = envelope.optString(2).takeIf { envelope.optString(0) == "wrb.fr" && it.startsWith("[") } ?: return@forEach
             val inner = runCatching { JSONArray(innerText) }.getOrNull() ?: return@forEach
+            // Photos from the user's library, generated images, and anything else
+            // pictured can sit in several places; collect every image URL.
+            collectStrings(inner).forEach { value -> URL.findAll(value).forEach { found -> images += found.value } }
             val candidate = (nested(inner, 4, 0) as? JSONArray) ?: return@forEach
             (nested(candidate, 1, 0) as? String)?.takeIf { it.isNotBlank() }?.let { text = it }
             richField(candidate, 1)?.let { webImages ->
                 for (i in 0 until webImages.length()) {
-                    (nested(webImages.optJSONArray(i), 0, 0, 0) as? String)?.let { images += it }
+                    (nested(webImages.optJSONArray(i), 0, 0, 0) as? String)?.let { web += it }
                 }
             }
-            IMAGE_URL.findAll(innerText).forEach { images += it.value.replace("\\u003d", "=").replace("\\u0026", "&") }
         }
         val clean = text
             .replace(ARTIFACTS, "")
             .replace(CITES, "")
             .trim()
-        return Parsed(clean, images.toList().take(6), errorCode)
+        val ranked = (images.filter(::isPicture).sortedBy(::rank) + web).distinct()
+        return Parsed(clean, ranked.take(6), errorCode)
+    }
+
+    private fun collectStrings(node: Any?, out: MutableList<String> = mutableListOf()): List<String> {
+        when (node) {
+            is String -> if (node.contains("https://")) out += node
+            is JSONArray -> for (i in 0 until node.length()) collectStrings(node.opt(i), out)
+            is JSONObject -> node.keys().forEach { collectStrings(node.opt(it), out) }
+        }
+        return out
+    }
+
+    /** Picture hosts Gemini uses; account avatars and site icons are skipped. */
+    private fun isPicture(url: String): Boolean {
+        val host = url.removePrefix("https://").substringBefore('/').lowercase()
+        val path = url.removePrefix("https://").substringAfter('/', "")
+        val imageHost = host.matches(Regex("""lh\d+\.googleusercontent\.com""")) ||
+            host.endsWith(".usercontent.google.com") ||
+            host.matches(Regex("""encrypted-tbn\d\.gstatic\.com""")) ||
+            host.endsWith(".ggpht.com")
+        if (!imageHost) return false
+        if (path.startsWith("a/") || path.startsWith("a-/") || path.startsWith("ogw/")) return false
+        return !url.contains("favicon", ignoreCase = true) && !url.endsWith(".svg", ignoreCase = true)
+    }
+
+    /** The user's own photos first, then generated images, then web pictures. */
+    private fun rank(url: String): Int = when {
+        url.contains(".usercontent.google.com/") || url.contains("googleusercontent.com/pw/") -> 0
+        url.contains("googleusercontent.com/gg") || url.contains("/gg-dl/") -> 1
+        url.contains("encrypted-tbn") -> 3
+        else -> 2
     }
 
     /** All envelope arrays in the body, whatever the frame lengths say. */

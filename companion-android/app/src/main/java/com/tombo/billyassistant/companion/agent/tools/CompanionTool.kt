@@ -16,6 +16,8 @@ data class CompanionToolExecution(
     val watchImage: WatchImage? = null,
     val watchWeatherCurrent: WatchWeatherCurrent? = null,
     val clarificationCard: ClarificationCard? = null,
+    /** When this is the only call in a step and it succeeds, its finalText is the reply (saves a model round trip). */
+    val endTurn: Boolean = false,
 )
 
 data class WatchImage(

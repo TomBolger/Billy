@@ -41,8 +41,8 @@ class MyGeminiCompanionTool(
         if (name != "ask_my_gemini") return null
         val question = args.optString("question").trim()
         if (question.isBlank()) return error("No question given.")
-        val prompt = "$question\n\n(Answer briefly for a small smartwatch screen: a few short plain sentences, no markdown, no tables. " +
-            "If you show pictures, show at most a few.)"
+        val prompt = "$question\n\n(Reply for a small smartwatch screen: 1-3 short plain sentences, no markdown, lists, or tables. " +
+            "If I asked to see a photo or picture, show it, not just a description.)"
         return when (val reply = GeminiAccountBridge.ask(context, prompt)) {
             is GeminiAccountBridge.Reply.Failed -> error(
                 if (reply.reason == "signed_out") "The user's Gemini account is signed out." else reply.reason,
@@ -57,17 +57,28 @@ class MyGeminiCompanionTool(
                         }
                     }
                 }
+                val answer = plain(reply.text).ifBlank { if (image != null) "" else "Done." }
                 CompanionToolExecution(
                     response = JSONObject()
                         .put("status", "ok")
                         .put("summary", "Answer from the user's Gemini account. Relay it in your own short words." + if (image != null) " The first picture it showed is now on the watch." else "")
-                        .put("answer", reply.text.take(4000))
-                        .put("pictures_found", JSONArray(reply.imageUrls)),
+                        .put("answer", answer.take(4000)),
+                    finalText = answer,
                     watchImage = image,
+                    endTurn = true,
                 )
             }
         }
     }
+
+    /** The watch shows plain text: drop markdown Gemini may still add. */
+    private fun plain(text: String): String = text
+        .replace(Regex("""!?\[([^\]]*)]\([^)]*\)"""), "$1")
+        .replace(Regex("""(?m)^#{1,6}\s*"""), "")
+        .replace(Regex("""(?m)^\s*[*•]\s+"""), "- ")
+        .replace("**", "").replace("__", "")
+        .replace(Regex("""\n{3,}"""), "\n\n")
+        .trim()
 
     private fun error(reason: String) = CompanionToolExecution(
         JSONObject()

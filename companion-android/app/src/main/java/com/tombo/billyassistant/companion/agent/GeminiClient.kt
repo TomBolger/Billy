@@ -160,6 +160,7 @@ class GeminiClient(preferredModel: String? = null) {
 
             val responseParts = JSONArray()
             val extraParts = JSONArray()
+            var endWith: String? = null
             for (call in parsed.calls) {
                 val dedupeKey = call.name + ":" + call.args.toString()
                 val previous = executed[dedupeKey]
@@ -197,6 +198,7 @@ class GeminiClient(preferredModel: String? = null) {
                 }
                 if (ok) {
                     toolResponse.optString("summary").takeIf { it.isNotBlank() }?.let { lastOkSummary = it }
+                    if (execution.endTurn && parsed.calls.size == 1) endWith = execution.finalText.orEmpty()
                 }
                 if (execution.watchImage != null || execution.watchWeatherCurrent != null) {
                     toolResponse.put("watch_card", "A card is already shown on the watch; add context, do not repeat it.")
@@ -216,6 +218,7 @@ class GeminiClient(preferredModel: String? = null) {
                     responseParts.put(extraParts.get(i))
                 }
             }
+            endWith?.let { return CompanionAgentResult.Passed(text = it, watchImage = watchImage, watchWeatherCurrent = watchWeather) }
             contents.put(JSONObject().put("role", "user").put("parts", responseParts))
         }
         return CompanionAgentResult.Failed("Billy ran out of steps. Please try a simpler request.")

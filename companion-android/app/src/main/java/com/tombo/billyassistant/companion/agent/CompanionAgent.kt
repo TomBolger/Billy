@@ -106,6 +106,7 @@ class CompanionAgent(
             userText = "My answer to your question \"${picked.question}\": ${picked.answer}"
         }
 
+        com.tombo.billyassistant.companion.gemini.GeminiAccountBridge.warmUp(context)
         hydrateGoogleProfile()
         actions = mutableListOf()
         val location = currentAndroidLocation(context)

@@ -46,8 +46,9 @@ object GeminiAccountBridge {
     const val SIGN_IN_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2Fapp"
     private const val PREFS = "billy_gemini_account"
     private const val MAX_FAILURES = 3
-    private const val PAGE_MAX_AGE_MS = 30 * 60 * 1000L
-    private const val TIMEOUT_MS = 22_000L
+    private const val PAGE_MAX_AGE_MS = 2 * 60 * 60 * 1000L
+    private const val TIMEOUT_MS = 25_000L
+    private const val TIMED_OUT = "Gemini took too long to answer."
 
     private val main = Handler(Looper.getMainLooper())
     private val requestIds = AtomicInteger(1)
@@ -120,12 +121,37 @@ object GeminiAccountBridge {
         if (Looper.myLooper() == Looper.getMainLooper()) return Reply.Failed("Called on the main thread.")
         if (!isUsable(context)) return Reply.Failed("The Gemini account link is off.")
         val app = context.applicationContext
-        val reply = synchronized(lock) { request(app, question) }
+        val reply = synchronized(lock) {
+            val started = System.currentTimeMillis()
+            val first = request(app, question, TIMEOUT_MS)
+            val left = TIMEOUT_MS - (System.currentTimeMillis() - started)
+            // An old page can hold expired tokens: reload once and retry if there's time.
+            val pageProblem = first is Reply.Failed && (first.reason == "signed_out" || first.reason.startsWith("Gemini returned HTTP"))
+            if (pageProblem && left > 8_000) request(app, question, left) else first
+        }
         record(app, reply)
         return reply
     }
 
-    private fun request(context: Context, question: String): Reply {
+    /**
+     * Start loading Gemini (and picking its fast model) while Billy is still
+     * thinking, so ask_my_gemini doesn't wait for the page.
+     */
+    fun warmUp(context: Context) {
+        if (!isUsable(context)) return
+        val app = context.applicationContext
+        main.post {
+            if (pageReady && System.currentTimeMillis() - pageLoadedAt < PAGE_MAX_AGE_MS) return@post
+            if (onPageReady != null) return@post
+            val view = ensureWebView(app)
+            onPageReady = { view.evaluateJavascript("$PICK_MODEL_JS; window.__billyModel();", null) }
+            pageReady = false
+            pageLoadedAt = System.currentTimeMillis()
+            view.loadUrl(HOME_URL)
+        }
+    }
+
+    private fun request(context: Context, question: String, timeoutMs: Long): Reply {
         val id = requestIds.getAndIncrement()
         val latch = CountDownLatch(1)
         var raw: String? = null
@@ -133,34 +159,43 @@ object GeminiAccountBridge {
         main.post {
             val view = ensureWebView(context)
             val run = { view.evaluateJavascript(script(id, question), null) }
-            val stale = System.currentTimeMillis() - pageLoadedAt > PAGE_MAX_AGE_MS
-            if (pageReady && !stale) {
-                run()
-            } else {
-                pageReady = false
-                onPageReady = run
-                pageLoadedAt = System.currentTimeMillis()
-                view.loadUrl(HOME_URL)
+            val fresh = System.currentTimeMillis() - pageLoadedAt < PAGE_MAX_AGE_MS
+            when {
+                pageReady && fresh -> run()
+                onPageReady != null && fresh -> {
+                    // A warm-up load is already under way: run after it.
+                    val earlier = onPageReady
+                    onPageReady = { earlier?.invoke(); run() }
+                }
+                else -> {
+                    pageReady = false
+                    onPageReady = run
+                    pageLoadedAt = System.currentTimeMillis()
+                    view.loadUrl(HOME_URL)
+                }
             }
         }
-        val finished = latch.await(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        val finished = latch.await(timeoutMs, TimeUnit.MILLISECONDS)
         pending = null
         if (!finished) {
             main.post { pageLoadedAt = 0L } // reload next time
-            return Reply.Failed("Gemini took too long to answer.")
+            return Reply.Failed(TIMED_OUT)
         }
         val result = runCatching { JSONObject(raw.orEmpty()) }.getOrNull()
             ?: return Reply.Failed("Unreadable reply from the page.")
+        result.optString("model").takeIf { it.isNotBlank() }?.let { lastModel = it }
         result.optString("error").takeIf { it.isNotBlank() }?.let { error ->
             main.post { pageLoadedAt = 0L }
             return if (error == "signed_out") Reply.Failed("signed_out") else Reply.Failed(error.take(200))
         }
+        val body = result.optString("body")
+        saveLastReply(context, body)
         val status = result.optInt("status")
         if (status != 200) {
             main.post { pageLoadedAt = 0L }
             return Reply.Failed("Gemini returned HTTP $status.")
         }
-        val parsed = GeminiWebResponse.parse(result.optString("body"))
+        val parsed = GeminiWebResponse.parse(body)
         if (parsed.text.isBlank() && parsed.imageUrls.isEmpty()) {
             return Reply.Failed(parsed.errorCode?.let { "Gemini error code $it." } ?: "Empty answer (Google may have changed the website).")
         }
@@ -182,6 +217,35 @@ object GeminiAccountBridge {
             }
         }
     }
+
+    /** Which Gemini model answered last (for the setup screen). */
+    @Volatile var lastModel: String = ""
+        private set
+
+    // ---- debugging: the last raw reply, so a website change can be diagnosed --------
+
+    private fun lastReplyFile(context: Context) = File(context.applicationContext.filesDir, "gemini-last-reply.txt")
+
+    private fun saveLastReply(context: Context, body: String) {
+        runCatching { lastReplyFile(context).writeText(body.take(400_000)) }
+    }
+
+    fun hasLastReply(context: Context) = lastReplyFile(context).exists()
+
+    /** Copies the last raw reply into the phone's Downloads folder. Returns the file name, or null. */
+    fun exportLastReply(context: Context): String? = runCatching {
+        val source = lastReplyFile(context)
+        if (!source.exists()) return null
+        val name = "billy-gemini-reply-${System.currentTimeMillis() / 1000}.txt"
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+        }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+        resolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } }
+        name
+    }.getOrNull()
 
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     private fun ensureWebView(context: Context): WebView {
@@ -216,10 +280,74 @@ object GeminiAccountBridge {
         }
     }
 
+    /**
+     * Picks the account's fast model (Flash) once per page load, so answers
+     * don't wait on whatever slower model the Gemini app was last set to.
+     * Layout follows github.com/HanaokaYuzu/Gemini-API; on any surprise it
+     * resolves to null and Gemini's default model is used.
+     */
+    private val PICK_MODEL_JS = """
+        window.__billySession = window.__billySession || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).toUpperCase();
+        window.__billyModel = window.__billyModel || function() {
+          if (window.__billyModelPromise) return window.__billyModelPromise;
+          window.__billyModelPromise = (async function() {
+            try {
+              const w = window.WIZ_global_data;
+              if (!w || !w.SNlM0e) return null;
+              const params = new URLSearchParams({rpcids: 'otAQ7b', 'source-path': '/app', hl: 'en', _reqid: String(10000 + Math.floor(Math.random() * 90000)), rt: 'c'});
+              if (w.cfb2h) params.set('bl', w.cfb2h);
+              if (w.FdrFJe) params.set('f.sid', w.FdrFJe);
+              const res = await fetch('/_/BardChatUi/data/batchexecute?' + params.toString(), {
+                method: 'POST', credentials: 'include',
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+                  'X-Same-Domain': '1',
+                  'x-goog-ext-525001261-jspb': JSON.stringify([1,null,null,null,null,null,null,null,[4,5,6,8],null,null,null,null,null,null,null,window.__billySession]),
+                  'x-goog-ext-73010989-jspb': '[0]'
+                },
+                body: new URLSearchParams({at: w.SNlM0e, 'f.req': JSON.stringify([[['otAQ7b', '[]', null, 'generic']]])})
+              });
+              const text = await res.text();
+              let body = null;
+              text.split('\n').forEach(function(line) {
+                if (body || line.charAt(0) !== '[') return;
+                try {
+                  JSON.parse(line).forEach(function(part) {
+                    if (!body && Array.isArray(part) && part[0] === 'wrb.fr' && part[1] === 'otAQ7b' && typeof part[2] === 'string') body = JSON.parse(part[2]);
+                  });
+                } catch (e) {}
+              });
+              if (!body || !Array.isArray(body[15])) return null;
+              const tiers = Array.isArray(body[16]) ? body[16] : [];
+              const caps = Array.isArray(body[17]) ? body[17] : [];
+              let capacity = 1, field = 12;
+              if (tiers.indexOf(21) >= 0) { capacity = 1; field = 13; }
+              else if (tiers.indexOf(22) >= 0) { capacity = 2; field = 13; }
+              else if (caps.indexOf(115) >= 0) capacity = 4;
+              else if (tiers.indexOf(16) >= 0 || caps.indexOf(106) >= 0) capacity = 3;
+              else if (tiers.indexOf(8) >= 0 || caps.indexOf(19) >= 0) capacity = 2;
+              let best = null;
+              body[15].forEach(function(m) {
+                if (best || !Array.isArray(m) || typeof m[0] !== 'string') return;
+                const words = [m[1], m[10], m[11], m[19], m[12], m[2]].filter(function(v) { return typeof v === 'string'; }).join(' ').toLowerCase();
+                if (/fast|flash/.test(words) && !/lite|think|pro\b|deep/.test(words)) {
+                  best = {id: m[0], number: typeof m[17] === 'number' ? m[17] : (typeof m[9] === 'number' ? m[9] : 1),
+                          label: String(m[11] || m[19] || m[1] || m[0])};
+                }
+              });
+              if (!best) return null;
+              best.capacity = capacity; best.field = field;
+              return best;
+            } catch (e) { return null; }
+          })();
+          return window.__billyModelPromise;
+        };
+    """.trimIndent()
+
     /** The website's own request, made from inside the page. Layout follows github.com/HanaokaYuzu/Gemini-API. */
     private fun script(id: Int, question: String): String {
         val language = Locale.getDefault().language.ifBlank { "en" }
-        return """
+        return PICK_MODEL_JS + "\n" + """
             (async function() {
               const send = (o) => BillyBridge.onResult($id, JSON.stringify(o));
               try {
@@ -229,6 +357,7 @@ object GeminiAccountBridge {
                   w = window.WIZ_global_data;
                 }
                 if (!w || !w.SNlM0e || location.host !== 'gemini.google.com') { send({error: 'signed_out'}); return; }
+                const model = await Promise.race([window.__billyModel(), new Promise(r => setTimeout(() => r(null), 3000))]);
                 const uuid = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).toUpperCase();
                 const lang = ${JSONObject.quote(language)};
                 const inner = new Array(81).fill(null);
@@ -238,22 +367,28 @@ object GeminiAccountBridge {
                 inner[6] = [1]; inner[7] = 1; inner[10] = 1; inner[11] = 0;
                 inner[17] = [[0]]; inner[18] = 0; inner[27] = 1; inner[30] = [4];
                 inner[41] = [1]; inner[53] = 0; inner[59] = uuid; inner[61] = [];
-                inner[68] = 1; inner[79] = 1; inner[80] = 1;
+                inner[68] = 1; inner[79] = model ? model.number : 1; inner[80] = 1;
+                const headers = {
+                  'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+                  'X-Same-Domain': '1',
+                  'x-goog-ext-525005358-jspb': '["' + uuid + '",1]'
+                };
+                if (model) {
+                  const h = [1, null, null, null, model.id, null, null, 0, [4, 5, 6, 8], null, null];
+                  if (model.field === 13) h.push(null, model.capacity); else h.push(model.capacity);
+                  h.push(null, null, model.number, 1, window.__billySession);
+                  headers['x-goog-ext-525001261-jspb'] = JSON.stringify(h);
+                  headers['x-goog-ext-73010989-jspb'] = '[0]';
+                  headers['x-goog-ext-73010990-jspb'] = '[0,0,0]';
+                }
                 const params = new URLSearchParams({hl: lang, _reqid: String(10000 + Math.floor(Math.random() * 90000)), rt: 'c'});
                 if (w.cfb2h) params.set('bl', w.cfb2h);
                 if (w.FdrFJe) params.set('f.sid', w.FdrFJe);
                 const body = new URLSearchParams({at: w.SNlM0e, 'f.req': JSON.stringify([null, JSON.stringify(inner)])});
                 const res = await fetch('/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?' + params.toString(), {
-                  method: 'POST',
-                  credentials: 'include',
-                  headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-                    'X-Same-Domain': '1',
-                    'x-goog-ext-525005358-jspb': '["' + uuid + '",1]'
-                  },
-                  body: body
+                  method: 'POST', credentials: 'include', headers: headers, body: body
                 });
-                send({status: res.status, body: await res.text()});
+                send({status: res.status, body: await res.text(), model: model ? model.label : 'default'});
               } catch (e) {
                 send({error: String((e && e.message) || e)});
               }
@@ -265,7 +400,7 @@ object GeminiAccountBridge {
 
     /** Download a picture Gemini showed, sized for the watch. */
     fun downloadImage(context: Context, url: String): Bitmap? = runCatching {
-        val sized = if (url.contains("googleusercontent.com") && !url.contains("=")) "$url=s480" else url
+        val sized = sizedForWatch(url)
         val connection = (URL(sized).openConnection() as HttpURLConnection).apply {
             connectTimeout = 8_000
             readTimeout = 8_000
@@ -274,6 +409,17 @@ object GeminiAccountBridge {
         }
         connection.inputStream.use { BitmapFactory.decodeStream(it) }
     }.getOrNull()
+
+    /** Google image hosts take a size suffix after "="; ask for a watch-sized copy. */
+    private fun sizedForWatch(url: String): String {
+        val host = runCatching { URL(url).host }.getOrDefault("")
+        val fife = host.matches(Regex("""lh\d+\.googleusercontent\.com""")) || host.endsWith(".usercontent.google.com") || host.endsWith(".ggpht.com")
+        if (!fife) return url
+        val base = url.substringBefore('?')
+        val lastSlash = base.lastIndexOf('/')
+        val eq = base.indexOf('=', lastSlash.coerceAtLeast(0))
+        return (if (eq > 0) base.substring(0, eq) else base) + "=s480" + url.substring(base.length)
+    }
 
     // ---- rooted phones: reuse Chrome's sign-in --------------------------------------
 
