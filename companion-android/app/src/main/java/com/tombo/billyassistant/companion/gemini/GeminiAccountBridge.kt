@@ -440,7 +440,15 @@ object GeminiAccountBridge {
                         saveImageLog(app, log.append("direct ok: ").append(candidate.takeLast(20)).toString())
                         return bitmap
                     }
-                    log.append("direct ").append(candidate.takeLast(12)).append(": 200 but not decodable (").append(connection.contentType).append(")\n")
+                    val peek = runCatching {
+                        (URL(candidate).openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 6_000; readTimeout = 6_000
+                            setRequestProperty("User-Agent", chromeUserAgent(app))
+                            CookieManager.getInstance().getCookie(candidate)?.let { setRequestProperty("Cookie", it) }
+                        }.let { c -> "final ${c.apply { inputStream.close() }.url.host}" }
+                    }.getOrDefault("")
+                    log.append("direct ").append(candidate.takeLast(12)).append(": 200 but not a picture (").append(connection.contentType).append(") ").append(peek)
+                        .append(if (CookieManager.getInstance().getCookie(candidate).isNullOrBlank()) " [no cookies for this host]" else " [had cookies]").append("\n")
                 } else {
                     log.append("direct ").append(candidate.takeLast(12)).append(": HTTP ").append(code).append('\n')
                 }
@@ -508,21 +516,30 @@ object GeminiAccountBridge {
                 v.addJavascriptInterface(object {
                     @JavascriptInterface
                     fun loaded(width: Int, height: Int) {
-                        main.postDelayed({
+                        log.append("render: picture is ").append(width).append('x').append(height).append('\n')
+                        // Off-screen pages draw lazily: try a few times and only accept a
+                        // frame that actually contains a picture.
+                        fun attempt(n: Int) {
                             try {
                                 val full = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                                full.eraseColor(android.graphics.Color.BLACK)
+                                v.invalidate()
                                 v.draw(android.graphics.Canvas(full))
-                                // Crop the letterbox: the picture is centred and scaled to fit.
-                                val scale = minOf(size.toFloat() / width.coerceAtLeast(1), size.toFloat() / height.coerceAtLeast(1))
-                                val w = (width * scale).toInt().coerceIn(1, size)
-                                val h = (height * scale).toInt().coerceIn(1, size)
-                                result = Bitmap.createBitmap(full, (size - w) / 2, (size - h) / 2, w, h)
-                                if (result !== full) full.recycle()
+                                val box = contentBox(full)
+                                log.append("render try ").append(n).append(": ").append(box?.let { "${it.width()}x${it.height()} with detail" } ?: "blank").append('\n')
+                                if (box != null) {
+                                    result = Bitmap.createBitmap(full, box.left, box.top, box.width(), box.height())
+                                    if (result !== full) full.recycle()
+                                    latch.countDown()
+                                    return
+                                }
+                                full.recycle()
                             } catch (e: Exception) {
                                 log.append("render: ").append(e.javaClass.simpleName).append(' ').append(e.message).append('\n')
                             }
-                            latch.countDown()
-                        }, 400)
+                            if (n < 5) main.postDelayed({ attempt(n + 1) }, 500L) else latch.countDown()
+                        }
+                        main.postDelayed({ attempt(1) }, 600L)
                     }
 
                     @JavascriptInterface
@@ -596,6 +613,32 @@ object GeminiAccountBridge {
           send({error: errors.join('; ')});
         })();
     """.trimIndent()
+
+    /** The area of a frame that holds the picture, or null if the frame is (nearly) blank. */
+    private fun contentBox(bitmap: Bitmap): android.graphics.Rect? {
+        val w = bitmap.width
+        val h = bitmap.height
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        var left = w; var top = h; var right = -1; var bottom = -1
+        var sum = 0.0; var sumSq = 0.0; var count = 0
+        for (y in 0 until h) for (x in 0 until w) {
+            val p = pixels[y * w + x]
+            val lum = ((p shr 16 and 0xFF) * 3 + (p shr 8 and 0xFF) * 6 + (p and 0xFF)) / 10.0
+            if (lum > 12) {
+                if (x < left) left = x
+                if (x > right) right = x
+                if (y < top) top = y
+                if (y > bottom) bottom = y
+            }
+            sum += lum; sumSq += lum * lum; count++
+        }
+        if (right < 0) return null
+        val mean = sum / count
+        val spread = kotlin.math.sqrt((sumSq / count - mean * mean).coerceAtLeast(0.0))
+        val box = android.graphics.Rect(left, top, right + 1, bottom + 1)
+        return if (box.width() >= 64 && box.height() >= 64 && spread > 10) box else null
+    }
 
     private fun imageLogFile(context: Context) = File(context.applicationContext.filesDir, "gemini-last-image.txt")
 
