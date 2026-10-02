@@ -108,6 +108,17 @@ Status legend: `[x]` implemented and reviewed, `[~]` partially implemented or ne
 
 ## Current Repair Notes
 
+### 2026-10-01 Companion 0.3 (watch 0.3)
+
+- Calendar: one Google Calendar API tool set (get/create/update/delete/find_free_time). Events carry event_id + calendar_id; deletes confirm on the watch. Android Calendar Provider and ghost cleanup removed.
+- Photos: single `find_photo` (MediaStore window + Gemini thumbnail pick + photo attached for description). Google Photos Library/Picker, date-range parser, and three old photo tools removed.
+- Phone tools: SMS, calls (TelecomManager), notifications read/reply (NotificationListenerService, in-memory only), media control/now playing, play music, volume, flashlight, battery, find my phone, open app, navigation. Background app launches need "display over other apps".
+- Gemini built-ins on both runtimes: Search, Google Maps grounding (phone location via retrievalConfig), URL context, code execution. Tiered fallback: all -> Search only -> none. Maps Platform places/route tools removed; Maps key now optional (route lines on map cards only).
+- `PendingActions` is the only confirmation/picker mechanism (Gmail send, contact choice, task choice, SMS, call, reply, event delete).
+- `ConversationStore` replays per-thread turns with action notes (incl. event ids).
+- Setup screen: Gemini key, Connect Google (one consent), Phone access checklist with Allow all, Memory; advanced section for Maps key, test prompt, signing SHA-1.
+- Not device-tested yet: notification reply, call placement, overlay-based launches, Maps grounding response quality.
+
 ### 2026-09-30 Tool-reliability rewrite (watch 0.2 / companion 0.2)
 
 Root causes fixed:
