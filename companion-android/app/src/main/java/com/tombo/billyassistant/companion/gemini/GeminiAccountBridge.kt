@@ -14,6 +14,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import org.json.JSONObject
 import java.io.File
+import kotlin.math.roundToInt
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -525,7 +526,12 @@ object GeminiAccountBridge {
                                 full.eraseColor(android.graphics.Color.BLACK)
                                 v.invalidate()
                                 v.draw(android.graphics.Canvas(full))
-                                val box = contentBox(full)
+                                // The whole picture, centred and scaled to fit: crop exactly
+                                // that rectangle, whatever its shape.
+                                val fit = minOf(size.toFloat() / width.coerceAtLeast(1), size.toFloat() / height.coerceAtLeast(1))
+                                val dw = (width * fit).roundToInt().coerceIn(1, size)
+                                val dh = (height * fit).roundToInt().coerceIn(1, size)
+                                val box = contentBox(full)?.let { android.graphics.Rect((size - dw) / 2, (size - dh) / 2, (size - dw) / 2 + dw, (size - dh) / 2 + dh) }
                                 log.append("render try ").append(n).append(": ").append(box?.let { "${it.width()}x${it.height()} with detail" } ?: "blank").append('\n')
                                 if (box != null) {
                                     result = Bitmap.createBitmap(full, box.left, box.top, box.width(), box.height())
@@ -548,9 +554,13 @@ object GeminiAccountBridge {
                         latch.countDown()
                     }
                 }, "BillyImage")
-                val html = "<html><head><meta name='viewport' content='width=$size'></head>" +
-                    "<body style='margin:0;background:#000;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center'>" +
-                    "<img id='i' style='max-width:${size}px;max-height:${size}px' " +
+                // The page lays out in CSS pixels, which the phone scales up by its
+                // display density. Size the box in CSS pixels so that it covers exactly
+                // size x size real pixels, and fit the whole picture inside it.
+                val css = size / context.resources.displayMetrics.density
+                val html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'></head>" +
+                    "<body style='margin:0;padding:0;background:#000;overflow:hidden'>" +
+                    "<img id='i' style='display:block;width:${css}px;height:${css}px;object-fit:contain' " +
                     "onload='BillyImage.loaded(this.naturalWidth,this.naturalHeight)' onerror='BillyImage.failed()' src=\"" +
                     sizedForWatch(url).replace("&", "&amp;").replace("\"", "&quot;") + "\"></body></html>"
                 v.loadDataWithBaseURL("https://gemini.google.com/", html, "text/html", "utf-8", null)
