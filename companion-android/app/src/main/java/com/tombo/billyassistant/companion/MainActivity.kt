@@ -30,6 +30,8 @@ import com.tombo.billyassistant.companion.auth.GoogleApiAuthorization
 import com.tombo.billyassistant.companion.auth.GoogleApiAuthorizationResult
 import com.tombo.billyassistant.companion.auth.GoogleApiScopes
 import com.tombo.billyassistant.companion.auth.GoogleAuthStore
+import com.tombo.billyassistant.companion.gemini.GeminiAccountBridge
+import com.tombo.billyassistant.companion.gemini.GeminiSignInActivity
 import com.tombo.billyassistant.companion.phone.BillyNotificationListener
 import com.tombo.billyassistant.companion.pebble.BillyPebbleProtocol
 import com.tombo.billyassistant.companion.pebble.PebbleWatchStore
@@ -58,6 +60,7 @@ class MainActivity : ComponentActivity() {
     private var googleStatus = ""
     private var memoryStatus = ""
     private var testStatus = ""
+    private var myGeminiStatus = ""
     private var showAdvanced = false
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -197,6 +200,52 @@ class MainActivity : ComponentActivity() {
             ))
         }
 
+        card("5  Your Gemini account (optional)") {
+            addView(text(
+                "Lets Billy ask your own Gemini for things only it can reach: your Google Photos library, Gemini's saved info and past chats, Gems, Keep, YouTube, and Google Home. " +
+                    "Experimental: it uses the Gemini website the way a browser does, which Google doesn't officially support. If it ever stops working, Billy just uses its normal tools. Your sign-in stays on this phone.",
+                14f,
+                COLOR_MUTED,
+            ))
+            val state = GeminiAccountBridge.state(this@MainActivity)
+            val signedIn = GeminiAccountBridge.isSignedIn(this@MainActivity)
+            val headline = when {
+                state == GeminiAccountBridge.State.WORKING -> "✓ On" + GeminiAccountBridge.lastSuccessAt(this@MainActivity).takeIf { it > 0 }
+                    ?.let { " · last answer ${android.text.format.DateUtils.getRelativeTimeSpanString(it)}" }.orEmpty()
+                state == GeminiAccountBridge.State.NEEDS_ATTENTION -> "✗ Gemini account link needs attention. " + GeminiAccountBridge.lastError(this@MainActivity)
+                signedIn -> "Off"
+                else -> "Not set up"
+            }
+            addView(status(headline).also { it.visibility = View.VISIBLE })
+            when {
+                state == GeminiAccountBridge.State.WORKING -> {
+                    addView(row(
+                        button("Test") { testMyGemini() },
+                        button("Turn off", primary = false) { GeminiAccountBridge.setEnabled(this@MainActivity, false); render() },
+                        button("Sign out", primary = false) { signOutMyGemini() },
+                    ))
+                }
+                state == GeminiAccountBridge.State.NEEDS_ATTENTION -> {
+                    addView(row(
+                        button("Sign in again") { startActivity(Intent(this@MainActivity, GeminiSignInActivity::class.java)) },
+                        button("Turn off", primary = false) { GeminiAccountBridge.setEnabled(this@MainActivity, false); render() },
+                    ))
+                    addView(row(button("Use Chrome's sign-in (root)", primary = false) { importChromeSignIn() }))
+                }
+                signedIn -> {
+                    addView(row(
+                        button("Turn on") { GeminiAccountBridge.setEnabled(this@MainActivity, true); render() },
+                        button("Sign out", primary = false) { signOutMyGemini() },
+                    ))
+                }
+                else -> {
+                    addView(row(button("Sign in to Gemini") { startActivity(Intent(this@MainActivity, GeminiSignInActivity::class.java)) }))
+                    addView(row(button("Use Chrome's sign-in (root)", primary = false) { importChromeSignIn() }))
+                }
+            }
+            addView(status(myGeminiStatus))
+        }
+
         content.addView(button(if (showAdvanced) "Hide advanced" else "Advanced", primary = false) {
             showAdvanced = !showAdvanced
             render()
@@ -309,6 +358,47 @@ class MainActivity : ComponentActivity() {
             }
             is GoogleApiAuthorizationResult.Failed -> googleStatus = "✗ ${result.reason}"
         }
+        render()
+    }
+
+    private fun testMyGemini() {
+        myGeminiStatus = "Asking your Gemini..."
+        render()
+        Thread {
+            val reply = GeminiAccountBridge.ask(this, "In one short sentence, what's something you know about me? If nothing, just say hello.")
+            runOnUiThread {
+                myGeminiStatus = when (reply) {
+                    is GeminiAccountBridge.Reply.Answer -> "✓ ${reply.text.take(200)}"
+                    is GeminiAccountBridge.Reply.Failed -> "✗ ${if (reply.reason == "signed_out") "Signed out. Tap Sign in again." else reply.reason}"
+                }
+                render()
+            }
+        }.start()
+    }
+
+    private fun importChromeSignIn() {
+        explainThen("Billy will ask for root access to copy your Google sign-in from Chrome into its own private storage on this phone. Sign in to gemini.google.com in Chrome first.") {
+            myGeminiStatus = "Copying from Chrome..."
+            render()
+            Thread {
+                val error = GeminiAccountBridge.importFromChrome(this)
+                val ok = error == null && GeminiAccountBridge.verifySignIn(this)
+                if (ok) GeminiAccountBridge.markSignedIn(this)
+                runOnUiThread {
+                    myGeminiStatus = when {
+                        ok -> "✓ Signed in using Chrome."
+                        error != null -> "✗ $error"
+                        else -> "✗ Copied, but Gemini still isn't signed in. Try Sign in to Gemini instead."
+                    }
+                    render()
+                }
+            }.start()
+        }
+    }
+
+    private fun signOutMyGemini() {
+        GeminiAccountBridge.signOut(this)
+        myGeminiStatus = "Signed out."
         render()
     }
 

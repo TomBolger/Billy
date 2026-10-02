@@ -50,6 +50,10 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".gemini.GeminiSignInActivity"
+            android:exported="false"
+            android:label="Sign in to Gemini" />
+        <activity
             android:name=".phone.LaunchActivity"
             android:exported="false"
             android:excludeFromRecents="true"

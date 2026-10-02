@@ -19,6 +19,7 @@ import com.tombo.billyassistant.companion.agent.tools.WatchToolsCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WeatherCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WebImageCompanionTool
+import com.tombo.billyassistant.companion.agent.tools.MyGeminiCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.currentAndroidLocation
 import com.tombo.billyassistant.companion.auth.GoogleAccessTokenProvider
 import com.tombo.billyassistant.companion.auth.GoogleApiScopes
@@ -70,6 +71,7 @@ class CompanionAgent(
             PhotoCompanionTool(context, watchMediaSpec, geminiClient) { settingsStore.load().geminiApiKey },
             MapCompanionTool(context, watchMediaSpec) { settingsStore.load().googleMapsApiKey },
             WebImageCompanionTool(watchMediaSpec),
+            MyGeminiCompanionTool(context, watchMediaSpec),
             UserProfileCompanionTool(profileStore),
         ),
     )
