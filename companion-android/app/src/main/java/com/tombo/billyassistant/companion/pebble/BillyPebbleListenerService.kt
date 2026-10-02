@@ -71,7 +71,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         }
         val promptContext = data.textValue(BillyPebbleProtocol.PROMPT_CONTEXT)
         val watchMediaSpec = promptContext.toWatchMediaSpec()
-        val model = promptContext.geminiModel()
+        val model = com.tombo.billyassistant.companion.settings.SettingsStore(this).effectiveModel(promptContext.geminiModel())
         val threadId = data.textValue(BillyPebbleProtocol.THREAD_ID)?.takeIf { it.isNotBlank() }
             ?: UUID.randomUUID().toString()
         val requestId = data.intValue(BillyPebbleProtocol.ANDROID_REQUEST_ID)

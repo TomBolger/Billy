@@ -134,6 +134,10 @@ class MainActivity : ComponentActivity() {
                 button("Get a free key", primary = false) { open("https://aistudio.google.com/app/apikey") },
             ))
             addView(status(keyStatus.ifBlank { if (settings.geminiApiKey.isBlank()) "" else "Saved." }))
+            val active = settings.modelOverride.ifBlank { settings.lastWatchModel }.ifBlank { GeminiClient.DEFAULT_MODEL }
+            val label = SettingsStore.MODELS.firstOrNull { it.first == active }?.second ?: active
+            addView(text("Model: $label" + if (settings.modelOverride.isBlank()) " (from the watch app's settings)" else "", 14f, COLOR_MUTED).padTop(10))
+            addView(row(button("Change model", primary = false) { pickModel() }))
         }
 
         card("2  Google account") {
@@ -263,6 +267,21 @@ class MainActivity : ComponentActivity() {
                 render()
             }
         }.start()
+    }
+
+    private fun pickModel() {
+        val settings = settingsStore.load()
+        val labels = listOf("Same as watch app settings") + SettingsStore.MODELS.map { it.second }
+        val ids = listOf("") + SettingsStore.MODELS.map { it.first }
+        AlertDialog.Builder(this)
+            .setTitle("Gemini model")
+            .setSingleChoiceItems(labels.toTypedArray(), ids.indexOf(settings.modelOverride).coerceAtLeast(0)) { dialog, which ->
+                settingsStore.save(settingsStore.load().copy(modelOverride = ids[which]))
+                dialog.dismiss()
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun connectGoogle() {

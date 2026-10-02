@@ -39,7 +39,7 @@ class PhotoCompanionTool(
             .put(
                 "description",
                 "Find a photo from the phone's camera roll and show it on the watch. Use for \"show me my last photo\", \"a picture of the dog from last summer\", \"what was in the photo I took yesterday\". " +
-                    "Translate dates into an exact taken_after/taken_before window. Billy also sees the photo, so you can answer questions about it.",
+                    "Searches photos stored on the phone (camera roll). Translate dates into an exact taken_after/taken_before window. Billy also sees the photo, so you can answer questions about it.",
             )
             .put(
                 "parameters",
@@ -65,16 +65,24 @@ class PhotoCompanionTool(
         val before = TimeArgs.parse(args.optString("taken_before"))?.millis
         val description = args.optString("description").trim()
         val skip = args.optInt("skip", 0).coerceIn(0, 50)
-        val candidates = query(after, before, args.optBoolean("include_screenshots", false), limit = if (description.isEmpty()) skip + 1 else MAX_CANDIDATES)
-        if (candidates.isEmpty()) {
-            return CompanionToolExecution(GoogleAccess.error("No photos found${if (after != null || before != null) " in that time range" else ""}."))
+        val all = query(after, before, args.optBoolean("include_screenshots", false), limit = if (description.isEmpty()) skip + 1 else MAX_SCAN)
+        if (all.isEmpty()) {
+            return CompanionToolExecution(notOnPhone("No photos on the phone${if (after != null || before != null) " from that time" else ""}."))
+        }
+        // For content searches over a long window, look at photos spread across
+        // the whole window instead of only the newest ones.
+        val candidates = if (description.isEmpty() || all.size <= MAX_CANDIDATES) {
+            all
+        } else {
+            val step = all.size.toDouble() / MAX_CANDIDATES
+            (0 until MAX_CANDIDATES).map { all[(it * step).toInt()] }
         }
         val chosen: Photo = if (description.isEmpty()) {
             candidates.getOrNull(skip) ?: candidates.last()
         } else {
             pickByContent(description, candidates, skip)
                 ?: return CompanionToolExecution(
-                    GoogleAccess.error("I looked through ${candidates.size} photos but none clearly show $description."),
+                    notOnPhone("I looked through ${candidates.size} photos on the phone but none clearly show $description."),
                 )
         }
         val bitmap = loadBitmap(chosen.uri, 768) ?: return CompanionToolExecution(GoogleAccess.error("I couldn't open that photo."))
@@ -96,6 +104,9 @@ class PhotoCompanionTool(
             bitmap.recycle()
         }
     }
+
+    private fun notOnPhone(summary: String): JSONObject = GoogleAccess.error(summary)
+        .put("hint", "Photos only in Google Photos' cloud aren't on the phone. Offer open_google_photos_search to search the full library on the phone screen.")
 
     private fun pickByContent(description: String, candidates: List<Photo>, skip: Int): Photo? {
         val apiKey = apiKeyProvider()
@@ -214,7 +225,8 @@ class PhotoCompanionTool(
     private data class Photo(val uri: Uri, val takenMillis: Long, val album: String)
 
     private companion object {
-        const val MAX_CANDIDATES = 36
+        const val MAX_CANDIDATES = 48
+        const val MAX_SCAN = 4000
         const val MIN_CONFIDENCE = 45
     }
 }

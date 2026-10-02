@@ -24,6 +24,7 @@ import android.telecom.TelecomManager
 import android.telephony.SmsManager
 import android.view.KeyEvent
 import com.tombo.billyassistant.companion.phone.BillyNotificationListener
+import com.tombo.billyassistant.companion.phone.LaunchActivity
 import com.tombo.billyassistant.companion.phone.PhoneContacts
 import com.tombo.billyassistant.companion.phone.RecentNotification
 import org.json.JSONArray
@@ -116,6 +117,12 @@ class PhoneCompanionTool(private val context: Context) : CompanionTool {
             mapOf("app" to stringSchema("App name, e.g. \"Spotify\", \"Camera\".")),
         ),
         decl(
+            "open_google_photos_search",
+            "Open the Google Photos app on the phone with a search, which covers the user's whole cloud library (people, places, things, dates). Results appear on the phone, not the watch; Google doesn't let other apps read the library. Use when find_photo can't find it or the user says Google Photos.",
+            listOf("query"),
+            mapOf("query" to stringSchema("Search as you'd type it in Google Photos, e.g. \"dog beach 2024\".")),
+        ),
+        decl(
             "start_navigation",
             "Start Google Maps turn-by-turn navigation on the phone. Pair with show_map for a map on the watch.",
             listOf("destination"),
@@ -140,6 +147,7 @@ class PhoneCompanionTool(private val context: Context) : CompanionTool {
             "find_my_phone" -> CompanionToolExecution(findPhone())
             "open_app" -> CompanionToolExecution(openApp(args.optString("app")))
             "start_navigation" -> CompanionToolExecution(navigate(args))
+            "open_google_photos_search" -> CompanionToolExecution(googlePhotosSearch(args.optString("query")))
             else -> null
         }
     }
@@ -393,15 +401,27 @@ class PhoneCompanionTool(private val context: Context) : CompanionTool {
         return launch(intent, "Starting ${if (mode == "drive") "" else "$mode "}navigation to $destination on your phone.")
     }
 
+    private fun googlePhotosSearch(query: String): JSONObject {
+        if (query.isBlank()) return GoogleAccess.error("What should I search for?")
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://photos.google.com/search/${Uri.encode(query.trim())}"))
+            .setPackage("com.google.android.apps.photos")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (context.packageManager.resolveActivity(intent, 0) == null) intent.setPackage(null)
+        return launch(intent, "Opened Google Photos on your phone searching \"$query\".")
+    }
+
     // ---- helpers ------------------------------------------------------------
 
     private fun launch(intent: Intent, okSummary: String): JSONObject {
         if (!Settings.canDrawOverlays(context)) {
             return needs("Open apps from the watch")
         }
+        val locked = LaunchActivity.isLocked(context)
         return runCatching {
-            context.startActivity(intent)
-            GoogleAccess.ok(okSummary)
+            // LaunchActivity wakes the screen and asks to unlock first when needed.
+            context.startActivity(LaunchActivity.intentFor(context, intent))
+            GoogleAccess.ok(if (locked) "$okSummary Unlock your phone to finish opening it." else okSummary)
+                .put("phone_locked", locked)
         }.getOrElse { GoogleAccess.error("The phone couldn't open that: ${it.message}") }
     }
 

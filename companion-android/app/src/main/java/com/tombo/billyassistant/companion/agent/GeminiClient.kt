@@ -453,7 +453,7 @@ class GeminiClient(preferredModel: String? = null) {
         private val TRANSIENT_CODES = setOf(429, 500, 502, 503, 504)
         private val MUTATING_TOOLS = WatchToolsCompanionTool.MUTATING + setOf(
             "create_calendar_event", "create_google_task", "complete_google_task", "create_gmail_draft",
-            "create_google_doc", "create_google_sheet", "create_google_slides", "update_google_doc",
+            "create_google_doc", "create_google_sheet", "create_google_slides", "update_google_doc", "show_image",
             "update_calendar_event", "remember_billy_user_fact", "forget_billy_user_fact", "set_flashlight", "set_phone_volume",
         )
 
@@ -474,13 +474,14 @@ class GeminiClient(preferredModel: String? = null) {
             "WHICH TOOL",
             "- Timers = durations; alarms = clock times; \"remind me to...\" = set_reminder (watch timeline) unless the user says Google Tasks or Calendar.",
             "- Calendar: get_calendar_events to read or find; create_calendar_event; update_calendar_event to move/rename; delete_calendar_event to remove; find_free_time for availability.",
-            "- Phone: send_text_message (SMS), reply_to_notification (WhatsApp/Signal/etc.), call_contact, get_notifications, control_media / play_music, set_phone_volume, set_flashlight, get_phone_status, find_my_phone, open_app, start_navigation (+ show_map for the watch).",
-            "- Photos: find_photo with a date window and/or description; you'll see the photo, so describe it or answer questions about it.",
+            "- Phone: send_text_message (SMS), reply_to_notification (WhatsApp/Signal/etc.), call_contact, get_notifications, control_media / play_music, set_phone_volume, set_flashlight, get_phone_status, find_my_phone, open_app, start_navigation (+ show_map for the watch). If a result says the phone is locked, tell the user to unlock it to finish.",
+            "- Photos: find_photo searches photos stored on the phone (date window and/or description); you'll see the photo, so describe it or answer questions about it. If it isn't found, or the user says Google Photos, use open_google_photos_search (full cloud library, results on the phone).",
             "- Google: Gmail (search_gmail, prepare_gmail_send to send, create_gmail_draft only when a draft is asked for), Tasks, Drive/Docs/Sheets/Slides.",
-            "- Google Keep and cloud Google Photos search aren't available to third-party apps; say so briefly if asked.",
+            "- Google Keep isn't available to third-party apps; say so briefly if asked.",
             "",
             "INFO CARDS",
-            "- Prefer a card when one fits: get_weather, show_number (one big number), set_timer (countdown), show_map, find_photo, show_web_image_search. When a card is shown, add context in text; don't repeat it.",
+            "- Prefer a card when one fits: get_weather, show_number (one big number), set_timer (countdown), show_map, find_photo, show_image. When a card is shown, add context in text; don't repeat it.",
+            "- Be generous with show_image as a visual aid: when the user asks about or mentions something with a recognizable look (a landmark, place, animal, plant, person, artwork, building, food), show a picture along with the answer, without being asked. Skip it when the point is fine detail the small, low-color screen can't show (charts, diagrams, text, close-up specifics).",
             "",
             "REPLIES",
             "- The watch screen is tiny: usually 1-4 short lines. Lead with the answer. Plain text only, no markdown, links, or citations. \"- \" bullets for short lists.",
