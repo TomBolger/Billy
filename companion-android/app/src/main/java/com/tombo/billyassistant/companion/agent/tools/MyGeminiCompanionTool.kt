@@ -57,7 +57,8 @@ class MyGeminiCompanionTool(
                         }
                     }
                 }
-                val answer = plain(reply.text).ifBlank { if (image != null) "" else "Done." }
+                var answer = plain(reply.text).ifBlank { if (image != null) "" else "Done." }
+                if (image == null && reply.imageUrls.isNotEmpty()) answer += " (Couldn't load the picture on the watch.)"
                 CompanionToolExecution(
                     response = JSONObject()
                         .put("status", "ok")

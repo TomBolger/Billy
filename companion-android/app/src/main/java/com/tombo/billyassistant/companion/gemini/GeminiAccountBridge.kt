@@ -151,14 +151,15 @@ object GeminiAccountBridge {
         }
     }
 
-    private fun request(context: Context, question: String, timeoutMs: Long): Reply {
+    /** Runs a script in the signed-in Gemini page and waits for it to call BillyBridge.onResult. */
+    private fun runInPage(context: Context, timeoutMs: Long, script: (Int) -> String): String? {
         val id = requestIds.getAndIncrement()
         val latch = CountDownLatch(1)
         var raw: String? = null
         pending = id to { result -> raw = result; latch.countDown() }
         main.post {
             val view = ensureWebView(context)
-            val run = { view.evaluateJavascript(script(id, question), null) }
+            val run = { view.evaluateJavascript(script(id), null) }
             val fresh = System.currentTimeMillis() - pageLoadedAt < PAGE_MAX_AGE_MS
             when {
                 pageReady && fresh -> run()
@@ -177,7 +178,12 @@ object GeminiAccountBridge {
         }
         val finished = latch.await(timeoutMs, TimeUnit.MILLISECONDS)
         pending = null
-        if (!finished) {
+        return if (finished) raw else null
+    }
+
+    private fun request(context: Context, question: String, timeoutMs: Long): Reply {
+        val raw = runInPage(context, timeoutMs) { id -> script(id, question) }
+        if (raw == null) {
             main.post { pageLoadedAt = 0L } // reload next time
             return Reply.Failed(TIMED_OUT)
         }
@@ -243,7 +249,14 @@ object GeminiAccountBridge {
         }
         val resolver = context.contentResolver
         val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
-        resolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } }
+        resolver.openOutputStream(uri)?.use { out ->
+            imageLogFile(context).takeIf { it.exists() }?.let { log ->
+                out.write("=== picture download attempts ===\n".toByteArray())
+                log.inputStream().use { it.copyTo(out) }
+                out.write("\n=== Gemini reply ===\n".toByteArray())
+            }
+            source.inputStream().use { it.copyTo(out) }
+        }
         name
     }.getOrNull()
 
@@ -255,7 +268,7 @@ object GeminiAccountBridge {
         view.settings.javaScriptEnabled = true
         view.settings.domStorageEnabled = true
         view.settings.userAgentString = chromeUserAgent(context)
-        view.settings.blockNetworkImage = true
+        CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
         view.addJavascriptInterface(Callback, "BillyBridge")
         view.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
@@ -398,17 +411,119 @@ object GeminiAccountBridge {
 
     // ---- pictures -----------------------------------------------------------------
 
-    /** Download a picture Gemini showed, sized for the watch. */
-    fun downloadImage(context: Context, url: String): Bitmap? = runCatching {
-        val sized = sizedForWatch(url)
-        val connection = (URL(sized).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 8_000
-            readTimeout = 8_000
-            setRequestProperty("User-Agent", chromeUserAgent(context))
-            CookieManager.getInstance().getCookie(sized)?.let { setRequestProperty("Cookie", it) }
+    /**
+     * Download a picture Gemini showed, sized for the watch. Photos from the
+     * user's library are private, so if a plain download is refused the
+     * signed-in Gemini page fetches it, the way the website itself shows it.
+     * Every attempt is logged for the "Save last reply" debug file.
+     */
+    fun downloadImage(context: Context, url: String): Bitmap? {
+        val app = context.applicationContext
+        val log = StringBuilder("image: ").append(url.take(160)).append('\n')
+        val candidates = listOf(sizedForWatch(url), url).distinct()
+        val deadline = System.currentTimeMillis() + 25_000
+        for (candidate in candidates) {
+            try {
+                val connection = (URL(candidate).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 6_000
+                    readTimeout = 6_000
+                    setRequestProperty("User-Agent", chromeUserAgent(app))
+                    setRequestProperty("Accept", "image/webp,image/jpeg,image/png,image/*;q=0.8")
+                    setRequestProperty("Referer", "https://gemini.google.com/")
+                    CookieManager.getInstance().getCookie(candidate)?.let { setRequestProperty("Cookie", it) }
+                }
+                val code = connection.responseCode
+                if (code == 200) {
+                    val bitmap = connection.inputStream.use { BitmapFactory.decodeStream(it) }
+                    if (bitmap != null) {
+                        saveImageLog(app, log.append("direct ok: ").append(candidate.takeLast(20)).toString())
+                        return bitmap
+                    }
+                    log.append("direct ").append(candidate.takeLast(12)).append(": 200 but not decodable (").append(connection.contentType).append(")\n")
+                } else {
+                    log.append("direct ").append(candidate.takeLast(12)).append(": HTTP ").append(code).append('\n')
+                }
+            } catch (e: Exception) {
+                log.append("direct ").append(candidate.takeLast(12)).append(": ").append(e.javaClass.simpleName).append(' ').append(e.message).append('\n')
+            }
         }
-        connection.inputStream.use { BitmapFactory.decodeStream(it) }
-    }.getOrNull()
+        for (candidate in candidates) {
+            val left = deadline - System.currentTimeMillis()
+            if (left < 3_000) { log.append("out of time\n"); break }
+            val raw = synchronized(lock) { runInPage(app, left.coerceAtMost(15_000)) { id -> imageScript(id, candidate) } }
+            val result = raw?.let { runCatching { JSONObject(it) }.getOrNull() }
+            val data = result?.optString("data").orEmpty()
+            if (data.isNotBlank()) {
+                val bytes = runCatching { android.util.Base64.decode(data, android.util.Base64.DEFAULT) }.getOrNull()
+                val bitmap = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                if (bitmap != null) {
+                    saveImageLog(app, log.append("page ok via ").append(result?.optString("how")).toString())
+                    return bitmap
+                }
+                log.append("page ").append(candidate.takeLast(12)).append(": data not decodable (").append(result?.optString("type")).append(")\n")
+            } else {
+                log.append("page ").append(candidate.takeLast(12)).append(": ").append(result?.optString("error") ?: "no answer").append('\n')
+            }
+        }
+        saveImageLog(app, log.toString())
+        return null
+    }
+
+    private fun imageScript(id: Int, url: String): String = """
+        (async function() {
+          const send = (o) => BillyBridge.onResult($id, JSON.stringify(o));
+          const url = ${JSONObject.quote(url)};
+          const errors = [];
+          const toB64 = (blob) => new Promise((ok, fail) => {
+            const r = new FileReader();
+            r.onload = () => ok(String(r.result).split(',')[1]);
+            r.onerror = () => fail(new Error('read failed'));
+            r.readAsDataURL(blob);
+          });
+          for (const credentials of ['include', 'omit']) {
+            try {
+              const res = await fetch(url, {credentials: credentials, mode: 'cors'});
+              if (res.ok) {
+                const blob = await res.blob();
+                send({data: await toB64(blob), type: blob.type, how: 'fetch-' + credentials});
+                return;
+              }
+              errors.push('fetch-' + credentials + ': HTTP ' + res.status);
+            } catch (e) { errors.push('fetch-' + credentials + ': ' + e.message); }
+          }
+          for (const mode of ['use-credentials', 'anonymous', null]) {
+            try {
+              const data = await new Promise((ok, fail) => {
+                const img = new Image();
+                if (mode) img.crossOrigin = mode;
+                const timer = setTimeout(() => fail(new Error('timed out')), 8000);
+                img.onload = () => {
+                  clearTimeout(timer);
+                  try {
+                    const scale = Math.min(1, 480 / Math.max(img.naturalWidth, img.naturalHeight));
+                    const c = document.createElement('canvas');
+                    c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+                    c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+                    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+                    ok(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
+                  } catch (e) { fail(e); }
+                };
+                img.onerror = () => { clearTimeout(timer); fail(new Error('load failed')); };
+                img.src = url;
+              });
+              send({data: data, type: 'image/jpeg', how: 'img-' + (mode || 'plain')});
+              return;
+            } catch (e) { errors.push('img-' + (mode || 'plain') + ': ' + e.message); }
+          }
+          send({error: errors.join('; ')});
+        })();
+    """.trimIndent()
+
+    private fun imageLogFile(context: Context) = File(context.applicationContext.filesDir, "gemini-last-image.txt")
+
+    private fun saveImageLog(context: Context, text: String) {
+        runCatching { imageLogFile(context).writeText(text) }
+    }
 
     /** Google image hosts take a size suffix after "="; ask for a watch-sized copy. */
     private fun sizedForWatch(url: String): String {
