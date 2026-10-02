@@ -100,10 +100,12 @@ function emitFromWatch(payload) {
 
 // ---- scripted fake Gemini -------------------------------------------------------
 var gemini = {requests: [], script: []};
+var httpRoutes = {};
 global.XMLHttpRequest = function() {
     var self = this;
     this.open = function(method, url) { self.url = url; };
     this.setRequestHeader = function() {};
+    this.overrideMimeType = function() {};
     this.send = function(body) {
         var parsed = body ? JSON.parse(body) : null;
         var isGemini = /generativelanguage/.test(self.url);
@@ -111,7 +113,31 @@ global.XMLHttpRequest = function() {
             gemini.requests.push({url: self.url, body: parsed});
         }
         setTimeout(function() {
-            var reply = isGemini ? gemini.script.shift() : {status: 200, json: {}};
+            var reply = isGemini ? gemini.script.shift() : null;
+            if (!isGemini) {
+                var routes = Object.keys(httpRoutes);
+                for (var r = 0; r < routes.length && !reply; r++) {
+                    if (new RegExp(routes[r]).test(self.url)) {
+                        reply = httpRoutes[routes[r]](self.url);
+                    }
+                }
+                reply = reply || {status: 200, json: {}};
+            }
+            if (reply && reply.bytes) {
+                self.readyState = 4;
+                self.status = 200;
+                self.response = reply.bytes.buffer.slice(reply.bytes.byteOffset, reply.bytes.byteOffset + reply.bytes.length);
+                self.responseText = '';
+                self.onload();
+                return;
+            }
+            if (reply && reply.text !== undefined) {
+                self.readyState = 4;
+                self.status = 200;
+                self.responseText = reply.text;
+                self.onload();
+                return;
+            }
             if (typeof reply === 'function') {
                 reply = reply(parsed, self.url);
             }
@@ -144,6 +170,7 @@ function reset() {
     watch.sent = [];
     gemini.requests = [];
     gemini.script = [];
+    httpRoutes = {};
     var queue = require(path.join(PKJS, 'lib/message_queue')).Queue;
     queue.queue = [];
     queue.messagesInFlight = 0;
@@ -404,6 +431,66 @@ test('relay: companion request runs the watch tool and returns a JS_TOOL_RESULT'
     assert.strictEqual(result.result.status, 'ok');
     assert(watch.sent.some(function(m) { return m.SET_ALARM_TIME === 180 && m.SET_ALARM_NAME === 'Tea'; }));
     assert(watch.sent.some(function(m) { return m.TIMER_WIDGET === 1 && m.TIMER_WIDGET_NAME === 'Tea'; }));
+});
+
+
+test('show_image (phone-only): Wikipedia picture is decoded and sent as a Pebble bitmap card', async function() {
+    var jpeg = new Uint8Array(fs.readFileSync(path.join(__dirname, 'fixtures', 'landmark.jpg')));
+    httpRoutes['wikipedia.org/w/api.php'] = function() {
+        return {json: {query: {pages: {'1': {index: 1, title: 'Eiffel Tower', thumbnail: {source: 'https://upload.wikimedia.org/x/Tour_Eiffel.jpg'}}}}}};
+    };
+    httpRoutes['upload.wikimedia.org'] = function() {
+        return {bytes: jpeg};
+    };
+    gemini.script.push(modelTurn([call('show_image', {query: 'Eiffel Tower'})]));
+    gemini.script.push(text('Paris, 330 m tall.'));
+    newSession('tell me about the eiffel tower').run();
+    await waitFor(done, 5000);
+    var start = watch.sent.filter(function(m) { return m.IMAGE_START_BYTE_SIZE; })[0];
+    assert(start, 'no image sent');
+    assert(start.IMAGE_WIDTH <= 198 && start.IMAGE_HEIGHT <= 150, start.IMAGE_WIDTH + 'x' + start.IMAGE_HEIGHT);
+    await waitFor(function() { return watch.sent.some(function(m) { return m.MAP_WIDGET === 1; }); }, 3000);
+    assert(watch.sent.some(function(m) { return m.IMAGE_COMPLETE; }), 'image not completed');
+});
+
+test('calendar (phone-only): reads events from an iCal link, including repeats', async function() {
+    setSettings({CALENDAR_LINKS: 'webcal://calendar.example.com/private/basic.ics'});
+    var now = new Date();
+    var pad = function(n) { return (n < 10 ? '0' : '') + n; };
+    var day = now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate());
+    httpRoutes['calendar.example.com'] = function(url) {
+        assert(/^https:/.test(url), 'webcal should become https');
+        return {text: ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:x', 'SUMMARY:Dentist', 'DTSTART:' + day + 'T235800', 'DTEND:' + day + 'T235900',
+            'RRULE:FREQ=DAILY;COUNT=3', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')};
+    };
+    gemini.script.push(modelTurn([call('get_calendar_events', {search: 'dentist'})]));
+    gemini.script.push(text('Dentist tonight.'));
+    newSession('when is my dentist appointment').run();
+    await waitFor(done, 5000);
+    var names = declaredNames(gemini.requests[0]);
+    assert(names.indexOf('get_calendar_events') !== -1);
+    var fr = gemini.requests[1].body.contents.slice(-1)[0].parts[0].functionResponse.response;
+    assert.strictEqual(fr.status, 'ok');
+    assert.strictEqual(fr.events.length, 3);
+    assert.strictEqual(fr.events[0].title, 'Dentist');
+});
+
+test('weather: card for a specific day shows that day', async function() {
+    setSettings({LOCATION_ENABLED: true});
+    httpRoutes['nominatim'] = function() { return {json: [{lat: '47.6', lon: '-117.4'}]}; };
+    httpRoutes['open-meteo'] = function() {
+        return {json: {current: {temperature_2m: 20, apparent_temperature: 19, weather_code: 1, wind_speed_10m: 8},
+            daily: {time: ['2026-09-30', '2026-10-01', '2026-10-02', '2026-10-03'], temperature_2m_max: [22, 18, 15, 11],
+                temperature_2m_min: [10, 9, 8, 3], weather_code: [1, 61, 3, 71], precipitation_probability_max: [5, 70, 20, 40]}}};
+    };
+    gemini.script.push(modelTurn([call('get_weather', {location_name: 'Spokane', card: 'day', date: '2026-10-03'})]));
+    gemini.script.push(text('Snow Saturday.'));
+    newSession('weather saturday in spokane').run();
+    await waitFor(done, 5000);
+    var card = watch.sent.filter(function(m) { return m.WEATHER_WIDGET; })[0];
+    assert.strictEqual(card.WEATHER_WIDGET, 1);
+    assert.strictEqual(card.WEATHER_WIDGET_DAY_HIGH, 11);
+    assert.strictEqual(card.WEATHER_WIDGET_DAY_OF_WEEK, 'Saturday');
 });
 
 test('relay keys stay where the Android companion expects them', function() {

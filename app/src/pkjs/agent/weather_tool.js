@@ -51,9 +51,10 @@ exports.getDeclarations = function() {
             longitude: numberSchema('Optional longitude if already known.'),
             card: {
                 type: 'string',
-                'enum': ['now', 'today', 'tomorrow', 'week'],
-                description: "Which card to show: 'now' current conditions (default), 'today' or 'tomorrow' that day's high/low card, 'week' a 3-day forecast card for multi-day or weekend questions."
-            }
+                'enum': ['now', 'today', 'tomorrow', 'day', 'week'],
+                description: "Which card to show: 'now' current conditions (default), 'today' or 'tomorrow' that day's high/low card, 'day' a high/low card for the date in 'date', 'week' a 3-day forecast card for multi-day or weekend questions."
+            },
+            date: stringSchema("For card='day': the date (YYYY-MM-DD), up to 6 days ahead.")
         }, [])
     }];
 };
@@ -74,7 +75,7 @@ exports.execute = function(session, call, callback) {
                 callback({status: 'error', summary: weatherErr.message || String(weatherErr)});
                 return;
             }
-            session.enqueue(buildCard(String(args.card || 'now'), report));
+            session.enqueue(buildCard(String(args.card || 'now'), report, args.date));
             callback({
                 status: 'ok',
                 summary: report.summary,
@@ -246,10 +247,17 @@ function orZero(value) {
     return value === null || value === undefined ? 0 : value;
 }
 
-function buildCard(kind, report) {
+function buildCard(kind, report, date) {
     var location = report.locationLabel.toUpperCase().substring(0, 28);
     var dayIndex = kind === 'tomorrow' ? 1 : 0;
-    if ((kind === 'today' || kind === 'tomorrow') && report.days.length > dayIndex) {
+    if (kind === 'day') {
+        for (var di = 0; di < report.days.length; di++) {
+            if (report.days[di].date === String(date || '')) {
+                dayIndex = di;
+            }
+        }
+    }
+    if ((kind === 'today' || kind === 'tomorrow' || kind === 'day') && report.days.length > dayIndex) {
         var day = report.days[dayIndex];
         var rain = day.rainChance !== null ? ', ' + day.rainChance + '% rain' : '';
         return {
@@ -260,7 +268,7 @@ function buildCard(kind, report) {
             WEATHER_WIDGET_LOCATION: location,
             WEATHER_WIDGET_DAY_SUMMARY: (day.description + rain).substring(0, 80),
             WEATHER_WIDGET_TEMP_UNIT: report.tempUnit,
-            WEATHER_WIDGET_DAY_OF_WEEK: kind === 'today' ? 'Today' : 'Tomorrow'
+            WEATHER_WIDGET_DAY_OF_WEEK: dayIndex === 0 ? 'Today' : dayIndex === 1 ? 'Tomorrow' : day.dayName
         };
     }
     if (kind === 'week' && report.days.length >= 3) {

@@ -16,6 +16,7 @@
 
 var config = require('../config');
 var location = require('../location');
+var calendarTool = require('./calendar_tool');
 
 function pad(n) {
     return (n < 10 ? '0' : '') + n;
@@ -56,7 +57,8 @@ exports.CORE_RULES = [
     '- Built in: Google Search for anything current (news, sports, prices); Google Maps for places, hours, and travel questions; reading web pages from URLs; and running code for exact math.',
     '',
     'INFO CARDS',
-    '- Prefer a card when one fits. Cards: get_weather (weather card), show_number (one big number for calculations, conversions, counts, prices), set_timer (live countdown), show_openstreetmap_map (map). When a card is shown, your text should add context, not repeat the card.',
+    '- Prefer a card when one fits. Cards: get_weather (weather card), show_number (one big number for calculations, conversions, counts, prices), set_timer (live countdown), show_openstreetmap_map (map), show_image (picture). When a card is shown, your text should add context, not repeat the card.',
+    '- Be generous with show_image as a visual aid: when the user asks about something with a recognizable look (a landmark, place, animal, plant, person, artwork, building, food), show a picture with the answer without being asked. Skip it when the point is fine detail the small, low-color screen cannot show (charts, diagrams, text).',
     '',
     'REPLIES',
     '- Replies appear on a tiny screen: usually 1-4 short lines. Lead with the answer. Plain text only: no markdown, bold, tables, headings, links, or citations. Use "- " bullets for short lists.',
@@ -80,7 +82,10 @@ exports.buildSystemInstruction = function() {
     } else {
         parts.push('- Reply in the language the user speaks.');
     }
-    parts.push('- This is the phone runtime. Private Google data (Gmail, Calendar, Drive, Photos, Tasks) needs the Billy Companion Android app; if asked for it, say briefly that the companion is not connected right now.');
+    parts.push(calendarTool.links().length > 0 ?
+        '- Calendar: get_calendar_events reads the user\'s calendar (read-only here). To add something, offer set_reminder instead.' :
+        '- No calendar is connected. If asked about the calendar, say they can paste a calendar iCal link in Billy\'s settings in the Pebble app.');
+    parts.push('- This is the phone runtime (works on iPhone and Android). Gmail, Drive, Tasks, texting, calls, and notifications need the Billy Companion Android app; say so briefly if asked.');
     var profile = config.getUserProfileContext();
     if (profile) {
         parts.push('- What Billy remembers about the user (use when relevant, do not recite): ' + profile);

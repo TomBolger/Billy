@@ -28,7 +28,39 @@ var runtimeRouter = require('./agent/runtime_router');
 var relay = require('./agent/relay');
 
 
-var clay = new Clay(clayConfig, customConfigFunction);
+var clay = new Clay(clayConfig, customConfigFunction, {autoHandleEvents: false});
+var messageKeys = require('message_keys');
+
+// Only these settings are used by the watch itself. Everything else (API key,
+// memory, calendar links) stays on the phone, which keeps the settings message
+// small enough for the watch to accept.
+var WATCH_SETTINGS = [
+    'QUICK_LAUNCH_BEHAVIOUR', 'ALARM_VIBE_PATTERN', 'TIMER_VIBE_PATTERN',
+    'CONFIRM_TRANSCRIPTS', 'ASSISTANT_RUNTIME', 'GEMINI_MODEL', 'LOCATION_ENABLED'
+];
+
+Pebble.addEventListener('showConfiguration', function() {
+    Pebble.openURL(clay.generateUrl());
+});
+
+Pebble.addEventListener('webviewclosed', function(e) {
+    if (!e || !e.response) {
+        return;
+    }
+    var all = clay.getSettings(e.response);
+    var forWatch = {};
+    WATCH_SETTINGS.forEach(function(name) {
+        var key = messageKeys[name];
+        if (key !== undefined && all[key] !== undefined) {
+            forWatch[key] = all[key];
+        }
+    });
+    Pebble.sendAppMessage(forWatch, function() {
+        console.log('Settings sent to watch.');
+    }, function(err) {
+        console.log('Settings send failed: ' + JSON.stringify(err));
+    });
+});
 
 function main() {
     // Keep the watch's copy of the model current so the Android companion
