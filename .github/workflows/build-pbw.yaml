@@ -48,14 +48,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Build companion (compile check)
+      - name: Build companion
         run: |
+          test -f companion-android/debug.keystore || { echo "debug.keystore missing"; exit 1; }
           echo "sdk.dir=$ANDROID_HOME" > companion-android/local.properties
           cd companion-android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BillyCompanion-debug-APK-CI-signed
+          name: BillyCompanion-debug-APK
           path: companion-android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
@@ -70,7 +71,7 @@ jobs:
         run: |
           mkdir out
           cp dist/Billy-PBW/app.pbw out/Billy-dev.pbw
-          cp dist/BillyCompanion-debug-APK-CI-signed/*.apk out/BillyCompanion-dev.apk
+          cp dist/BillyCompanion-debug-APK/*.apk out/BillyCompanion-dev.apk
       - name: Publish dev build
         uses: softprops/action-gh-release@v2
         with:
