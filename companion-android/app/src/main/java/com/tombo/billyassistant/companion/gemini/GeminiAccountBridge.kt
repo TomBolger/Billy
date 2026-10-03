@@ -232,7 +232,7 @@ object GeminiAccountBridge {
 
     // ---- debugging: the last raw reply, so a website change can be diagnosed --------
 
-    private fun lastReplyFile(context: Context) = File(context.applicationContext.filesDir, "gemini-last-reply.txt")
+    fun lastReplyFile(context: Context) = File(context.applicationContext.filesDir, "gemini-last-reply.txt")
 
     private fun saveLastReply(context: Context, question: String, body: String) {
         runCatching { lastReplyFile(context).writeText("=== question sent ===\n$question\n\n=== raw reply ===\n" + body.take(400_000)) }
@@ -650,7 +650,7 @@ object GeminiAccountBridge {
         return if (box.width() >= 64 && box.height() >= 64 && spread > 10) box else null
     }
 
-    private fun imageLogFile(context: Context) = File(context.applicationContext.filesDir, "gemini-last-image.txt")
+    fun imageLogFile(context: Context) = File(context.applicationContext.filesDir, "gemini-last-image.txt")
 
     private fun saveImageLog(context: Context, text: String) {
         runCatching { imageLogFile(context).appendText(text.trimEnd() + "\n\n") }

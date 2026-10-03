@@ -125,6 +125,34 @@ Turn.prototype.stopProgress = function() {
     this.progressTimers = [];
 };
 
+// Gemini sometimes writes a tool call out as text ("call:default_api:show_image{...}",
+// "tool_code ...", "request: api_call: ...") instead of making it.
+function looksLikeLeakedToolCall(text) {
+    var t = String(text || '').trim();
+    if (!t) {
+        return false;
+    }
+    var lower = t.toLowerCase();
+    if (lower.indexOf('default_api') !== -1 || lower.indexOf('tool_code') === 0 || lower.indexOf('call:') === 0 || lower.indexOf('```tool') === 0) {
+        return true;
+    }
+    if (/^[\w ]{1,24}:\s*[\w ]{0,24}(api|call|tool)\w*\s*:/i.test(t)) {
+        return true;
+    }
+    var names = registry.declarations().map(function(d) {
+        return d.name;
+    });
+    for (var i = 0; i < names.length; i++) {
+        if (new RegExp('(^|[\\s:`])' + names[i] + '\\s*[({]').test(t)) {
+            return true;
+        }
+    }
+    var colons = (t.match(/:/g) || []).length;
+    var words = (t.match(/[A-Za-z]{3,}/g) || []).length;
+    return t.length >= 12 && colons >= 3 && words < colons * 2;
+}
+exports.looksLikeLeakedToolCall = looksLikeLeakedToolCall;
+
 Turn.prototype.step = function(index, model) {
     var self = this;
     var options = this.options;
@@ -162,7 +190,15 @@ Turn.prototype.step = function(index, model) {
             });
             return;
         }
-        self.finish(response.text, false);
+        var leaked = response.functionCalls.length === 0 && looksLikeLeakedToolCall(response.text);
+        if (leaked && !self.nudgedLeak && !options.forceText) {
+            // The model wrote a tool request as text instead of calling it. Ask once more.
+            self.nudgedLeak = true;
+            self.contents.push({role: 'user', parts: [{text: '(Billy system note: your last reply came out as a raw tool request in text. Call the tool properly, or answer the user\'s question in plain words.)'}]});
+            self.step(index + 1, response.model);
+            return;
+        }
+        self.finish(leaked ? '' : response.text, false);
     };
     if (model) {
         gemini.generateWithModel(model, this.contents, options, handle);

@@ -257,6 +257,19 @@ test('timer: tool runs on the watch, countdown card shown, result returned with 
     assert.strictEqual(chatText(), 'Ten minutes, starting now.');
 });
 
+test('a tool request written out as text is caught and retried, never shown', async function() {
+    gemini.script.push(text('request:APIcall:show_image{query:avocado}'));
+    gemini.script.push(text('Avocado is closer to the cucumber? No: avocado and peanut are both in different orders; cucumber is closest.'));
+    newSession('what is biologically closer to avocado, cucumber or peanut').run();
+    await waitFor(done);
+    assert.strictEqual(gemini.requests.length, 2, 'should retry once');
+    assert(chatText().indexOf('request:') === -1, 'leaked text shown: ' + chatText());
+    var detect = require(path.join(PKJS, 'agent/companionless')).looksLikeLeakedToolCall;
+    assert(detect('call:default_api:get_weather{}'));
+    assert(!detect('Avocado and cucumber: both flowering plants. Peanut: a legume.'));
+    assert(!detect('Ratio is 3:2, time 10:30.'));
+});
+
 test('parallel calls return in ONE user turn; model stays pinned', async function() {
     gemini.script.push(modelTurn([call('set_alarm', {time: new Date(Date.now() + 3600e3).toISOString()}, 'a1'),
         call('set_timer', {seconds: 30}, 't1')]));

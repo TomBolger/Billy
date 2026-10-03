@@ -135,6 +135,8 @@ class GeminiClient(preferredModel: String? = null) {
         var watchImage: WatchImage? = null
         var watchWeather: WatchWeatherCurrent? = null
         var suggestedReply: String? = null
+        var nudgedLeak = false
+        val toolNames = (0 until toolDeclarations.length()).mapNotNull { toolDeclarations.optJSONObject(it)?.optString("name") }.toSet()
         var lastOkSummary: String? = null
         val executed = mutableMapOf<String, JSONObject>()
 
@@ -152,8 +154,17 @@ class GeminiClient(preferredModel: String? = null) {
             pinnedModel = parsed.model
             contents.put(parsed.modelContent)
 
+            val leaked = parsed.calls.isEmpty() && looksLikeLeakedToolCall(parsed.text, toolNames)
+            if (leaked && !nudgedLeak && !forceText) {
+                // The model wrote a tool request as text instead of calling it. Ask once more.
+                nudgedLeak = true
+                debugSink?.invoke("leaked tool call caught, retrying: ${parsed.text.take(300)}")
+                contents.put(userText("(Billy system note: your last reply came out as a raw tool request in text. Call the tool properly, or answer the user's question in plain words.)"))
+                continue
+            }
             if (parsed.calls.isEmpty() || forceText) {
-                val text = parsed.text.ifBlank { suggestedReply ?: lastOkSummary.orEmpty() }
+                val clean = if (leaked) "" else parsed.text
+                val text = clean.ifBlank { suggestedReply ?: lastOkSummary.orEmpty() }
                     .ifBlank { if (watchImage != null || watchWeather != null) "" else "Sorry, I did not get an answer. Please try again." }
                 return CompanionAgentResult.Passed(text = text, watchImage = watchImage, watchWeatherCurrent = watchWeather)
             }
@@ -367,6 +378,7 @@ class GeminiClient(preferredModel: String? = null) {
             val text = (if (code in 200..299) connection.inputStream else connection.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code in 200..299) {
+                debugSink?.invoke("model $model reply: ${text.take(6000)}")
                 HttpResult.Ok(JSONObject(text))
             } else {
                 HttpResult.Error(code, friendlyError(code, text, model), text, transient = code in TRANSIENT_CODES)
@@ -439,11 +451,29 @@ class GeminiClient(preferredModel: String? = null) {
             .put("parts", JSONArray().put(JSONObject().put("text", text)))
     }
 
+    /**
+     * Gemini sometimes writes a tool call out as text ("call:default_api:show_image{...}",
+     * "tool_code ...", "request: api_call: ...") instead of making it.
+     */
+    private fun looksLikeLeakedToolCall(text: String, toolNames: Set<String>): Boolean {
+        val t = text.trim()
+        if (t.isEmpty()) return false
+        val lower = t.lowercase()
+        if ("default_api" in lower || lower.startsWith("tool_code") || lower.startsWith("call:") || lower.startsWith("```tool")) return true
+        if (Regex("""^[\w ]{1,24}:\s*[\w ]{0,24}(api|call|tool)\w*\s*:""", RegexOption.IGNORE_CASE).containsMatchIn(t)) return true
+        if (toolNames.any { name -> Regex("""(^|[\s:`])${Regex.escape(name)}\s*[({]""").containsMatchIn(t) }) return true
+        // Mostly symbols and colons, few real words: not something to show the user.
+        val words = Regex("""[A-Za-z]{3,}""").findAll(t).count()
+        return t.length >= 12 && t.count { it == ':' } >= 3 && words < t.count { it == ':' } * 2
+    }
+
     private fun normalizeApiKey(apiKey: String): String = apiKey.filterNot { it.isWhitespace() }
 
     private fun isGemini3(model: String): Boolean = model.startsWith("gemini-3")
 
     companion object {
+        /** Receives raw model replies for the "Save last answer" debug file. */
+        @Volatile var debugSink: ((String) -> Unit)? = null
         const val DEFAULT_MODEL = "gemini-3.8-flash"
         private val FALLBACK_MODELS = listOf(DEFAULT_MODEL, "gemini-3.7-flash", "gemini-3.1-flash-lite")
         private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"

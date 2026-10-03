@@ -294,6 +294,14 @@ class MainActivity : ComponentActivity() {
             }
             card("About this install") {
                 addView(text("Package: $packageName\nSigning SHA-1: ${signingSha1()}", 13f, COLOR_MUTED).also { it.setTextIsSelectable(true) })
+                addView(row(button("Save Billy's last answer (for fixing)", primary = false) {
+                    val name = DebugFiles.exportToDownloads(this@MainActivity, "billy-last-answer", listOf(
+                        "Billy's last answer" to DebugFiles.lastTurn(this@MainActivity),
+                        "Gemini account: last reply" to GeminiAccountBridge.lastReplyFile(this@MainActivity),
+                        "Gemini account: picture attempts" to GeminiAccountBridge.imageLogFile(this@MainActivity),
+                    ))
+                    toastStatus(if (name != null) "Saved to Downloads as $name" else "Nothing to save yet.")
+                }))
                 addView(row(button("Forget Google sign-in", primary = false) {
                     authStore.clear()
                     googleStatus = "Forgotten. Tap Connect Google to sign in again."

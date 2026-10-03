@@ -112,6 +112,8 @@ class CompanionAgent(
 
         GeminiAccountBridge.warmUp(context)
         currentUserText = userText
+        com.tombo.billyassistant.companion.DebugFiles.startTurn(context, userText)
+        GeminiClient.debugSink = { com.tombo.billyassistant.companion.DebugFiles.note(context, it) }
         hydrateGoogleProfile()
         actions = mutableListOf()
         val location = currentAndroidLocation(context)
@@ -125,6 +127,10 @@ class CompanionAgent(
             latitude = location?.latitude,
             longitude = location?.longitude,
         )
+        com.tombo.billyassistant.companion.DebugFiles.note(context, "=== shown on watch ===\n" + when (result) {
+            is CompanionAgentResult.Passed -> result.text
+            is CompanionAgentResult.Failed -> "FAILED: " + result.reason
+        })
         if (result is CompanionAgentResult.Passed) {
             val recorded = result.text.ifBlank { result.clarificationCard?.question?.let { "(asked: $it)" }.orEmpty() }
             conversations.record(threadId, userText, recorded, actions)
@@ -139,6 +145,7 @@ class CompanionAgent(
         val ids = listOf("event_id", "calendar_id").mapNotNull { key ->
             execution.response.optJSONObject("event")?.optString(key)?.takeIf { it.isNotBlank() }?.let { "$key=$it" }
         }
+        com.tombo.billyassistant.companion.DebugFiles.note(context, "tool $name ${args.toString().take(300)} -> ${execution.response.toString().take(600)}")
         actions += buildString {
             append(name).append(' ').append(args.toString().take(160)).append(" -> ").append(status)
             if (ids.isNotEmpty()) append(" (").append(ids.joinToString(", ")).append(')')
@@ -153,13 +160,6 @@ class CompanionAgent(
      */
     private fun routed(name: String, args: JSONObject): CompanionToolExecution {
         val ownPhotos = OWN_PHOTO_REQUEST.containsMatchIn(currentUserText)
-        if (name == "find_photo" && !ownPhotos) {
-            return CompanionToolExecution(
-                JSONObject()
-                    .put("status", "rejected")
-                    .put("summary", "The user didn't ask for their own photos. For a picture of the subject, use show_image instead."),
-            )
-        }
         // Only escalate to the user's Google Photos when they actually asked for
         // their own photos, not when Billy reached for a picture as a visual aid.
         val linked = GeminiAccountBridge.isUsable(context) && ownPhotos
