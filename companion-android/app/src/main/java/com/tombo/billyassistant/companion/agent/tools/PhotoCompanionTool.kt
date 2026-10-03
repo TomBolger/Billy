@@ -38,7 +38,7 @@ class PhotoCompanionTool(
             .put("name", "find_photo")
             .put(
                 "description",
-                "Find a photo from the phone's camera roll and show it on the watch. Use for \"show me my last photo\", \"a picture of the dog from last summer\", \"what was in the photo I took yesterday\". " +
+                "Find one of the user's OWN photos from the phone's camera roll and show it on the watch. Only when the user asks for their photos; for a picture of a thing, place, or animal in general, use show_image. Use for \"show me my last photo\", \"a picture of the dog from last summer\", \"what was in the photo I took yesterday\". " +
                     "Searches photos stored on the phone (camera roll). Translate dates into an exact taken_after/taken_before window. Billy also sees the photo, so you can answer questions about it.",
             )
             .put(

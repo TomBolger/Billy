@@ -51,6 +51,7 @@ class CompanionAgent(
     private val profileStore = BillyUserProfileStore(context)
     private val conversations = ConversationStore(context)
     private var actions = mutableListOf<String>()
+    private var currentUserText = ""
 
     private val myGemini = MyGeminiCompanionTool(context, watchMediaSpec)
 
@@ -110,6 +111,7 @@ class CompanionAgent(
         }
 
         GeminiAccountBridge.warmUp(context)
+        currentUserText = userText
         hydrateGoogleProfile()
         actions = mutableListOf()
         val location = currentAndroidLocation(context)
@@ -150,7 +152,17 @@ class CompanionAgent(
      * watch) before falling back to the camera roll or opening the Photos app.
      */
     private fun routed(name: String, args: JSONObject): CompanionToolExecution {
-        val linked = GeminiAccountBridge.isUsable(context)
+        val ownPhotos = OWN_PHOTO_REQUEST.containsMatchIn(currentUserText)
+        if (name == "find_photo" && !ownPhotos) {
+            return CompanionToolExecution(
+                JSONObject()
+                    .put("status", "rejected")
+                    .put("summary", "The user didn't ask for their own photos. For a picture of the subject, use show_image instead."),
+            )
+        }
+        // Only escalate to the user's Google Photos when they actually asked for
+        // their own photos, not when Billy reached for a picture as a visual aid.
+        val linked = GeminiAccountBridge.isUsable(context) && ownPhotos
         if (linked && name == "open_google_photos_search") {
             askGeminiForPhoto(args.optString("query"))?.let { return it }
         }
@@ -177,7 +189,8 @@ class CompanionAgent(
             parts += "The user's own Gemini account is linked (ask_my_gemini). Use it FIRST for: the user's photos, unless taken in the last day or two " +
                 "(it searches the whole Google Photos library and shows the photo on the watch); facts about the user and their life " +
                 "(home or work address, family, birthdays, preferences, anything Gemini has saved); their past Gemini chats, Gems, Keep, YouTube, and Google Home. " +
-                "Billy's own notes below are partial: if they don't clearly answer a question about the user, use ask_my_gemini instead of saying you don't know."
+                "Billy's own notes below are partial: if they don't clearly answer a question about the user, use ask_my_gemini instead of saying you don't know. " +
+                "Never use it for general knowledge, science, news, or how-to questions: answer those yourself (with show_image for a picture of the subject)."
         }
         profileStore.promptContext(prompt)?.let {
             parts += (if (linked) "Billy's own notes about the user (partial): " else "What Billy knows about the user (use when relevant, don't recite): ") + it
@@ -213,6 +226,12 @@ class CompanionAgent(
 
     private companion object {
         const val PICKER_ANSWER = "BILLY_CLARIFICATION_ANSWER"
+
+        /** The user asked for their own photos ("my photo of...", "pictures I took", "a selfie"). */
+        val OWN_PHOTO_REQUEST = Regex(
+            """\b(my|our)\b[^.?!]{0,40}\b(photos?|pictures?|pics?|selfies?|snaps?)\b|\b(photos?|pictures?|pics?)\b[^.?!]{0,30}\b(of me|of us|i took|we took|i've taken|i have taken)\b|\b(do|did|have) (i|we) (have|take|taken)\b[^.?!]{0,40}\b(photos?|pictures?|pics?)\b|\b(last|latest|recent|newest|previous)\b[^.?!]{0,15}\b(photos?|pictures?|pics?|screenshots?)\b|\b(selfies?|screenshots?|camera roll|google photos)\b""",
+            RegexOption.IGNORE_CASE,
+        )
     }
 }
 

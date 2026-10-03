@@ -21,7 +21,8 @@ class MyGeminiCompanionTool(
             "Ask the user's own Gemini app account (gemini.google.com, signed in as them). It knows things your other tools can't reach: " +
                 "the user's Google Photos library (\"show me my photos from Paris\"), Gemini's saved info and past Gemini chats, their Gems, " +
                 "and Gemini's connections to Gmail, Drive, YouTube, YouTube Music, Google Home, and Keep. Use it for those, and when the user says \"ask Gemini\". " +
-                "Don't use it for things your own tools already do (timers, alarms, weather, calendar, texts, calls, searches). " +
+                "Don't use it for things your own tools already do (timers, alarms, weather, calendar, texts, calls, searches), " +
+                "or for general knowledge, science, news, or how-to questions. " +
                 "It's slower than your tools. If it returns an error, answer with your normal tools instead and don't dwell on the failure.",
         )
         .put(

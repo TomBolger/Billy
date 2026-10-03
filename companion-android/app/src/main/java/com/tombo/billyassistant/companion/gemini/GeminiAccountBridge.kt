@@ -196,7 +196,7 @@ object GeminiAccountBridge {
             return if (error == "signed_out") Reply.Failed("signed_out") else Reply.Failed(error.take(200))
         }
         val body = result.optString("body")
-        saveLastReply(context, body)
+        saveLastReply(context, question, body)
         runCatching { imageLogFile(context).delete() }
         val status = result.optInt("status")
         if (status != 200) {
@@ -234,8 +234,8 @@ object GeminiAccountBridge {
 
     private fun lastReplyFile(context: Context) = File(context.applicationContext.filesDir, "gemini-last-reply.txt")
 
-    private fun saveLastReply(context: Context, body: String) {
-        runCatching { lastReplyFile(context).writeText(body.take(400_000)) }
+    private fun saveLastReply(context: Context, question: String, body: String) {
+        runCatching { lastReplyFile(context).writeText("=== question sent ===\n$question\n\n=== raw reply ===\n" + body.take(400_000)) }
     }
 
     fun hasLastReply(context: Context) = lastReplyFile(context).exists()
