@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       photo_file:
-        description: 'Pin a Wikimedia Commons file for the photo scene (e.g. File:Example.jpg). Blank = pick automatically.'
+        description: 'Pin a Wikimedia Commons file for the photo scene (e.g. File:Example.jpg). Blank = the pinned default in fetch_photo.py.'
         required: false
         default: ''
   push:
@@ -48,8 +48,7 @@ jobs:
         run: |
           sed -i 's/#define ENABLE_FEATURE_STORE_SCREENSHOTS 0/#define ENABLE_FEATURE_STORE_SCREENSHOTS 1/' app/src/c/features.h
           grep -q 'ENABLE_FEATURE_STORE_SCREENSHOTS 1' app/src/c/features.h
-          set -o pipefail
-          cd app && yes | pebble build 2>&1 | tee ../shots/build.log
+          cd app && (yes | pebble build > ../shots/build.log 2>&1); tail -5 ../shots/build.log; test -f build/app.pbw
       - name: Capture
         run: |
           PLATFORMS=$(node -e "console.log(require('./app/package.json').pebble.targetPlatforms.join(' '))")

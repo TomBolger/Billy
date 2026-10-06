@@ -34,7 +34,9 @@ QUERIES = [
     "retriever",
     "dog",
 ]
-CAPTION = "Here's Mango at Priest Lake, July 2025."
+CAPTION = "Here's Mango at the Madison River, July 2025."
+# Chosen from the candidates: US Forest Service photo, public domain.
+DEFAULT_FILE = "File:Dog swimming in the Madison River-Custer Gallatin National Forest IMG 071722 (53282918378).jpg"
 NOT_PHOTOS = re.compile(r"painting|print|engraving|lithograph|drawing|oil on|\(BM |DPLA|National Trust|poster|illustration|map", re.I)
 FREE = re.compile(r"^(cc0|cc-zero|public domain|pd\b|pdm)", re.I)
 
@@ -95,7 +97,7 @@ def crop_4_3(img):
 def main():
     out = sys.argv[1]
     os.makedirs(os.path.join(out, "candidates"), exist_ok=True)
-    pinned = os.environ.get("PHOTO_FILE", "").strip()
+    pinned = os.environ.get("PHOTO_FILE", "").strip() or DEFAULT_FILE
     picks = []
     if pinned:
         picks = [p for p in map(usable, info_for([pinned])) if p]

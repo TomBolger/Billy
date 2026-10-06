@@ -28,7 +28,7 @@ function chat(text) {
 
 var SCENES = {
     photo: {
-        prompt: 'Show me my photo of Mango at the lake',
+        prompt: 'Show me my photo of Mango at the river',
         steps: function() {
             return [{FUNCTION: 'Searching your Google Photos'}, {$image: 'photo'}]
                 .concat(chat(assets.photoCaption || 'Here is Mango at the lake.'))
