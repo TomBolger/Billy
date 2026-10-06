@@ -18,6 +18,7 @@
 #include <pebble-events/pebble-events.h>
 
 #include "root_window.h"
+#include "features.h"
 #include "talking_horse_layer.h"
 #include "converse/session_window.h"
 #include "menus/root_menu.h"
@@ -201,6 +202,9 @@ static void prv_send_watch_ready(void) {
 static void prv_time_changed(struct tm *tick_time, TimeUnits time_changed, void *context) {
   RootWindow* rw = context;
   format_time(rw->time_string, sizeof(rw->time_string), tick_time);
+#if ENABLE_FEATURE_STORE_SCREENSHOTS
+  strncpy(rw->time_string, "9:41", sizeof(rw->time_string));
+#endif
   text_layer_set_text(rw->time_layer, rw->time_string);
   if (rw->talking_horse_overridden) {
     return;

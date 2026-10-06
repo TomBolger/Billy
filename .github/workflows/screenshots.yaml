@@ -33,7 +33,7 @@ jobs:
       - name: Install Pebble tool, SDK and emulator libraries
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libsdl1.2debian libfdt1 libpixman-1-0 libfreetype6 libglib2.0-0 xvfb faketime > /dev/null || true
+          sudo apt-get install -y -qq libsdl1.2debian libfdt1 libpixman-1-0 libfreetype6 libglib2.0-0 xvfb > /dev/null || true
           pip install --quiet pebble-tool pillow
           mkdir -p ~/.pebble-sdk && touch ~/.pebble-sdk/NO_TRACKING
           yes | pebble sdk install latest
@@ -53,12 +53,6 @@ jobs:
         run: |
           PLATFORMS=$(node -e "console.log(require('./app/package.json').pebble.targetPlatforms.join(' '))")
           echo "Platforms: $PLATFORMS"
-          # Show 9:41 on the watch clock.
-          # Only the emulator itself gets the fake clock; the Pebble tool needs the real one.
-          export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1
-          export FAKETIME="@2026-10-06 09:41:00"
-          export FAKETIME_DONT_FAKE_MONOTONIC=1
-          export FAKETIME_ONLY_CMDS=qemu-pebble
           xvfb-run -a bash tools/screenshots/capture.sh app/build/app.pbw shots $PLATFORMS 2>&1 | tee shots/capture.log
       - name: Package
         if: always()
