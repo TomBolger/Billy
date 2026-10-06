@@ -19,6 +19,11 @@
 // If true, instead of using dictation input, the app will just use a fixed prompt.
 #define ENABLE_FEATURE_FIXED_PROMPT 0
 
+// Store screenshot builds only (set by .github/workflows/screenshots.yaml):
+// skip the first-launch consent screens and release notes so the emulator
+// opens straight to the home screen.
+#define ENABLE_FEATURE_STORE_SCREENSHOTS 0
+
 // IFTTT: if you change this, you need to update the corresponding feature in src/pkjs/features.js.
 // If true, maps will be available.
 #define ENABLE_FEATURE_MAPS 1

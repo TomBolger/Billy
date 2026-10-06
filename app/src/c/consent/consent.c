@@ -75,7 +75,7 @@ void consent_window_push() {
 }
 
 bool must_present_consent() {
-#if ENABLE_FEATURE_FIXED_PROMPT
+#if ENABLE_FEATURE_FIXED_PROMPT || ENABLE_FEATURE_STORE_SCREENSHOTS
   return false;
 #endif
   return persist_read_int(PERSIST_KEY_CONSENTS_COMPLETED) < 1;

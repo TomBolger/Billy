@@ -15,6 +15,7 @@
  */
 
 #include "release_notes.h"
+#include "features.h"
 #include <pebble.h>
 
 #include "util/formatted_text_layer.h"
@@ -48,6 +49,9 @@ void prv_release_notes_push() {
 }
 
 void release_notes_maybe_push() {
+#if ENABLE_FEATURE_STORE_SCREENSHOTS
+  return;
+#endif
   if (version_is_updated() && !version_is_first_launch()) {
     BOBBY_LOG(APP_LOG_LEVEL_INFO, "Showing release notes");
     prv_release_notes_push();
