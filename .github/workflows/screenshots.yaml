@@ -53,6 +53,9 @@ jobs:
         run: |
           PLATFORMS=$(node -e "console.log(require('./app/package.json').pebble.targetPlatforms.join(' '))")
           echo "Platforms: $PLATFORMS"
+          # The watch takes its clock from this machine: show a tidy 9:41.
+          sudo timedatectl set-ntp false 2>/dev/null || true
+          sudo date -s "$(date +%Y-%m-%d) 09:41:00"
           xvfb-run -a bash tools/screenshots/capture.sh app/build/app.pbw shots $PLATFORMS 2>&1 | tee shots/capture.log
       - name: Package
         if: always()

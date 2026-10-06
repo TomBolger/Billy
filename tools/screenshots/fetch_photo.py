@@ -34,7 +34,7 @@ QUERIES = [
     "retriever",
     "dog",
 ]
-CAPTION = "Here's Mango at the Madison River, July 2025."
+CAPTION = "Mango, July 2025."
 # Chosen from the candidates: US Forest Service photo, public domain.
 DEFAULT_FILE = "File:Dog swimming in the Madison River-Custer Gallatin National Forest IMG 071722 (53282918378).jpg"
 NOT_PHOTOS = re.compile(r"painting|print|engraving|lithograph|drawing|oil on|\(BM |DPLA|National Trust|poster|illustration|map", re.I)

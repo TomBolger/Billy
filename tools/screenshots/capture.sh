@@ -34,12 +34,21 @@ for PLATFORM in "$@"; do
     if [ "$n" = 1 ]; then
       pebble emu-battery --emulator "$PLATFORM" --percent 80 || true
       pebble emu-bt-connection --emulator "$PLATFORM" --connected yes || true
+      pebble emu-time-format --emulator "$PLATFORM" --format 12h || true
     fi
     sleep "$wait_s"
-    pebble screenshot --emulator "$PLATFORM" --no-open "$OUT/$PLATFORM/$(printf %02d $n)-$name.png" || echo "screenshot failed"
-    # A later frame too, in case the answer was still arriving.
-    sleep 6
-    pebble screenshot --emulator "$PLATFORM" --no-open "$OUT/$PLATFORM/$(printf %02d $n)-$name-later.png" || true
+    base="$OUT/$PLATFORM/$(printf %02d $n)-$name"
+    pebble screenshot --emulator "$PLATFORM" --no-open "$base.png" || echo "screenshot failed"
+    if [ "$name" != home ]; then
+      # Other scroll positions, to pick the best framing.
+      pebble emu-button --emulator "$PLATFORM" click up || true; sleep 1.5
+      pebble screenshot --emulator "$PLATFORM" --no-open "$base-up1.png" || true
+      pebble emu-button --emulator "$PLATFORM" click up || true; sleep 1.5
+      pebble screenshot --emulator "$PLATFORM" --no-open "$base-up2.png" || true
+      for i in 1 2 3; do pebble emu-button --emulator "$PLATFORM" click down || true; sleep 1; done
+      sleep 0.5
+      pebble screenshot --emulator "$PLATFORM" --no-open "$base-down1.png" || true
+    fi
   done
   pebble kill || true
 done

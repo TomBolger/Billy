@@ -58,8 +58,8 @@ var SCENES = {
         steps: function() {
             return [
                 {FUNCTION: 'Checking your Gmail'},
-                {HIGHLIGHT_WIDGET: 1, HIGHLIGHT_WIDGET_PRIMARY: '6:45am', HIGHLIGHT_WIDGET_SECONDARY: 'Friday'}
-            ].concat(chat('Alaska 1342 leaves Spokane Friday at 6:45am from gate C7. Your confirmation is HX7Q2P.'))
+                {HIGHLIGHT_WIDGET: 1, HIGHLIGHT_WIDGET_PRIMARY: '6:45am', HIGHLIGHT_WIDGET_SECONDARY: 'Friday, GEG to DEN'}
+            ].concat(chat('From your Gmail: Alaska 1342, gate C7. You are checked in.'))
                 .concat([{CHAT_DONE: true}]);
         }
     },
@@ -78,7 +78,7 @@ var SCENES = {
                     WEATHER_WIDGET_DAY_ICON: 8,
                     WEATHER_WIDGET_DAY_OF_WEEK: 'Tonight'
                 }
-            ].concat(chat("Yes. It drops to 41°F by 10pm, so grab a warm layer."))
+            ].concat(chat("Yes, it drops to 41° by 10pm."))
                 .concat([{CHAT_DONE: true}]);
         }
     },

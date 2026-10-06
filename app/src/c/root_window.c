@@ -127,10 +127,15 @@ static void prv_window_appear(Window* window) {
   rw->talking_horse_layer = talking_horse_layer_create(GRect(0, time_height + 16, bounds.size.w - ACTION_BAR_WIDTH, bounds.size.h - time_height - 16));
   layer_add_child(window_get_root_layer(rw->window), (Layer *)rw->talking_horse_layer);
   rw->talking_horse_overridden = false;
+#if ENABLE_FEATURE_STORE_SCREENSHOTS
+  rw->talking_horse_overridden = true;
+  talking_horse_layer_set_text(rw->talking_horse_layer, "Ask me anything!");
+#else
   if (version_is_updated() || rand() < RAND_MAX / 10) {
     rw->talking_horse_overridden = true;
     talking_horse_layer_set_text(rw->talking_horse_layer, "Try holding select in chat!");
   }
+#endif
 
   VersionInfo version_info = version_get_current();
   snprintf(rw->version_string, sizeof(rw->version_string), "v%d.%d", version_info.major, version_info.minor);
