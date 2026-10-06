@@ -31,7 +31,7 @@ void bobby_status_bar_result_pane_config(StatusBarLayer *status_bar);
 // Round screens (chalk, gabbro): side margin and extra space at the top and
 // bottom of scrolling text, so lines can be scrolled into the wide middle.
 #if PBL_ROUND
-#define ROUND_SIDE_INSET (PBL_DISPLAY_WIDTH >= 260 ? 24 : 16)
+#define ROUND_SIDE_INSET (PBL_DISPLAY_WIDTH >= 260 ? 28 : 20)
 #define ROUND_END_PAD (PBL_DISPLAY_WIDTH >= 260 ? 36 : 26)
 #else
 #define ROUND_SIDE_INSET 0

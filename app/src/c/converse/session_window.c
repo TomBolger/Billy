@@ -37,7 +37,7 @@
 // Round screens: keep the chat inside the circle. Content starts lower and can
 // scroll up past the bottom edge, so every line reaches the wide middle.
 #if PBL_ROUND
-#define ROUND_INSET_X (PBL_DISPLAY_WIDTH >= 260 ? 22 : 14)
+#define ROUND_INSET_X (PBL_DISPLAY_WIDTH >= 260 ? 28 : 20)
 #define ROUND_PAD_TOP (PBL_DISPLAY_WIDTH >= 260 ? 22 : 16)
 #define ROUND_PAD_BOTTOM (PBL_DISPLAY_WIDTH >= 260 ? 44 : 34)
 #else
