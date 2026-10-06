@@ -28,10 +28,10 @@ function chat(text) {
 
 var SCENES = {
     photo: {
-        prompt: 'Show me the photo of me with Mango from last spring',
+        prompt: 'Show me my photo of Mango at the lake',
         steps: function() {
             return [{FUNCTION: 'Searching your Google Photos'}, {$image: 'photo'}]
-                .concat(chat(assets.photoCaption || 'Here you are with Mango, May 2025.'))
+                .concat(chat(assets.photoCaption || 'Here is Mango at the lake.'))
                 .concat([{CHAT_DONE: true}]);
         }
     },
