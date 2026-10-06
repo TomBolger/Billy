@@ -114,7 +114,17 @@ static void prv_window_appear(Window* window) {
 #else
   uint16_t time_height = 40;
 #endif
-  rw->time_layer = btext_layer_create(GRect(0, 5, bounds.size.w - ACTION_BAR_WIDTH, time_height));
+#if PBL_ROUND
+  // Keep everything inside the circle: pull in from the left and bottom edges.
+  const int16_t round_left = PBL_DISPLAY_WIDTH >= 260 ? 34 : 24;
+  const int16_t round_top = PBL_DISPLAY_WIDTH >= 260 ? 16 : 12;
+  const int16_t round_bottom = PBL_DISPLAY_WIDTH >= 260 ? 26 : 20;
+#else
+  const int16_t round_left = 0;
+  const int16_t round_top = 0;
+  const int16_t round_bottom = 0;
+#endif
+  rw->time_layer = btext_layer_create(GRect(round_left, 5 + round_top, bounds.size.w - ACTION_BAR_WIDTH - round_left, time_height));
   text_layer_set_text_alignment(rw->time_layer, GTextAlignmentCenter);
 #if PBL_DISPLAY_WIDTH >= 200
   text_layer_set_font(rw->time_layer, fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS));
@@ -124,7 +134,7 @@ static void prv_window_appear(Window* window) {
   text_layer_set_text(rw->time_layer, "12:34");
   text_layer_set_background_color(rw->time_layer, GColorClear);
   layer_add_child(window_get_root_layer(rw->window), (Layer *)rw->time_layer);
-  rw->talking_horse_layer = talking_horse_layer_create(GRect(0, time_height + 16, bounds.size.w - ACTION_BAR_WIDTH, bounds.size.h - time_height - 16));
+  rw->talking_horse_layer = talking_horse_layer_create(GRect(round_left, time_height + 16 + round_top, bounds.size.w - ACTION_BAR_WIDTH - round_left, bounds.size.h - time_height - 16 - round_top - round_bottom));
   layer_add_child(window_get_root_layer(rw->window), (Layer *)rw->talking_horse_layer);
   rw->talking_horse_overridden = false;
 #if ENABLE_FEATURE_STORE_SCREENSHOTS

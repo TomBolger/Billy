@@ -93,9 +93,9 @@ function watchImageSize() {
     case 'gabbro':
         return {width: 200, height: 160, color: true};
     case 'chalk':
-        return {width: 150, height: 120, color: true};
     case 'basalt':
-        return {width: 144, height: 110, color: true};
+        // 64 KB watches: a smaller colour picture leaves room for the chat.
+        return {width: 120, height: 90, color: true};
     default:
         return {width: 198, height: 150, color: true};
     }

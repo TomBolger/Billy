@@ -17,6 +17,7 @@
 #include "release_notes.h"
 #include "features.h"
 #include <pebble.h>
+#include "util/style.h"
 
 #include "util/formatted_text_layer.h"
 #include "util/logging.h"
@@ -73,13 +74,13 @@ static void prv_load(Window *window) {
   GRect bounds = layer_get_bounds(window_get_root_layer(window));
   ReleaseNotesWindowData *data = window_get_user_data(window);
   data->text = prv_create_release_notes();
-  data->text_layer = formatted_text_layer_create(GRect(5, 0, bounds.size.w - 10, 5000));
+  data->text_layer = formatted_text_layer_create(GRect(5 + ROUND_SIDE_INSET, ROUND_END_PAD, bounds.size.w - 10 - ROUND_SIDE_INSET * 2, 5000));
   formatted_text_layer_set_text(data->text_layer, data->text);
   GSize content_size = formatted_text_layer_get_content_size(data->text_layer);
-  layer_set_frame(data->text_layer, GRect(5, 0, bounds.size.w - 10, content_size.h + 10));
+  layer_set_frame(data->text_layer, GRect(5 + ROUND_SIDE_INSET, ROUND_END_PAD, bounds.size.w - 10 - ROUND_SIDE_INSET * 2, content_size.h + 10));
   data->scroll_layer = scroll_layer_create(GRect(0, 0, bounds.size.w, bounds.size.h));
   scroll_layer_set_shadow_hidden(data->scroll_layer, true);
-  scroll_layer_set_content_size(data->scroll_layer, layer_get_frame(data->text_layer).size);
+  scroll_layer_set_content_size(data->scroll_layer, GSize(bounds.size.w, content_size.h + 10 + ROUND_END_PAD * 2));
   scroll_layer_set_click_config_onto_window(data->scroll_layer, window);
   scroll_layer_add_child(data->scroll_layer, data->text_layer);
   layer_add_child(window_get_root_layer(window), scroll_layer_get_layer(data->scroll_layer));

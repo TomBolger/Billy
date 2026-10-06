@@ -105,10 +105,10 @@ static void prv_window_load(Window *window) {
   const FontsConfig *fonts = fonts_get_config();
   data->scroll_layer = bscroll_layer_create(window_bounds);
   scroll_layer_set_click_config_onto_window(data->scroll_layer, window);
-  data->title_layer = btext_layer_create(GRect(0, 0, window_bounds.size.w, 60));
+  data->title_layer = btext_layer_create(GRect(ROUND_SIDE_INSET, ROUND_END_PAD / 2, window_bounds.size.w - ROUND_SIDE_INSET * 2, 60));
   text_layer_set_text_alignment(data->title_layer, GTextAlignmentCenter);
   text_layer_set_font(data->title_layer, fonts->title_font);
-  data->text_layer = btext_layer_create(GRect(10, 30, window_bounds.size.w - 20, window_bounds.size.h - 30));
+  data->text_layer = btext_layer_create(GRect(10 + ROUND_SIDE_INSET, 30 + ROUND_END_PAD / 2, window_bounds.size.w - 20 - ROUND_SIDE_INSET * 2, window_bounds.size.h - 30));
   text_layer_set_font(data->text_layer, fonts->text_font);
   data->select_indicator_bitmap = bgbitmap_create_with_resource(RESOURCE_ID_BUTTON_INDICATOR);
   GRect select_indicator_size = gbitmap_get_bounds(data->select_indicator_bitmap);
@@ -194,16 +194,17 @@ static void prv_set_stage(Window* window, int stage) {
   data->stage = stage;
   GSize window_size = layer_get_frame(window_get_root_layer(window)).size;
   text_layer_set_text(data->title_layer, data->title_text);
-  text_layer_set_size(data->title_layer, GSize(window_size.w, 100));
+  const int16_t inner_w = window_size.w - ROUND_SIDE_INSET * 2;
+  text_layer_set_size(data->title_layer, GSize(inner_w, 100));
   GSize title_size = text_layer_get_content_size(data->title_layer);
-  title_size.h += 10;
-  text_layer_set_size(data->title_layer, GSize(window_size.w, title_size.h));
+  title_size.h += 10 + ROUND_END_PAD;
+  text_layer_set_size(data->title_layer, GSize(inner_w, title_size.h));
   text_layer_set_text(data->text_layer, data->current_text);
-  text_layer_set_size(data->text_layer, GSize(window_size.w - 20, 1000));
+  text_layer_set_size(data->text_layer, GSize(inner_w - 20, 1000));
   GSize text_size = text_layer_get_content_size(data->text_layer);
   text_size.h += 10;
-  layer_set_frame(text_layer_get_layer(data->text_layer), GRect(10, title_size.h, window_size.w - 20, text_size.h));
-  scroll_layer_set_content_size(data->scroll_layer, GSize(window_size.w, title_size.h + text_size.h));
+  layer_set_frame(text_layer_get_layer(data->text_layer), GRect(10 + ROUND_SIDE_INSET, title_size.h, inner_w - 20, text_size.h));
+  scroll_layer_set_content_size(data->scroll_layer, GSize(window_size.w, title_size.h + text_size.h + ROUND_END_PAD * 2));
   scroll_layer_set_content_offset(data->scroll_layer, GPoint(0, 0), false);
 }
 

@@ -33,6 +33,8 @@ for PLATFORM in "$@"; do
       echo "install attempt $attempt failed"; sleep 5
     done
     if [ "$n" = 1 ]; then
+      pebble logs --emulator "$PLATFORM" > "$OUT/watch-$PLATFORM.log" 2>&1 &
+      LOGS_PID=$!
       pebble emu-battery --emulator "$PLATFORM" --percent 80 || true
       pebble emu-bt-connection --emulator "$PLATFORM" --connected yes || true
       pebble emu-time-format --emulator "$PLATFORM" --format 12h || true
@@ -54,5 +56,6 @@ for PLATFORM in "$@"; do
       pebble screenshot --emulator "$PLATFORM" --no-open "$base-down1.png" || true
     fi
   done
+  kill $LOGS_PID 2>/dev/null || true
   pebble kill || true
 done
