@@ -104,12 +104,15 @@ exports.sendClarification = function(session, card) {
 exports.pickerOptionMaxChars = function() {
     var platform = '';
     try {
-        platform = Pebble && Pebble.platform ? Pebble.platform : '';
+        platform = Pebble.getActiveWatchInfo ? (Pebble.getActiveWatchInfo().platform || '') : '';
     } catch (e) {
         platform = '';
     }
     if (platform === 'emery') {
         return 28;
+    }
+    if (platform === 'gabbro') {
+        return 24;
     }
     if (platform === 'basalt') {
         return 20;

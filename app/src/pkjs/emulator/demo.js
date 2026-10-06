@@ -13,6 +13,7 @@ var imageManager = require('../lib/image_transfer').sharedManager;
 var decodeJpeg = require('../lib/jpeg_decoder');
 var pebbleImage = require('../lib/pebble_image');
 var assets = require('./demo_assets');
+var imageTool = require('../agent/image_tool');
 
 var CONTROL_URL = 'http://127.0.0.1:8765/scene';
 
@@ -118,7 +119,8 @@ function base64ToBytes(b64) {
 
 function sendPicture(name) {
     var decoded = decodeJpeg(base64ToBytes(assets[name]), {useTArray: true, formatAsRGBA: true, maxMemoryUsageInMB: 64});
-    var encoded = pebbleImage.encode(decoded.data, decoded.width, decoded.height, 198, 150, true);
+    var size = imageTool.watchImageSize();
+    var encoded = pebbleImage.encode(decoded.data, decoded.width, decoded.height, size.width, size.height, size.color);
     var imageId = imageManager.sendImage(encoded.width, encoded.height, encoded.bytes);
     setTimeout(function() {
         messageQueue.enqueue({MAP_WIDGET: 1, MAP_WIDGET_IMAGE_ID: imageId, MAP_WIDGET_USER_LOCATION: 0});

@@ -16,6 +16,7 @@ SCENES=(
   "flight 14"
   "weather 14"
   "timer 14"
+  "menu 6"
 )
 
 for PLATFORM in "$@"; do
@@ -37,9 +38,12 @@ for PLATFORM in "$@"; do
       pebble emu-time-format --emulator "$PLATFORM" --format 12h || true
     fi
     sleep "$wait_s"
+    if [ "$name" = menu ]; then
+      pebble emu-button --emulator "$PLATFORM" click down || true; sleep 2.5
+    fi
     base="$OUT/$PLATFORM/$(printf %02d $n)-$name"
     pebble screenshot --emulator "$PLATFORM" --no-open "$base.png" || echo "screenshot failed"
-    if [ "$name" != home ]; then
+    if [ "$name" != home ] && [ "$name" != menu ]; then
       # Other scroll positions, to pick the best framing.
       pebble emu-button --emulator "$PLATFORM" click up || true; sleep 1.5
       pebble screenshot --emulator "$PLATFORM" --no-open "$base-up1.png" || true

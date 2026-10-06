@@ -88,7 +88,10 @@ function watchImageSize() {
     switch (platform) {
     case 'aplite':
     case 'diorite':
+    case 'flint':
         return {width: 144, height: 110, color: false};
+    case 'gabbro':
+        return {width: 200, height: 160, color: true};
     case 'chalk':
         return {width: 150, height: 120, color: true};
     case 'basalt':
@@ -214,3 +217,5 @@ function request(url, type, callback) {
     };
     req.send();
 }
+
+exports.watchImageSize = watchImageSize;
