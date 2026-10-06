@@ -25,7 +25,14 @@ QUERIES = [
     "dog swimming lake",
     "labrador retriever lake",
     "dog on beach",
-    "dog hiking trail",
+    "dog lake",
+    "dog swimming",
+    "dog kayak",
+    "dog hiking",
+    "dog park",
+    "dog snow",
+    "retriever",
+    "dog",
 ]
 CAPTION = "Here's Mango at Priest Lake, July 2025."
 NOT_PHOTOS = re.compile(r"painting|print|engraving|lithograph|drawing|oil on|\(BM |DPLA|National Trust|poster|illustration|map", re.I)
@@ -49,7 +56,7 @@ def info_for(titles):
 
 def search(query):
     data = get({"action": "query", "format": "json", "list": "search", "srnamespace": 6,
-                "srsearch": query + " filetype:bitmap", "srlimit": 30})
+                "srsearch": query + " filetype:bitmap", "srlimit": 50})
     return [hit["title"] for hit in data.get("query", {}).get("search", [])]
 
 
@@ -60,7 +67,7 @@ def usable(page):
     if ii.get("mime") != "image/jpeg" or not FREE.match(lic.strip()) or NOT_PHOTOS.search(page["title"]):
         return None
     w, h = ii.get("width", 0), ii.get("height", 0)
-    if w < 600 or h < 450 or not (1.0 <= w / max(h, 1) <= 1.8):
+    if w < 500 or h < 375 or not (1.0 <= w / max(h, 1) <= 1.9):
         return None
     artist = re.sub("<[^>]+>", "", meta.get("Artist", {}).get("value", "")).strip()
     return {"title": page["title"], "thumb": ii.get("thumburl") or ii["url"], "license": lic,
@@ -95,6 +102,7 @@ def main():
     else:
         for q in QUERIES:
             titles = search(q)
+            print(q, "->", len(titles), "results")
             for i in range(0, len(titles), 25):
                 for page in info_for(titles[i:i + 25]):
                     p = usable(page)
@@ -103,6 +111,7 @@ def main():
                         picks.append(p)
             if len(picks) >= 16:
                 break
+    print("free picks:", len(picks))
     if not picks:
         sys.exit("No free photo found")
     listing = []

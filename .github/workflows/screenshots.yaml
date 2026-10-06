@@ -40,12 +40,16 @@ jobs:
       - name: Pick the demo photo
         env:
           PHOTO_FILE: ${{ github.event.inputs.photo_file }}
-        run: python3 tools/screenshots/fetch_photo.py shots
+        run: |
+          mkdir -p shots
+          set -o pipefail
+          python3 tools/screenshots/fetch_photo.py shots 2>&1 | tee shots/photo.log
       - name: Build screenshot PBW
         run: |
           sed -i 's/#define ENABLE_FEATURE_STORE_SCREENSHOTS 0/#define ENABLE_FEATURE_STORE_SCREENSHOTS 1/' app/src/c/features.h
           grep -q 'ENABLE_FEATURE_STORE_SCREENSHOTS 1' app/src/c/features.h
-          cd app && yes | pebble build
+          set -o pipefail
+          cd app && yes | pebble build 2>&1 | tee ../shots/build.log
       - name: Capture
         run: |
           PLATFORMS=$(node -e "console.log(require('./app/package.json').pebble.targetPlatforms.join(' '))")
@@ -60,7 +64,7 @@ jobs:
       - name: Package
         if: always()
         run: |
-          cd shots && ls -R
+          mkdir -p shots && cd shots && ls -R
           for d in */; do
             d=${d%/}
             [ "$d" = candidates ] && continue
@@ -82,4 +86,4 @@ jobs:
             candidate-*
             store-screenshots.zip
             shots/CREDITS.txt
-            shots/capture.log
+            shots/*.log
