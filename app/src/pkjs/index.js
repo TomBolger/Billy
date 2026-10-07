@@ -150,10 +150,11 @@ Pebble.addEventListener("ready",
             emulator_main.main();
             return;
         }
+        // Ordinary AI and the tool relay must work even when Timeline is unavailable.
+        main();
         Pebble.getTimelineToken(function(token) {
             console.log("Entering real mode.");
             session.userToken = token;
-            main();
         }, function(e) {
             console.log("Get timeline token failed???", e);
         })

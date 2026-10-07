@@ -59,7 +59,11 @@ function handleReminderMessage(data) {
   } else if (data.REMINDER_DELETE) {
     var id = data.REMINDER_DELETE;
     try {
-      reminders.deleteReminder(id);
+      reminders.deleteReminder(id, function(error) {
+        if (error) {
+          Pebble.showSimpleNotificationOnPebble('Reminder not deleted', error.message);
+        }
+      });
     } catch (err) {
       console.error('Failed to delete reminder:', err);
     }

@@ -21,15 +21,14 @@ exports.setReminder = function(session, message, callback) {
   var what = message['what'];
   
   try {
-    reminders.addReminder(what, when);
-    var unixTime = (new Date(when)).getTime() / 1000;
-    session.enqueue({ACTION_REMINDER_WAS_SET: unixTime});
-    
-    if (unixTime < (new Date()).getTime() / 1000 + 3600) {
-      callback({"status": "ok", "summary": "Reminder set.", "note_for_user": "Tell the user briefly: reminders less than an hour away may arrive late because of timeline sync delays."});
-    } else {
-      callback({"status": "ok"});
-    }
+    reminders.addReminder(what, when, function(error) {
+      if (error) { callback({status: 'error', error: error.message, summary: error.message}); return; }
+      var unixTime = new Date(when).getTime() / 1000;
+      session.enqueue({ACTION_REMINDER_WAS_SET: unixTime});
+      callback({status: 'ok', summary: 'Reminder set.',
+        note_for_user: unixTime < Date.now() / 1000 + 3600 ?
+          'Reminders less than an hour away may arrive late because of timeline sync delays.' : ''});
+    });
   } catch (err) {
     callback({"error": "Failed to set reminder: " + err.message});
   }
@@ -59,13 +58,11 @@ exports.deleteReminder = function(session, message, callback) {
   }
   
   try {
-    var success = reminders.deleteReminder(reminderId);
-    if (!success) {
-      callback({"error": "Reminder not found. Call get_reminders for current ids."});
-      return;
-    }
-    session.enqueue({ACTION_REMINDER_DELETED: 1});
-    callback({"status": "ok"});
+    reminders.deleteReminder(reminderId, function(error) {
+      if (error) { callback({status: 'error', error: error.message, summary: error.message}); return; }
+      session.enqueue({ACTION_REMINDER_DELETED: 1});
+      callback({status: 'ok', summary: 'Reminder deleted.'});
+    });
   } catch (err) {
     callback({"error": "Failed to delete reminder: " + err.message});
   }
