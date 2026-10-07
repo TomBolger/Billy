@@ -107,7 +107,7 @@ class CompanionAgent(
                     is PendingActions.Resolution.Unmatched -> Unit // dictated answer: let Gemini handle it
                 }
             }
-            userText = "My answer to your question \"${picked.question}\": ${picked.answer}"
+            userText = "My answer to your question \"${picked.question}\": ${picked.answer.substringBefore('|')}"
         }
 
         GeminiAccountBridge.warmUp(context)
@@ -220,7 +220,7 @@ class CompanionAgent(
         return PickerAnswer(
             context = fields["context"].orEmpty().trim(),
             question = fields["question"].orEmpty().trim(),
-            answer = fields["answer"].orEmpty().substringBefore('|').trim(),
+            answer = fields["answer"].orEmpty().trim(),
         )
     }
 

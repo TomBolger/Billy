@@ -208,7 +208,9 @@ private suspend fun DefaultPebbleSender.sendClarificationCard(
         if (option.equals(CLARIFICATION_DICTATE_OPTION, ignoreCase = true)) {
             CLARIFICATION_DICTATE_OPTION
         } else {
-            option.shortPickerLabel(optionMaxChars)
+            option.shortPickerLabel(optionMaxChars) + option.substringAfter("|", "").let {
+                if (it.startsWith("choice=")) "|$it" else ""
+            }
         }
     }
     val payload = mutableMapOf<UInt, PebbleDictionaryItem>(

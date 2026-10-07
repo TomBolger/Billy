@@ -36,28 +36,54 @@ object PendingActions {
         return ClarificationCard(
             question = question.take(220),
             context = CONTEXT_PREFIX + token,
-            options = kept.map { it.label } + listOfNotNull(cancelLabel),
+            options = kept.mapIndexed { index, choice -> "${choice.label.substringBefore("|")}|choice=$index" } +
+                listOfNotNull(cancelLabel?.let { "$it|choice=cancel" }),
         )
     }
 
     /** One-button confirmation: [actionLabel] runs [action], Cancel does nothing. */
     fun confirm(question: String, actionLabel: String, action: () -> PendingOutcome): ClarificationCard {
-        return offer(question, listOf(Choice(actionLabel, action)))
+        // Show all content on successive watch pages; Send exists only on the last page.
+        val pages = reviewPages(question)
+        fun page(index: Int): ClarificationCard {
+            val text = if (pages.size == 1) pages[index] else "${index + 1}/${pages.size}\n${pages[index]}"
+            return if (index == pages.lastIndex) {
+                offer(text, listOf(Choice(actionLabel, action)))
+            } else {
+                offer(text, listOf(Choice("Next") { PendingOutcome("", page(index + 1)) }))
+            }
+        }
+        return page(0)
+    }
+
+    internal fun reviewPages(text: String): List<String> {
+        val pages = mutableListOf<String>()
+        var offset = 0
+        while (offset < text.length) {
+            var end = minOf(offset + 190, text.length)
+            if (end < text.length && text[end - 1].isHighSurrogate()) end--
+            pages += text.substring(offset, end)
+            offset = end
+        }
+        return pages.ifEmpty { listOf("") }
     }
 
     fun resolve(token: String, answer: String): Resolution {
         val entry = entries.remove(token) ?: return Resolution.Expired
+        if (System.currentTimeMillis() - entry.createdAt > TTL_MS) return Resolution.Expired
         val clean = answer.substringBefore('|').trim()
-        if (entry.cancelLabel != null && clean.equals(entry.cancelLabel, ignoreCase = true)) {
+        val id = answer.substringAfter("|choice=", "")
+        if (id == "cancel" || (id.isEmpty() && entry.cancelLabel != null && clean.equals(entry.cancelLabel, ignoreCase = true))) {
             return Resolution.Cancelled
         }
-        val choice = entry.choices.firstOrNull { it.label.matchesPickerAnswer(clean) }
-            ?: entry.choices.firstOrNull { clean.isNotBlank() && it.label.contains(clean, ignoreCase = true) }
-        return if (choice != null) {
-            Resolution.Run(choice.run)
+        val choice = if (id.isNotEmpty()) {
+            id.toIntOrNull()?.let { entry.choices.getOrNull(it) }
         } else {
-            Resolution.Unmatched(entry.question, entry.choices.map { it.label })
+            // Dictation may select a unique full label. Never guess from a shortened prefix.
+            entry.choices.filter { it.label.substringBefore('|').trim().equals(clean, ignoreCase = true) }.singleOrNull()
         }
+        return if (choice != null) Resolution.Run(choice.run)
+        else Resolution.Unmatched(entry.question, entry.choices.map { it.label })
     }
 
     private fun prune() {
