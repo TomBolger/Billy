@@ -124,7 +124,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         try {
             sender.sendThreadId(threadId, watch)
             sender.sendFunction("Thinking...", watch)
-            val relay = WatchToolRelay(this, watch)
+            val relay = WatchToolRelay(this, watch, requestId)
             val result = withTimeoutOrNull(REMOTE_TIMEOUT_MS) {
                 withContext(Dispatchers.IO) {
                     CompanionAgent(

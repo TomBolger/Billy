@@ -105,6 +105,7 @@ Session.prototype.processWidget = function(widgetData) {
 }
 
 Session.prototype.enqueue = function(message) {
+    if (this.obsolete) { return; }
     if (this.androidRequestId) { message.RESPONSE_REQUEST_ID = this.androidRequestId; }
     messageQueue.enqueue(message);
 }

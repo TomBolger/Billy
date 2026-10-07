@@ -28,12 +28,14 @@ import java.util.concurrent.TimeoutException
 class WatchToolRelay(
     private val context: Context,
     private val watch: WatchIdentifier,
+    private val requestId: Int? = null,
 ) {
     fun call(name: String, args: JSONObject, timeoutMs: Long = DEFAULT_TIMEOUT_MS): JSONObject {
         val id = UUID.randomUUID().toString().substring(0, 8)
         val payload = JSONObject()
             .put("id", id)
             .put("name", name)
+            .put("request_id", requestId)
             .put("args", args)
             .toString()
         if (payload.length > MAX_PAYLOAD_CHARS) {
@@ -45,7 +47,10 @@ class WatchToolRelay(
             try {
                 val results = sender.sendDataToPebble(
                     BillyPebbleProtocol.APP_UUID,
-                    mapOf(BillyPebbleProtocol.JS_TOOL_REQUEST to PebbleDictionaryItem.Text(payload)),
+                    buildMap {
+                        put(BillyPebbleProtocol.JS_TOOL_REQUEST, PebbleDictionaryItem.Text(payload))
+                        requestId?.let { put(BillyPebbleProtocol.RESPONSE_REQUEST_ID, PebbleDictionaryItem.UInt32(it.toUInt())) }
+                    },
                     listOf(watch),
                 )
                 results?.values?.all { it is TransmissionResult.Success } ?: false

@@ -93,7 +93,7 @@ function claimWaitMs(runtime) {
 exports.run = function(session) {
     var runtime = config.getAssistantRuntime();
     session.shouldStandDown = function() {
-        return runtime !== config.RUNTIME_COMPANIONLESS && isClaimed(session.androidRequestId);
+        return !!session.obsolete || (runtime !== config.RUNTIME_COMPANIONLESS && isClaimed(session.androidRequestId));
     };
     if (runtime === config.RUNTIME_COMPANIONLESS || !normalizeRequestId(session.androidRequestId)) {
         new CompanionlessRuntime(session).run();

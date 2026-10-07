@@ -83,6 +83,7 @@ function doQuotaWarning() {
 }
 
 var handledPrompts = {};
+var currentSession = null;
 
 function handleAppMessage(e) {
     console.log("Inbound app message!");
@@ -112,6 +113,8 @@ function handleAppMessage(e) {
         }
         console.log("Starting a new Session...");
         var s = new session.Session(data.PROMPT, data.THREAD_ID, data.ANDROID_REQUEST_ID);
+        if (currentSession) { currentSession.obsolete = true; }
+        currentSession = s;
         s.run();
         return;
     }

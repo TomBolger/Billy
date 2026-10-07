@@ -39,6 +39,9 @@ struct AlarmManager {
 };
 
 AlarmManager s_manager;
+static uint32_t s_command_sequence;
+static uint32_t s_completed_sequence;
+static StatusCode s_completed_result;
 
 static void prv_load_alarms();
 static void prv_save_alarms();
@@ -451,6 +454,14 @@ static void prv_handle_cancel_alarm_request(DictionaryIterator* iterator, void* 
 }
 
 static void prv_handle_app_message_inbox_received(DictionaryIterator *iterator, void *context) {
+  if (!conversation_manager_accepts_response(iterator)) { return; }
+  Tuple *sequence = dict_find(iterator, MESSAGE_KEY_TRANSPORT_SEQUENCE);
+  s_command_sequence = sequence ? sequence->value->uint32 : 0;
+  if (s_command_sequence && s_command_sequence == s_completed_sequence &&
+      (dict_find(iterator, MESSAGE_KEY_SET_ALARM_TIME) || dict_find(iterator, MESSAGE_KEY_CANCEL_ALARM_TIME))) {
+    prv_send_alarm_response(s_completed_result);
+    return;
+  }
   Tuple* tuple = dict_find(iterator, MESSAGE_KEY_SET_ALARM_TIME);
   if (tuple != NULL) {
     prv_handle_set_alarm_request(iterator, context);
@@ -467,6 +478,10 @@ static void prv_handle_app_message_inbox_received(DictionaryIterator *iterator, 
 }
 
 static void prv_send_alarm_response(StatusCode response) {
+  if (s_command_sequence) {
+    s_completed_sequence = s_command_sequence;
+    s_completed_result = response;
+  }
   DictionaryIterator *iter;
   AppMessageResult result = app_message_outbox_begin(&iter);
   if (result != APP_MSG_OK) {

@@ -21,13 +21,15 @@ var uiTools = require('./ui_tools');
 
 var MAX_RESULT_CHARS = 900;
 var handled = {};
+var pending = {};
 
-function relaySession() {
+function relaySession(requestId) {
     return {
         prompt: '',
         // Progress text is owned by the companion's conversation.
         handleMessage: function() {},
         enqueue: function(message) {
+            if (requestId) { message.RESPONSE_REQUEST_ID = requestId; }
             messageQueue.enqueue(message);
         }
     };
@@ -78,22 +80,27 @@ exports.handleRequest = function(raw) {
     if (!id) {
         return;
     }
+    if (pending[id]) { return; }
     if (handled[id]) {
         // The watch retried a bounce; answer again without re-running the tool.
         reply(id, handled[id]);
         return;
     }
+    pending[id] = true;
     var name = String(request.name || '');
     console.log('Relay tool request ' + id + ': ' + name);
     var done = function(result) {
+        delete pending[id];
         handled[id] = result;
+        if (Object.keys(handled).length > 128) { delete handled[Object.keys(handled)[0]]; }
         reply(id, result);
     };
     if (watchTools.handles(name)) {
-        watchTools.execute(relaySession(), name, request.args || {}, done);
+        watchTools.execute(relaySession(request.request_id), name, request.args || {}, done);
     } else if (name === 'show_number') {
-        uiTools.execute(relaySession(), name, request.args || {}, done);
+        uiTools.execute(relaySession(request.request_id), name, request.args || {}, done);
     } else {
+        delete pending[id];
         reply(id, {status: 'error', summary: 'The phone cannot run ' + name + '.'});
     }
 };
