@@ -238,6 +238,7 @@ static void prv_handle_image_complete(int image_id) {
     BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Got complete for unknown image id %d", image_id);
     return;
   }
+  if (image->status == ImageStatusCompleted) { return; }
   if (!image->data) {
     BOBBY_LOG(APP_LOG_LEVEL_INFO, "Got complete for image we couldn't allocate; destroying.");
     prv_destroy_image(image);
