@@ -1,14 +1,13 @@
 name: Release
 
-# Publishing a GitHub release tagged like v0.5 (or pushing such a tag) builds
-# the watch app and Billy Companion from that tag and attaches them, with notes
-# from release-notes/<tag>.md.
+# Adding or editing release-notes/v<version>.md (version from app/package.json)
+# builds the watch app and Billy Companion and publishes them as the GitHub
+# release v<version>, creating the tag. Can also be run by hand from Actions.
 on:
-  release:
-    types: [published]
   push:
-    tags:
-      - 'v*'
+    paths:
+      - 'release-notes/**'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -28,14 +27,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Check versions match the tag
+      - name: Read version
+        id: version
         run: |
-          TAG=${GITHUB_REF_NAME#v}
-          PBW_VERSION=$(node -e "console.log(require('./app/package.json').version)")
+          V=$(node -e "console.log(require('./app/package.json').version)")
           APK_VERSION=$(grep -oP 'versionName = "\K[^"]+' companion-android/app/build.gradle.kts)
-          echo "tag=$TAG pbw=$PBW_VERSION apk=$APK_VERSION"
-          test "$TAG" = "$PBW_VERSION" && test "$TAG" = "$APK_VERSION"
-          test -f "release-notes/${GITHUB_REF_NAME}.md"
+          echo "watch=$V companion=$APK_VERSION"
+          test "$V" = "$APK_VERSION"
+          test -f "release-notes/v$V.md"
+          echo "v=$V" >> "$GITHUB_OUTPUT"
       - name: Install Pebble tool and SDK
         run: |
           sudo apt-get update -qq
@@ -56,7 +56,7 @@ jobs:
           cd companion-android && chmod +x gradlew && ./gradlew --no-daemon testDebugUnitTest assembleDebug
       - name: Name files
         run: |
-          V=${GITHUB_REF_NAME#v}
+          V=${{ steps.version.outputs.v }}
           mkdir out
           cp app/build/app.pbw "out/Billy-$V.pbw"
           cp companion-android/app/build/outputs/apk/debug/*.apk "out/BillyCompanion-$V.apk"
@@ -64,7 +64,9 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          name: Billy ${{ github.ref_name }}
-          body_path: release-notes/${{ github.ref_name }}.md
+          tag_name: v${{ steps.version.outputs.v }}
+          target_commitish: ${{ github.sha }}
+          name: Billy ${{ steps.version.outputs.v }}
+          body_path: release-notes/v${{ steps.version.outputs.v }}.md
           make_latest: true
           files: out/*
