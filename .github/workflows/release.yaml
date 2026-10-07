@@ -1,8 +1,11 @@
 name: Release
 
-# Push a tag like v0.5 to build the watch app and Billy Companion and publish
-# them as a GitHub release, with notes from release-notes/<tag>.md.
+# Publishing a GitHub release tagged like v0.5 (or pushing such a tag) builds
+# the watch app and Billy Companion from that tag and attaches them, with notes
+# from release-notes/<tag>.md.
 on:
+  release:
+    types: [published]
   push:
     tags:
       - 'v*'
