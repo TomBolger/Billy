@@ -60,7 +60,7 @@ object PendingActions {
         val pages = mutableListOf<String>()
         var offset = 0
         while (offset < text.length) {
-            var end = minOf(offset + 190, text.length)
+            var end = minOf(offset + 70, text.length)
             if (end < text.length && text[end - 1].isHighSurrogate()) end--
             pages += text.substring(offset, end)
             offset = end
