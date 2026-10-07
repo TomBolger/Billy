@@ -30,7 +30,9 @@ jobs:
           mkdir -p ~/.pebble-sdk && touch ~/.pebble-sdk/NO_TRACKING
           yes | pebble sdk install latest
       - name: Offline agent tests
-        run: node tools/pkjs-tests/agent.test.js
+        run: |
+          node tools/pkjs-tests/agent.test.js
+          node tools/pkjs-tests/delivery.test.js
       - name: Build PBW
         run: cd app && yes | pebble build
       - name: Upload PBW
@@ -52,7 +54,7 @@ jobs:
         run: |
           test -f companion-android/debug.keystore || { echo "debug.keystore missing"; exit 1; }
           echo "sdk.dir=$ANDROID_HOME" > companion-android/local.properties
-          cd companion-android && chmod +x gradlew && ./gradlew --no-daemon assembleDebug
+          cd companion-android && chmod +x gradlew && ./gradlew --no-daemon testDebugUnitTest assembleDebug
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

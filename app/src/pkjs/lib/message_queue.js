@@ -21,6 +21,8 @@ function MessageQueue() {
     this.log = null;
     this.messagesInFlight = 0;
     this.bytesInFlight = 0;
+    this.retryTimer = null;
+    this.nextSequence = (Date.now() % 1000000000) + 1;
 }
 
 function countBytes(message) {
@@ -58,48 +60,50 @@ MessageQueue.prototype.getLog = function() {
 }
 
 MessageQueue.prototype.enqueue = function(message) {
-    if (this.log) {
-        this.log.push(message);
-    }
-    this.queue.push(message);
-    if (this.messagesInFlight < 6 && this.bytesInFlight < MAX_BYTES_IN_FLIGHT) {
-        console.log('sending immediately, messages in flight: ' + this.messagesInFlight + ', bytes in flight: ' + this.bytesInFlight);
-        this.dequeue();
-    } else {
-        console.log('enqueued, queue length: ' + this.queue.length + ', bytes: ' + this.bytesInFlight);
-    }
-}
+    var packet = {};
+    Object.keys(message).forEach(function(key) { packet[key] = message[key]; });
+    packet.TRANSPORT_SEQUENCE = this.nextSequence++;
+    if (this.nextSequence >= 2147483647) { this.nextSequence = 1; }
+    if (this.log) { this.log.push(packet); }
+    this.queue.push({message: packet, attempts: 0});
+    this.dequeue();
+};
 
 MessageQueue.prototype.dequeue = function() {
-    var m = this.queue.shift();
-    var mSize = countBytes(m);
-    console.log('sending message, remaining: ' + this.queue.length + ', bytes in flight: ' + this.bytesInFlight);
-    this.messagesInFlight++;
-    this.bytesInFlight += mSize;
-    Pebble.sendAppMessage(m, (function() {
-        this.messagesInFlight--;
-        this.bytesInFlight -= mSize;
-        console.log('sent successfully');
-        if (this.queue.length > 0) {
-            if (this.bytesInFlight > MAX_BYTES_IN_FLIGHT) {
-                console.log('still too many bytes in flight (' + this.bytesInFlight + '), waiting');
-            } else {
-                console.log('next');
-                this.dequeue();
-            }
-        } else {
-            console.log('done');
+    if (this.messagesInFlight || this.retryTimer || !this.queue.length) { return; }
+    var item = this.queue[0];
+    var self = this;
+    this.messagesInFlight = 1;
+    this.bytesInFlight = countBytes(item.message);
+    item.attempts++;
+    Pebble.sendAppMessage(item.message, function() {
+        self.messagesInFlight = 0;
+        self.bytesInFlight = 0;
+        self.queue.shift();
+        self.dequeue();
+    }, function() {
+        self.messagesInFlight = 0;
+        self.bytesInFlight = 0;
+        if (item.attempts < 4) {
+            self.retryTimer = setTimeout(function() {
+                self.retryTimer = null;
+                self.dequeue();
+            }, 100 * item.attempts);
+            return;
         }
-    }).bind(this), (function() {
-        this.messagesInFlight--;
-        this.bytesInFlight -= mSize;
-        console.log('failed, message lost. carrying on shortly.');
-        setTimeout(function() {
-            if (this.queue.length > 0) {
-                this.dequeue();
+        self.queue.shift();
+        console.log('Watch packet failed after four attempts.');
+        var request = item.message.RESPONSE_REQUEST_ID;
+        if (request) {
+            // Do not complete an answer with a missing fragment or image chunk.
+            self.queue = self.queue.filter(function(next) { return next.message.RESPONSE_REQUEST_ID !== request; });
+            if (!item.message.WARNING) {
+                self.enqueue({RESPONSE_REQUEST_ID: request, WARNING: 'Watch connection interrupted. Please ask again.'});
+                self.enqueue({RESPONSE_REQUEST_ID: request, CHAT_DONE: true});
             }
-        }.bind(this), 10);
-    }).bind(this));
-}
+        }
+        self.dequeue();
+    });
+};
 
 exports.Queue = new MessageQueue();

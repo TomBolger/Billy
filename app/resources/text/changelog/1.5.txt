@@ -1,5 +1,5 @@
-# Billy 0.1
-This is the first public Billy release.
+# Billy 0.5
+This test release improves message delivery, action confirmation, and reminder reliability.
 ## Personal Gemini
 Billy can use your own Gemini API key directly from the Pebble phone app, or through the optional Android companion.
 ## Optional Android Companion

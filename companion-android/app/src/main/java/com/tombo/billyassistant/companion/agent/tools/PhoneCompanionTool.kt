@@ -159,7 +159,7 @@ class PhoneCompanionTool(private val context: Context) : CompanionTool {
         if (message.isEmpty()) return CompanionToolExecution(GoogleAccess.error("What should the message say?"))
         if (!granted(Manifest.permission.SEND_SMS)) return CompanionToolExecution(needs("Text messages"))
         return withRecipient(args.optString("to"), verb = "Text") { match ->
-            PendingActions.confirm("Text ${match.name}:\n\"${message.take(150)}\"", "Send") {
+            PendingActions.confirm("Text ${match.name} (${match.number}):\n\"${message}\"", "Send") {
                 PendingOutcome(
                     runCatching {
                         @Suppress("DEPRECATION")
@@ -252,7 +252,7 @@ class PhoneCompanionTool(private val context: Context) : CompanionTool {
         } ?: return CompanionToolExecution(
             GoogleAccess.error("I don't see a recent message from \"$to\" that I can reply to. Use send_text_message for SMS."),
         )
-        val card = PendingActions.confirm("Reply to ${target.title} (${target.app}):\n\"${message.take(150)}\"", "Send") {
+        val card = PendingActions.confirm("Reply to ${target.title} (${target.app}):\n\"${message}\"", "Send") {
             PendingOutcome(
                 if (BillyNotificationListener.reply(context, target, message)) "Replied to ${target.title}." else "That conversation can't be replied to anymore.",
             )

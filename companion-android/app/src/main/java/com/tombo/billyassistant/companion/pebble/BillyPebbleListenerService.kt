@@ -23,6 +23,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import io.rebble.pebblekit2.common.model.TransmissionResult
 
 private const val CLARIFICATION_DICTATE_OPTION = "Dictate..."
 
@@ -89,8 +93,14 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         Log.d(TAG, "Answering Billy prompt: $prompt runtime=$runtime model=$model")
         // Acknowledge now and answer in the background. Holding the ack for the
         // whole answer made the watch think the send failed and resend the prompt.
+        val key = watch.toString() + ":" + requestId
+        val now = System.currentTimeMillis()
+        seenRequests.entries.removeIf { now - it.value > 600_000L }
+        if (requestId != null && seenRequests.putIfAbsent(key, now) != null) return ReceiveResult.Ack
+        val generation = UUID.randomUUID().toString()
+        currentRequests[watch.toString()] = generation
         agentScope.launch {
-            answerPrompt(prompt, watch, watchMediaSpec, model, threadId)
+            answerPrompt(prompt, watch, watchMediaSpec, model, threadId, requestId, generation)
         }
         return ReceiveResult.Ack
     }
@@ -101,20 +111,36 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         watchMediaSpec: WatchMediaSpec,
         model: String?,
         threadId: String,
+        requestId: Int?,
+        generation: String,
     ) {
-        val sender = DefaultPebbleSender(this)
+        val deadline = android.os.SystemClock.elapsedRealtime() + REMOTE_TIMEOUT_MS
+        val checkOwner = {
+            if (currentRequests[watch.toString()] != generation) {
+                throw CancellationException("Request superseded")
+            }
+        }
+        val checkCurrent = {
+            checkOwner()
+            if (android.os.SystemClock.elapsedRealtime() > deadline) {
+                throw CancellationException("Request expired")
+            }
+        }
+        // An expired request must still be able to deliver its timeout warning.
+        val sender = ResponseSender(DefaultPebbleSender(this), requestId, checkOwner)
         try {
             sender.sendThreadId(threadId, watch)
             sender.sendFunction("Thinking...", watch)
-            val relay = WatchToolRelay(this, watch)
+            val relay = WatchToolRelay(this, watch, requestId)
             val result = withTimeoutOrNull(REMOTE_TIMEOUT_MS) {
                 withContext(Dispatchers.IO) {
                     CompanionAgent(
                         context = this@BillyPebbleListenerService,
-                        geminiClient = GeminiClient(model),
+                        geminiClient = GeminiClient(model, checkCurrent),
                         watchMediaSpec = watchMediaSpec,
                         threadId = threadId,
-                        watchToolRelay = { name, args -> relay.call(name, args) },
+                        checkActive = checkCurrent,
+                        watchToolRelay = { name, args -> checkCurrent(); relay.call(name, args) },
                     ).answer(prompt)
                 }
             }
@@ -142,6 +168,15 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
                     sender.sendDone(watch)
                 }
             }
+        } catch (e: CancellationException) {
+            // Only the request that still owns the watch may report a timeout.
+            if (currentRequests[watch.toString()] == generation) {
+                runCatching {
+                    sender.sendWarning("That took too long. Please try again.", watch)
+                    sender.sendDone(watch)
+                }
+            }
+            Log.d(TAG, "Stopped obsolete or expired request")
         } catch (e: Exception) {
             Log.e(TAG, "Answering prompt failed", e)
             runCatching {
@@ -162,6 +197,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
 
     override fun onAppClosed(watchappUUID: UUID, watch: WatchIdentifier) {
         if (watchappUUID == BillyPebbleProtocol.APP_UUID) {
+            currentRequests.remove(watch.toString())
             Log.d(TAG, "Billy closed on $watch")
         }
     }
@@ -174,6 +210,8 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
 
         // Outlives individual binder calls so an answer in progress is not
         // cancelled when the Pebble app's request returns.
+        private val seenRequests = ConcurrentHashMap<String, Long>()
+        private val currentRequests = ConcurrentHashMap<String, String>()
         private val agentScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }
 }
@@ -192,7 +230,7 @@ private fun PebbleDictionary.intValue(key: UInt): Int? {
     }
 }
 
-private suspend fun DefaultPebbleSender.sendClarificationCard(
+private suspend fun ResponseSender.sendClarificationCard(
     card: ClarificationCard,
     watch: WatchIdentifier,
     optionMaxChars: Int,
@@ -208,7 +246,9 @@ private suspend fun DefaultPebbleSender.sendClarificationCard(
         if (option.equals(CLARIFICATION_DICTATE_OPTION, ignoreCase = true)) {
             CLARIFICATION_DICTATE_OPTION
         } else {
-            option.shortPickerLabel(optionMaxChars)
+            option.shortPickerLabel(optionMaxChars) + option.substringAfter("|", "").let {
+                if (it.startsWith("choice=")) "|$it" else ""
+            }
         }
     }
     val payload = mutableMapOf<UInt, PebbleDictionaryItem>(
@@ -223,7 +263,7 @@ private suspend fun DefaultPebbleSender.sendClarificationCard(
     sendDataToPebble(BillyPebbleProtocol.APP_UUID, payload, listOf(watch))
 }
 
-private suspend fun DefaultPebbleSender.sendWeatherCurrent(weather: WatchWeatherCurrent, watch: WatchIdentifier) {
+private suspend fun ResponseSender.sendWeatherCurrent(weather: WatchWeatherCurrent, watch: WatchIdentifier) {
     sendDataToPebble(
         BillyPebbleProtocol.APP_UUID,
         mapOf(
@@ -259,7 +299,7 @@ private suspend fun DefaultPebbleSender.sendAndroidCompanionReady(watch: WatchId
     sendDataToPebble(BillyPebbleProtocol.APP_UUID, payload, listOf(watch))
 }
 
-private suspend fun DefaultPebbleSender.sendFunction(text: String, watch: WatchIdentifier) {
+private suspend fun ResponseSender.sendFunction(text: String, watch: WatchIdentifier) {
     sendDataToPebble(
         BillyPebbleProtocol.APP_UUID,
         mapOf(BillyPebbleProtocol.FUNCTION to PebbleDictionaryItem.Text(text)),
@@ -267,7 +307,7 @@ private suspend fun DefaultPebbleSender.sendFunction(text: String, watch: WatchI
     )
 }
 
-private suspend fun DefaultPebbleSender.sendThreadId(threadId: String, watch: WatchIdentifier) {
+private suspend fun ResponseSender.sendThreadId(threadId: String, watch: WatchIdentifier) {
     sendDataToPebble(
         BillyPebbleProtocol.APP_UUID,
         mapOf(BillyPebbleProtocol.THREAD_ID to PebbleDictionaryItem.Text(threadId)),
@@ -275,7 +315,7 @@ private suspend fun DefaultPebbleSender.sendThreadId(threadId: String, watch: Wa
     )
 }
 
-private suspend fun DefaultPebbleSender.sendWarning(text: String, watch: WatchIdentifier) {
+private suspend fun ResponseSender.sendWarning(text: String, watch: WatchIdentifier) {
     sendDataToPebble(
         BillyPebbleProtocol.APP_UUID,
         mapOf(BillyPebbleProtocol.WARNING to PebbleDictionaryItem.Text(text.forWatch().take(180))),
@@ -283,7 +323,7 @@ private suspend fun DefaultPebbleSender.sendWarning(text: String, watch: WatchId
     )
 }
 
-private suspend fun DefaultPebbleSender.sendDone(watch: WatchIdentifier) {
+private suspend fun ResponseSender.sendDone(watch: WatchIdentifier) {
     sendDataToPebble(
         BillyPebbleProtocol.APP_UUID,
         mapOf(BillyPebbleProtocol.CHAT_DONE to PebbleDictionaryItem.UInt8(1)),
@@ -291,7 +331,7 @@ private suspend fun DefaultPebbleSender.sendDone(watch: WatchIdentifier) {
     )
 }
 
-private suspend fun DefaultPebbleSender.sendChunks(text: String, watch: WatchIdentifier) {
+private suspend fun ResponseSender.sendChunks(text: String, watch: WatchIdentifier) {
     val normalized = text.forWatch().replace('\u202f', ' ')
     var index = 0
     while (index < normalized.length) {
@@ -305,7 +345,7 @@ private suspend fun DefaultPebbleSender.sendChunks(text: String, watch: WatchIde
     }
 }
 
-private suspend fun DefaultPebbleSender.sendWatchImage(image: WatchImage, watch: WatchIdentifier) {
+private suspend fun ResponseSender.sendWatchImage(image: WatchImage, watch: WatchIdentifier) {
     val imageId = BillyPebbleProtocol.nextImageId()
     sendDataToPebble(
         BillyPebbleProtocol.APP_UUID,
@@ -448,6 +488,32 @@ object BillyPebbleProtocol {
     val ANDROID_REQUEST_ID: UInt = 10125u
     val JS_TOOL_REQUEST: UInt = 10126u
     val JS_TOOL_RESULT: UInt = 10127u
+    val RESPONSE_REQUEST_ID: UInt = 10129u
+    val TRANSPORT_SEQUENCE: UInt = 10130u
 
     fun nextImageId(): Int = imageIds.getAndIncrement()
+}
+
+/** Retries ordered response packets using a stable sequence for watch-side deduplication. */
+private class ResponseSender(
+    private val sender: DefaultPebbleSender,
+    private val requestId: Int?,
+    private val checkCurrent: () -> Unit,
+) {
+    suspend fun sendDataToPebble(uuid: UUID, data: Map<UInt, PebbleDictionaryItem>, watches: List<WatchIdentifier>) {
+        val tagged = data.toMutableMap()
+        requestId?.let { tagged[BillyPebbleProtocol.RESPONSE_REQUEST_ID] = PebbleDictionaryItem.UInt32(it.toUInt()) }
+        tagged[BillyPebbleProtocol.TRANSPORT_SEQUENCE] = PebbleDictionaryItem.Int32(sequences.getAndDecrement())
+        repeat(4) { attempt ->
+            checkCurrent()
+            val results = sender.sendDataToPebble(uuid, tagged, watches)
+            if (results != null && results.isNotEmpty() && results.values.all { it is TransmissionResult.Success }) return
+            if (attempt < 3) delay(100L * (attempt + 1))
+        }
+        throw IllegalStateException("Watch transmission failed after retries")
+    }
+    fun close() = sender.close()
+    companion object {
+        private val sequences = AtomicInteger(-((System.currentTimeMillis() % 1_000_000_000).toInt() + 1))
+    }
 }

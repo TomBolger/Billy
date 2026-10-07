@@ -308,7 +308,7 @@ class GoogleWorkspaceCompanionTool(
         val to = response.optString("to")
         val subject = response.optString("subject")
         val body = response.optString("body")
-        val question = "Email $to\nSubject: ${subject.ifBlank { "(none)" }}\n${body.take(120)}"
+        val question = "Email $to\nSubject: ${subject.ifBlank { "(none)" }}\n${body}"
         val card = PendingActions.confirm(question, "Send") {
             PendingOutcome(
                 when (val sent = gmailApiTools.sendMessage(to = to, subject = subject, body = body)) {

@@ -28,6 +28,8 @@ var runtimeRouter = require('./agent/runtime_router');
 var relay = require('./agent/relay');
 
 
+// Keep setup's version label in sync with the PBW metadata.
+clayConfig[0].defaultValue = 'Billy ' + package_json.version;
 var clay = new Clay(clayConfig, customConfigFunction, {autoHandleEvents: false});
 var messageKeys = require('message_keys');
 
@@ -82,6 +84,9 @@ function doQuotaWarning() {
     });
 }
 
+var handledPrompts = {};
+var currentSession = null;
+
 function handleAppMessage(e) {
     console.log("Inbound app message!");
     console.log(JSON.stringify(e));
@@ -99,8 +104,19 @@ function handleAppMessage(e) {
         return;
     }
     if (data.PROMPT) {
+        var id = String(data.ANDROID_REQUEST_ID || '');
+        var now = Date.now();
+        Object.keys(handledPrompts).forEach(function(key) {
+            if (now - handledPrompts[key] > 600000) { delete handledPrompts[key]; }
+        });
+        if (id && id !== '0') {
+            if (handledPrompts[id]) { return; }
+            handledPrompts[id] = now;
+        }
         console.log("Starting a new Session...");
         var s = new session.Session(data.PROMPT, data.THREAD_ID, data.ANDROID_REQUEST_ID);
+        if (currentSession) { currentSession.obsolete = true; }
+        currentSession = s;
         s.run();
         return;
     }
@@ -150,10 +166,11 @@ Pebble.addEventListener("ready",
             emulator_main.main();
             return;
         }
+        // Ordinary AI and the tool relay must work even when Timeline is unavailable.
+        main();
         Pebble.getTimelineToken(function(token) {
             console.log("Entering real mode.");
             session.userToken = token;
-            main();
         }, function(e) {
             console.log("Get timeline token failed???", e);
         })

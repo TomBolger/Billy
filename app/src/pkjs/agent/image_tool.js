@@ -58,7 +58,7 @@ exports.execute = function(session, name, args, callback) {
                 callback({status: 'error', summary: 'Could not convert the picture for the watch.'});
                 return;
             }
-            var imageId = imageManager.sendImage(encoded.width, encoded.height, encoded.bytes);
+            var imageId = imageManager.sendImage(encoded.width, encoded.height, encoded.bytes, session);
             setTimeout(function() {
                 session.enqueue({
                     MAP_WIDGET: 1,

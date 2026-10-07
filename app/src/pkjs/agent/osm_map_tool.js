@@ -85,7 +85,7 @@ exports.execute = function(session, call, callback) {
                 callback({status: 'error', summary: fetchErr.message || String(fetchErr)});
                 return;
             }
-            var imageId = imageManager.sendImage(map.width, map.height, map.bytes);
+            var imageId = imageManager.sendImage(map.width, map.height, map.bytes, session);
             setTimeout(function() {
                 session.enqueue({
                     MAP_WIDGET: 1,

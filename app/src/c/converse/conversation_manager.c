@@ -68,6 +68,9 @@ struct ConversationManager {
   AppTimer* pending_input_timer;
   char* pending_input;
   int pending_input_attempts;
+  uint32_t active_request_id;
+  uint32_t seen_sequences[16];
+  uint8_t sequence_slot;
   void* context;
   ConversationManagerUpdateHandler handler;
   ConversationManagerEntryDeletedHandler deletion_handler;
@@ -113,6 +116,7 @@ void conversation_manager_init() {
 
 ConversationManager* conversation_manager_create() {
   ConversationManager* manager = bmalloc(sizeof(ConversationManager));
+  memset(manager, 0, sizeof(*manager));
   manager->conversation = conversation_create();
   manager->handler = NULL;
   manager->pending_input_timer = NULL;
@@ -162,6 +166,9 @@ void conversation_manager_add_input(ConversationManager* manager, const char* in
 }
 
 void conversation_manager_add_input_with_display(ConversationManager* manager, const char* input, const char* display_text) {
+  prv_clear_pending_input(manager);
+  manager->active_request_id = s_next_android_request_id++;
+  if (s_next_android_request_id == 0) { s_next_android_request_id = 1; }
   conversation_add_prompt(manager->conversation, display_text ? display_text : input);
   prv_conversation_updated(manager, true);
 
@@ -198,11 +205,7 @@ static bool prv_send_input(ConversationManager* manager, const char* input) {
       WATCH_CLARIFY_OPTION_CHARS,
       settings_get_gemini_model());
   dict_write_cstring(iter, MESSAGE_KEY_PROMPT_CONTEXT, prompt_context);
-  uint32_t request_id = s_next_android_request_id++;
-  if (s_next_android_request_id == 0) {
-    s_next_android_request_id = 1;
-  }
-  dict_write_uint32(iter, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID, request_id);
+  dict_write_uint32(iter, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID, manager->active_request_id);
 
   const char* thread_id = conversation_get_thread_id(manager->conversation);
   if (thread_id[0] != 0) {
@@ -283,6 +286,8 @@ static void prv_handle_app_message_outbox_sent(DictionaryIterator *iterator, voi
 static void prv_handle_app_message_outbox_failed(DictionaryIterator *iterator, AppMessageResult reason, void *context) {
   BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Sending message failed: %d", reason);
   ConversationManager* manager = context;
+  Tuple *request_tuple = dict_find(iterator, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID);
+  if (request_tuple && request_tuple->value->uint32 != manager->active_request_id) { return; }
   Tuple *prompt_tuple = dict_find(iterator, MESSAGE_KEY_PROMPT);
   if (prompt_tuple && prompt_tuple->length > 1) {
     prv_schedule_input_retry(manager, prompt_tuple->value->cstring);
@@ -294,6 +299,15 @@ static void prv_handle_app_message_outbox_failed(DictionaryIterator *iterator, A
 
 static void prv_handle_app_message_inbox_received(DictionaryIterator *iter, void *context) {
   ConversationManager* manager = context;
+  if (!conversation_manager_accepts_response(iter)) { return; }
+  Tuple *sequence = dict_find(iter, MESSAGE_KEY_TRANSPORT_SEQUENCE);
+  if (sequence && sequence->value->uint32 != 0) {
+    uint32_t value = sequence->value->uint32;
+    for (int i = 0; i < 16; ++i) {
+      if (manager->seen_sequences[i] == value) { return; }
+    }
+    manager->seen_sequences[manager->sequence_slot++ % 16] = value;
+  }
   for (Tuple *tuple = dict_read_first(iter); tuple; tuple = dict_read_next(iter)) {
     if (tuple->key == MESSAGE_KEY_CHAT) {
       if (conversation_get_last_unanswered_clarification(manager->conversation) != NULL) {
@@ -646,4 +660,10 @@ static bool prv_handle_memory_pressure(void *context) {
   }
   conversation_delete_first_entry(manager->conversation);
   return true;
+}
+
+bool conversation_manager_accepts_response(DictionaryIterator *iter) {
+  Tuple *request = dict_find(iter, MESSAGE_KEY_RESPONSE_REQUEST_ID);
+  if (!request) { return true; } // Settings and legacy phone messages.
+  return s_conversation_manager && s_conversation_manager->active_request_id == request->value->uint32;
 }

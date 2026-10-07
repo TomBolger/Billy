@@ -184,6 +184,7 @@ static void prv_forward_android_companion_ready(uint32_t request_id) {
 }
 
 static void prv_prompt_inbox_received(DictionaryIterator *iter, void *context) {
+  if (!conversation_manager_accepts_response(iter)) { return; }
   Tuple *relay_tuple = dict_find(iter, MESSAGE_KEY_JS_TOOL_REQUEST);
   if (relay_tuple && relay_tuple->type == TUPLE_CSTRING) {
     prv_relay_enqueue(MESSAGE_KEY_JS_TOOL_REQUEST, relay_tuple->value->cstring);

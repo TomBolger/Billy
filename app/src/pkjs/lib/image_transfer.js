@@ -22,10 +22,13 @@ function ImageManager() {
     this.nextImageId = 1;
 }
 
-ImageManager.prototype.sendImage = function(width, height, /* number[]*/ imageData) {
+ImageManager.prototype.sendImage = function(width, height, /* number[]*/ imageData, session) {
     var imageId = this.nextImageId++;
+    var enqueue = function(message) {
+        if (session) { session.enqueue(message); } else { messageQueue.enqueue(message); }
+    };
     var chunks = Math.ceil(imageData.length / CHUNK_SIZE);
-    messageQueue.enqueue({
+    enqueue({
         IMAGE_ID: imageId,
         IMAGE_START_BYTE_SIZE: imageData.length,
         IMAGE_WIDTH: width,
@@ -39,13 +42,13 @@ ImageManager.prototype.sendImage = function(width, height, /* number[]*/ imageDa
             var chunk = imageData.slice(start, end);
             console.log(chunk.length);
             console.log(JSON.stringify(chunk));
-            messageQueue.enqueue({
+            enqueue({
                 IMAGE_ID: imageId,
                 IMAGE_CHUNK_OFFSET: start,
                 IMAGE_CHUNK_DATA: chunk,
             });
         }
-        messageQueue.enqueue({
+        enqueue({
             IMAGE_ID: imageId,
             IMAGE_COMPLETE: 1,
         });
