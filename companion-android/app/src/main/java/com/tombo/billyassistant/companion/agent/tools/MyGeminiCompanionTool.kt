@@ -60,7 +60,8 @@ class MyGeminiCompanionTool(
                         }
                     }
                 }
-                var answer = plain(reply.text).ifBlank { if (image != null) "" else "Done." }
+                var answer = GeminiImageReply.forWatch(plain(reply.text), image != null)
+                    .ifBlank { if (image != null) "" else "Done." }
                 if (image == null && reply.imageUrls.isNotEmpty()) answer += " (Couldn't load the picture on the watch.)"
                 CompanionToolExecution(
                     response = JSONObject()

@@ -141,7 +141,7 @@ See `docs/USER_SETUP.md` for the current setup notes covering:
 
 ## Project Status
 
-Billy 0.1 is the first public release. The main architecture is in place: one PBW, optional Android companion, no helper server, user-owned API keys, and Pebble-native cards/media. Google API coverage is still actively being hardened.
+Billy 0.5 is the current test release. The main architecture is in place: one PBW, optional Android companion, no helper server, user-owned API keys, and Pebble-native cards/media. Google API coverage is still actively being hardened.
 
 ## Credits
 
