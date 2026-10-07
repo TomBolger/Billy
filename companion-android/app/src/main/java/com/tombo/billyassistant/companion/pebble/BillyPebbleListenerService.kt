@@ -132,6 +132,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
                         geminiClient = GeminiClient(model, checkCurrent),
                         watchMediaSpec = watchMediaSpec,
                         threadId = threadId,
+                        checkActive = checkCurrent,
                         watchToolRelay = { name, args -> checkCurrent(); relay.call(name, args) },
                     ).answer(prompt)
                 }
@@ -285,7 +286,7 @@ private suspend fun DefaultPebbleSender.sendAndroidCompanionReady(watch: WatchId
     sendDataToPebble(BillyPebbleProtocol.APP_UUID, payload, listOf(watch))
 }
 
-private suspend fun DefaultPebbleSender.sendFunction(text: String, watch: WatchIdentifier) {
+private suspend fun ResponseSender.sendFunction(text: String, watch: WatchIdentifier) {
     sendDataToPebble(
         BillyPebbleProtocol.APP_UUID,
         mapOf(BillyPebbleProtocol.FUNCTION to PebbleDictionaryItem.Text(text)),
@@ -474,8 +475,8 @@ object BillyPebbleProtocol {
     val ANDROID_REQUEST_ID: UInt = 10125u
     val JS_TOOL_REQUEST: UInt = 10126u
     val JS_TOOL_RESULT: UInt = 10127u
-    val RESPONSE_REQUEST_ID: UInt = 10128u
-    val TRANSPORT_SEQUENCE: UInt = 10129u
+    val RESPONSE_REQUEST_ID: UInt = 10129u
+    val TRANSPORT_SEQUENCE: UInt = 10130u
 
     fun nextImageId(): Int = imageIds.getAndIncrement()
 }

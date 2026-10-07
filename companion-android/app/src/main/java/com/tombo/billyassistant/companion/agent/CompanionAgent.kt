@@ -45,6 +45,7 @@ class CompanionAgent(
     watchMediaSpec: WatchMediaSpec = WatchMediaSpec.Default,
     private val threadId: String? = null,
     watchToolRelay: ((String, JSONObject) -> JSONObject)? = null,
+    private val checkActive: () -> Unit = {},
 ) {
     private val tokenProvider = GoogleAccessTokenProvider(context)
     private val people = GooglePeopleApiTools(tokenProvider)
@@ -81,6 +82,7 @@ class CompanionAgent(
     )
 
     fun answer(prompt: String): CompanionAgentResult {
+        checkActive()
         val settings = settingsStore.load()
         if (prompt.isBlank()) return CompanionAgentResult.Failed("Prompt is blank.")
         if (settings.geminiApiKey.isBlank()) {
@@ -94,8 +96,11 @@ class CompanionAgent(
                 val token = picked.context.removePrefix(PendingActions.CONTEXT_PREFIX).trim()
                 when (val resolution = PendingActions.resolve(token, picked.answer)) {
                     is PendingActions.Resolution.Run -> {
-                        val outcome = runCatching { resolution.action() }
-                            .getOrElse { com.tombo.billyassistant.companion.agent.tools.PendingOutcome("That didn't work: ${it.message}") }
+                        val outcome = runCatching { checkActive(); resolution.action() }
+                             .getOrElse {
+                                if (it is kotlinx.coroutines.CancellationException) throw it
+                                com.tombo.billyassistant.companion.agent.tools.PendingOutcome("That didn't work: ${it.message}")
+                            }
                         conversations.record(threadId, picked.answer, outcome.text, listOf("${picked.question} -> ${picked.answer}: ${outcome.text}"))
                         return CompanionAgentResult.Passed(text = outcome.text, clarificationCard = outcome.card)
                     }

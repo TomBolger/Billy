@@ -116,6 +116,7 @@ void conversation_manager_init() {
 
 ConversationManager* conversation_manager_create() {
   ConversationManager* manager = bmalloc(sizeof(ConversationManager));
+  memset(manager, 0, sizeof(*manager));
   manager->conversation = conversation_create();
   manager->handler = NULL;
   manager->pending_input_timer = NULL;
@@ -285,6 +286,8 @@ static void prv_handle_app_message_outbox_sent(DictionaryIterator *iterator, voi
 static void prv_handle_app_message_outbox_failed(DictionaryIterator *iterator, AppMessageResult reason, void *context) {
   BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Sending message failed: %d", reason);
   ConversationManager* manager = context;
+  Tuple *request_tuple = dict_find(iterator, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID);
+  if (request_tuple && request_tuple->value->uint32 != manager->active_request_id) { return; }
   Tuple *prompt_tuple = dict_find(iterator, MESSAGE_KEY_PROMPT);
   if (prompt_tuple && prompt_tuple->length > 1) {
     prv_schedule_input_retry(manager, prompt_tuple->value->cstring);
