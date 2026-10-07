@@ -107,12 +107,12 @@ static void prv_window_load(Window *window) {
   resource_load(blurb_handle, (uint8_t *)data->blurb, blurb_length);
   data->blurb[blurb_length] = '\0';
 
-  data->text_layer = formatted_text_layer_create(GRect(5, 5, bounds.size.w - 10, 2000));
+  data->text_layer = formatted_text_layer_create(GRect(5 + ROUND_SIDE_INSET, 5 + ROUND_END_PAD, bounds.size.w - 10 - ROUND_SIDE_INSET * 2, 2000));
   formatted_text_layer_set_text(data->text_layer, data->blurb);
   GSize text_size = formatted_text_layer_get_content_size(data->text_layer);
   layer_set_frame(formatted_text_layer_get_layer(data->text_layer), GRect(5, 5, bounds.size.w - 10, text_size.h));
   scroll_layer_add_child(data->scroll_layer, formatted_text_layer_get_layer(data->text_layer));
-  scroll_layer_set_content_size(data->scroll_layer, GSize(bounds.size.w, text_size.h + 10));
+  scroll_layer_set_content_size(data->scroll_layer, GSize(bounds.size.w, text_size.h + 10 + ROUND_END_PAD * 2));
 
   data->select_indicator = bgbitmap_create_with_resource(RESOURCE_ID_BUTTON_INDICATOR);
   GRect select_indicator_size = gbitmap_get_bounds(data->select_indicator);

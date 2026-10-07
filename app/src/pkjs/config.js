@@ -48,12 +48,26 @@ exports.getGeminiApiKey = function() {
     return String(exports.getSetting('GEMINI_API_KEY', '') || '').replace(/\s+/g, '');
 }
 
+exports.DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+// Used only when the chosen model is unavailable (overloaded, 404, network).
+exports.FALLBACK_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.1-flash-lite'];
+var LEGACY_DEFAULT_MODEL = 'gemini-3.1-flash-lite';
+var MODEL_MIGRATION_KEY = 'billyModelDefaultMigratedV2';
+
 exports.getGeminiModel = function() {
-    var model = String(exports.getSetting('GEMINI_MODEL', 'gemini-3.1-flash-lite') || 'gemini-3.1-flash-lite').replace(/\s+/g, '');
-    if (!model || model === 'gemini-3.5-flash') {
-        return 'gemini-3.1-flash-lite';
+    var model = String(exports.getSetting('GEMINI_MODEL', '') || '').replace(/\s+/g, '');
+    // Billy used to default to Flash-Lite, which is too weak to pick reliably
+    // from dozens of tools. Move the old default forward once; an explicit
+    // later choice of Flash-Lite is respected.
+    if (model === LEGACY_DEFAULT_MODEL && !localStorage.getItem(MODEL_MIGRATION_KEY)) {
+        localStorage.setItem(MODEL_MIGRATION_KEY, '1');
+        exports.setSetting('GEMINI_MODEL', exports.DEFAULT_GEMINI_MODEL);
+        model = exports.DEFAULT_GEMINI_MODEL;
     }
-    return model;
+    if (!localStorage.getItem(MODEL_MIGRATION_KEY)) {
+        localStorage.setItem(MODEL_MIGRATION_KEY, '1');
+    }
+    return model || exports.DEFAULT_GEMINI_MODEL;
 }
 
 exports.getGeminiMonthlyBudgetUsd = function() {

@@ -13,14 +13,18 @@ class WebImageCompanionTool(
 ) : CompanionTool {
     override val declarations: List<JSONObject> = listOf(
         JSONObject()
-            .put("name", "show_web_image_search")
-            .put("description", "Search public web images and show one as a watch image card. Use this for open-web/internet picture requests, not Google Drive or the user's local photos.")
+            .put("name", "show_image")
+            .put(
+                "description",
+                "Show a picture of something on the watch (from Wikipedia/Wikimedia). Use it proactively, alongside your text answer, whenever the user asks about something with a recognizable look: landmarks, places, animals, plants, famous people, artworks, buildings, vehicles, dishes. " +
+                    "Skip it when the answer depends on fine detail the tiny low-color screen can't show (charts, diagrams, text, maps; use show_map for maps). Not for the user's own photos (use find_photo).",
+            )
             .put(
                 "parameters",
                 objectSchema(
                     required = listOf("query"),
                     properties = mapOf(
-                        "query" to stringSchema("The subject to search for, such as a landmark, product, person, animal, or place."),
+                        "query" to stringSchema("The subject, as a Wikipedia article title would name it, e.g. \"Eiffel Tower\", \"Golden retriever\"."),
                     ),
                 ),
             ),
@@ -28,7 +32,7 @@ class WebImageCompanionTool(
 
     override fun execute(name: String, args: JSONObject): CompanionToolExecution? {
         return when (name) {
-            "show_web_image_search" -> search(args.optString("query"))
+            "show_image", "show_web_image_search" -> search(args.optString("query"))
             else -> null
         }
     }
@@ -44,7 +48,8 @@ class WebImageCompanionTool(
             )
         }
         return try {
-            val result = searchCommons(normalizedQuery)
+            val result = runCatching { wikipediaLeadImage(normalizedQuery) }.getOrNull()
+                ?: searchCommons(normalizedQuery)
                 ?: return CompanionToolExecution(
                     JSONObject()
                         .put("status", "not_found")
@@ -58,7 +63,7 @@ class WebImageCompanionTool(
                 bitmap.recycle()
             }
             val title = result.title.removePrefix("File:").substringBeforeLast('.').take(60)
-            val summary = "Web image:\n$title\nWikimedia Commons"
+            val summary = "Showing a picture of $normalizedQuery."
             onImageShown(normalizedQuery)
             CompanionToolExecution(
                 response = JSONObject()
@@ -68,7 +73,6 @@ class WebImageCompanionTool(
                     .put("title", result.title)
                     .put("source_url", result.sourceUrl)
                     .put("image_url", result.imageUrl),
-                finalText = summary,
                 watchImage = watchImage,
             )
         } catch (e: Exception) {
@@ -79,6 +83,25 @@ class WebImageCompanionTool(
                 finalText = "Web image lookup failed.",
             )
         }
+    }
+
+    /** The lead image of the best-matching Wikipedia article: usually the canonical picture. */
+    private fun wikipediaLeadImage(query: String): WebImageResult? {
+        val url = "https://en.wikipedia.org/w/api.php?action=query&format=json&prop=pageimages&piprop=thumbnail%7Cname" +
+            "&pithumbsize=480&generator=search&gsrlimit=1&gsrsearch=${encode(query)}"
+        val pages = JSONObject(httpText(url)).optJSONObject("query")?.optJSONObject("pages") ?: return null
+        val keys = pages.keys()
+        while (keys.hasNext()) {
+            val page = pages.optJSONObject(keys.next()) ?: continue
+            val thumb = page.optJSONObject("thumbnail")?.optString("source").orEmpty()
+            if (thumb.isBlank() || thumb.endsWith(".svg", ignoreCase = true)) continue
+            return WebImageResult(
+                title = page.optString("title").ifBlank { query },
+                sourceUrl = "https://en.wikipedia.org/wiki/${encode(page.optString("title"))}",
+                imageUrl = thumb,
+            )
+        }
+        return null
     }
 
     private fun searchCommons(query: String): WebImageResult? {

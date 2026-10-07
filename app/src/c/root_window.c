@@ -18,6 +18,7 @@
 #include <pebble-events/pebble-events.h>
 
 #include "root_window.h"
+#include "features.h"
 #include "talking_horse_layer.h"
 #include "converse/session_window.h"
 #include "menus/root_menu.h"
@@ -113,7 +114,20 @@ static void prv_window_appear(Window* window) {
 #else
   uint16_t time_height = 40;
 #endif
-  rw->time_layer = btext_layer_create(GRect(0, 5, bounds.size.w - ACTION_BAR_WIDTH, time_height));
+#if PBL_ROUND
+  // Keep everything inside the circle: pull in from the left and bottom edges.
+  const int16_t round_left = PBL_DISPLAY_WIDTH >= 260 ? 34 : 24;
+  const int16_t round_top = PBL_DISPLAY_WIDTH >= 260 ? 16 : 6;
+  const int16_t round_bottom = PBL_DISPLAY_WIDTH >= 260 ? 26 : 4;
+  // The small round screen needs every pixel above the goat for the bubble.
+  const int16_t horse_gap = PBL_DISPLAY_WIDTH >= 260 ? 16 : 4;
+#else
+  const int16_t round_left = 0;
+  const int16_t round_top = 0;
+  const int16_t round_bottom = 0;
+  const int16_t horse_gap = 16;
+#endif
+  rw->time_layer = btext_layer_create(GRect(round_left, 5 + round_top, bounds.size.w - ACTION_BAR_WIDTH - round_left, time_height));
   text_layer_set_text_alignment(rw->time_layer, GTextAlignmentCenter);
 #if PBL_DISPLAY_WIDTH >= 200
   text_layer_set_font(rw->time_layer, fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS));
@@ -123,13 +137,18 @@ static void prv_window_appear(Window* window) {
   text_layer_set_text(rw->time_layer, "12:34");
   text_layer_set_background_color(rw->time_layer, GColorClear);
   layer_add_child(window_get_root_layer(rw->window), (Layer *)rw->time_layer);
-  rw->talking_horse_layer = talking_horse_layer_create(GRect(0, time_height + 16, bounds.size.w - ACTION_BAR_WIDTH, bounds.size.h - time_height - 16));
+  rw->talking_horse_layer = talking_horse_layer_create(GRect(round_left, time_height + horse_gap + round_top, bounds.size.w - ACTION_BAR_WIDTH - round_left, bounds.size.h - time_height - horse_gap - round_top - round_bottom));
   layer_add_child(window_get_root_layer(rw->window), (Layer *)rw->talking_horse_layer);
   rw->talking_horse_overridden = false;
+#if ENABLE_FEATURE_STORE_SCREENSHOTS
+  rw->talking_horse_overridden = true;
+  talking_horse_layer_set_text(rw->talking_horse_layer, "Ask me anything!");
+#else
   if (version_is_updated() || rand() < RAND_MAX / 10) {
     rw->talking_horse_overridden = true;
     talking_horse_layer_set_text(rw->talking_horse_layer, "Try holding select in chat!");
   }
+#endif
 
   VersionInfo version_info = version_get_current();
   snprintf(rw->version_string, sizeof(rw->version_string), "v%d.%d", version_info.major, version_info.minor);
@@ -201,6 +220,9 @@ static void prv_send_watch_ready(void) {
 static void prv_time_changed(struct tm *tick_time, TimeUnits time_changed, void *context) {
   RootWindow* rw = context;
   format_time(rw->time_string, sizeof(rw->time_string), tick_time);
+#if ENABLE_FEATURE_STORE_SCREENSHOTS
+  strncpy(rw->time_string, "9:41", sizeof(rw->time_string));
+#endif
   text_layer_set_text(rw->time_layer, rw->time_string);
   if (rw->talking_horse_overridden) {
     return;

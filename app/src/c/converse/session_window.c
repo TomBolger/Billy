@@ -34,6 +34,17 @@
 #include "report_window.h"
 
 #define PADDING 5
+// Round screens: keep the chat inside the circle. Content starts lower and can
+// scroll up past the bottom edge, so every line reaches the wide middle.
+#if PBL_ROUND
+#define ROUND_INSET_X (PBL_DISPLAY_WIDTH >= 260 ? 28 : 20)
+#define ROUND_PAD_TOP (PBL_DISPLAY_WIDTH >= 260 ? 22 : 16)
+#define ROUND_PAD_BOTTOM (PBL_DISPLAY_WIDTH >= 260 ? 44 : 34)
+#else
+#define ROUND_INSET_X 0
+#define ROUND_PAD_TOP 0
+#define ROUND_PAD_BOTTOM 0
+#endif
 #define CLARIFICATION_DICTATE_OPTION "Dictate..."
 
 struct SessionWindow {
@@ -154,10 +165,10 @@ static void prv_window_load(Window *window) {
   bobby_status_bar_config(sw->status_layer);
   layer_add_child(root_layer, (Layer *)sw->status_layer);
 
-  sw->content_height = 0;
+  sw->content_height = ROUND_PAD_TOP;
   sw->last_prompt_end_offset = 0;
   sw->scroll_indicator_down = blayer_create(GRect(0, window_size.h - STATUS_BAR_LAYER_HEIGHT, window_size.w, STATUS_BAR_LAYER_HEIGHT));
-  sw->scroll_layer = bscroll_layer_create(GRect(0, STATUS_BAR_LAYER_HEIGHT, window_size.w, window_size.h - STATUS_BAR_LAYER_HEIGHT));
+  sw->scroll_layer = bscroll_layer_create(GRect(ROUND_INSET_X, STATUS_BAR_LAYER_HEIGHT, window_size.w - ROUND_INSET_X * 2, window_size.h - STATUS_BAR_LAYER_HEIGHT));
   scroll_layer_set_shadow_hidden(sw->scroll_layer, true);
   ContentIndicator* indicator = scroll_layer_get_content_indicator(sw->scroll_layer);
   const ContentIndicatorConfig up_config = (ContentIndicatorConfig) {
@@ -253,7 +264,7 @@ static void prv_dictation_status_callback(DictationSession *session, DictationSe
 
 static void prv_set_scroll_height(SessionWindow* sw) {
   GSize old_size = scroll_layer_get_content_size(sw->scroll_layer);
-  GSize new_size = GSize(old_size.w, sw->content_height + PADDING);
+  GSize new_size = GSize(old_size.w, sw->content_height + PADDING + ROUND_PAD_BOTTOM);
   if (old_size.h >= new_size.h) {
     return;
   }

@@ -23,8 +23,8 @@ android {
         applicationId = "com.tombo.billyassistant.companion"
         minSdk = 26
         targetSdk = 36
-        versionCode = 63
-        versionName = "0.1"
+        versionCode = 77
+        versionName = "0.5"
     }
 
     compileOptions {
@@ -38,6 +38,7 @@ kotlin {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     implementation("io.rebble.pebblekit2:client:1.2.0")
     implementation("androidx.activity:activity-ktx:1.12.1")
     implementation("com.google.android.gms:play-services-auth:21.6.0")

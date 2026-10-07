@@ -19,9 +19,18 @@
                 "description": "Automatic sends prompts to Billy Companion when it is installed. Choose Companionless when using only the PBW.",
                 "defaultValue": "automatic",
                 "options": [
-                    {"label": "Automatic", "value": "automatic"},
-                    {"label": "Companionless", "value": "companionless"},
-                    {"label": "Android companion", "value": "android"}
+                    {
+                        "label": "Automatic",
+                        "value": "automatic"
+                    },
+                    {
+                        "label": "Companionless",
+                        "value": "companionless"
+                    },
+                    {
+                        "label": "Android companion",
+                        "value": "android"
+                    }
                 ]
             },
             {
@@ -33,12 +42,38 @@
                 "defaultValue": ""
             },
             {
-                "type": "input",
+                "type": "select",
                 "id": "GEMINI_MODEL",
                 "messageKey": "GEMINI_MODEL",
                 "label": "Gemini model",
-                "description": "The Gemini API model used by the local assistant runtime.",
-                "defaultValue": "gemini-3.1-flash-lite"
+                "description": "Used by both the phone runtime and Billy Companion. Flash models pick the right tool far more reliably than Flash-Lite.",
+                "defaultValue": "gemini-3.8-flash",
+                "options": [
+                    {
+                        "label": "Gemini 3.8 Flash (recommended)",
+                        "value": "gemini-3.8-flash"
+                    },
+                    {
+                        "label": "Gemini 3.7 Flash",
+                        "value": "gemini-3.7-flash"
+                    },
+                    {
+                        "label": "Gemini 3.5 Flash",
+                        "value": "gemini-3.5-flash"
+                    },
+                    {
+                        "label": "Gemini 3.5 Flash-Lite (cheaper)",
+                        "value": "gemini-3.5-flash-lite"
+                    },
+                    {
+                        "label": "Gemini 3.1 Flash-Lite (cheapest)",
+                        "value": "gemini-3.1-flash-lite"
+                    },
+                    {
+                        "label": "Gemini 3.1 Pro preview (slow)",
+                        "value": "gemini-3.1-pro-preview"
+                    }
+                ]
             },
             {
                 "type": "input",
@@ -71,6 +106,14 @@
                 "label": "Billy profile context",
                 "description": "Optional companionless memory/profile notes Billy should use, such as preferred name, home timezone, family names, pets, or preferences. Stored locally by the Pebble phone app.",
                 "defaultValue": ""
+            },
+            {
+                "type": "input",
+                "id": "CALENDAR_LINKS",
+                "messageKey": "CALENDAR_LINKS",
+                "label": "Calendar links (phone-only mode)",
+                "description": "Lets Billy read your calendar without the Android companion (works on iPhone). Paste one or more private iCal links separated by spaces. Google Calendar: Settings > your calendar > Integrate calendar > Secret address in iCal format. iCloud: share the calendar as Public and copy the link.",
+                "defaultValue": ""
             }
         ]
     },
@@ -89,37 +132,130 @@
                 "description": "Controls the language of Billy's replies. Does not currently translate the rest of the UI. If 'automatic', Billy will attempt to respond in the same language the question was asked.",
                 "defaultValue": "",
                 "options": [
-                    {"label": "Automatic", "value": ""},
-                    {"label": "Afrikaans", "value": "af_ZA"},
-                    {"label": "Bahasa Indonesia", "value": "id_ID"},
-                    {"label": "Bahasa Melayu", "value": "ms_MY"},
-                    {"label": "Čeština", "value": "cs_CZ"},
-                    {"label": "Dansk", "value": "da_DK"},
-                    {"label": "Deutsch", "value": "de_DE"},
-                    {"label": "English", "value": "en_US"},
-                    {"label": "Español", "value": "es_ES"},
-                    {"label": "Filipino", "value": "fil_PH"},
-                    {"label": "Français", "value": "fr_FR"},
-                    {"label": "Galego", "value": "gl_ES"},
-                    {"label": "Hrvatski", "value": "hr_HR"},
-                    {"label": "Íslenska", "value": "is_IS"},
-                    {"label": "Italiano", "value": "it_IT"},
-                    {"label": "Kiswahili", "value": "sw_TZ"},
-                    {"label": "Latviešu", "value": "lv_LV"},
-                    {"label": "Lietuvių", "value": "lt_LT"},
-                    {"label": "Magyar", "value": "hu_HU"},
-                    {"label": "Nederlands", "value": "nl_NL"},
-                    {"label": "Norsk", "value": "no_NO"},
-                    {"label": "Polski", "value": "pl_PL"},
-                    {"label": "Português", "value": "pt_PT"},
-                    {"label": "Română", "value": "ro_RO"},
-                    {"label": "Русский", "value": "ru_RU"},
-                    {"label": "Slovenčina", "value": "sk_SK"},
-                    {"label": "Slovenščina", "value": "sl_SI"},
-                    {"label": "Suomi", "value": "fi_FI"},
-                    {"label": "Svenska", "value": "sv_SE"},
-                    {"label": "Türkçe", "value": "tr_TR"},
-                    {"label": "IsiZulu", "value": "zu-ZA"}
+                    {
+                        "label": "Automatic",
+                        "value": ""
+                    },
+                    {
+                        "label": "Afrikaans",
+                        "value": "af_ZA"
+                    },
+                    {
+                        "label": "Bahasa Indonesia",
+                        "value": "id_ID"
+                    },
+                    {
+                        "label": "Bahasa Melayu",
+                        "value": "ms_MY"
+                    },
+                    {
+                        "label": "Čeština",
+                        "value": "cs_CZ"
+                    },
+                    {
+                        "label": "Dansk",
+                        "value": "da_DK"
+                    },
+                    {
+                        "label": "Deutsch",
+                        "value": "de_DE"
+                    },
+                    {
+                        "label": "English",
+                        "value": "en_US"
+                    },
+                    {
+                        "label": "Español",
+                        "value": "es_ES"
+                    },
+                    {
+                        "label": "Filipino",
+                        "value": "fil_PH"
+                    },
+                    {
+                        "label": "Français",
+                        "value": "fr_FR"
+                    },
+                    {
+                        "label": "Galego",
+                        "value": "gl_ES"
+                    },
+                    {
+                        "label": "Hrvatski",
+                        "value": "hr_HR"
+                    },
+                    {
+                        "label": "Íslenska",
+                        "value": "is_IS"
+                    },
+                    {
+                        "label": "Italiano",
+                        "value": "it_IT"
+                    },
+                    {
+                        "label": "Kiswahili",
+                        "value": "sw_TZ"
+                    },
+                    {
+                        "label": "Latviešu",
+                        "value": "lv_LV"
+                    },
+                    {
+                        "label": "Lietuvių",
+                        "value": "lt_LT"
+                    },
+                    {
+                        "label": "Magyar",
+                        "value": "hu_HU"
+                    },
+                    {
+                        "label": "Nederlands",
+                        "value": "nl_NL"
+                    },
+                    {
+                        "label": "Norsk",
+                        "value": "no_NO"
+                    },
+                    {
+                        "label": "Polski",
+                        "value": "pl_PL"
+                    },
+                    {
+                        "label": "Português",
+                        "value": "pt_PT"
+                    },
+                    {
+                        "label": "Română",
+                        "value": "ro_RO"
+                    },
+                    {
+                        "label": "Русский",
+                        "value": "ru_RU"
+                    },
+                    {
+                        "label": "Slovenčina",
+                        "value": "sk_SK"
+                    },
+                    {
+                        "label": "Slovenščina",
+                        "value": "sl_SI"
+                    },
+                    {
+                        "label": "Suomi",
+                        "value": "fi_FI"
+                    },
+                    {
+                        "label": "Svenska",
+                        "value": "sv_SE"
+                    },
+                    {
+                        "label": "Türkçe",
+                        "value": "tr_TR"
+                    },
+                    {
+                        "label": "IsiZulu",
+                        "value": "zu-ZA"
+                    }
                 ]
             },
             {
@@ -130,11 +266,26 @@
                 "description": "Your preferred units. If 'both', units will be provided in both systems.",
                 "defaultValue": "",
                 "options": [
-                    {"label": "Automatic", "value": ""},
-                    {"label": "Metric", "value": "metric"},
-                    {"label": "Imperial", "value": "imperial"},
-                    {"label": "UK", "value": "uk"},
-                    {"label": "Both", "value": "both"}
+                    {
+                        "label": "Automatic",
+                        "value": ""
+                    },
+                    {
+                        "label": "Metric",
+                        "value": "metric"
+                    },
+                    {
+                        "label": "Imperial",
+                        "value": "imperial"
+                    },
+                    {
+                        "label": "UK",
+                        "value": "uk"
+                    },
+                    {
+                        "label": "Both",
+                        "value": "both"
+                    }
                 ]
             }
         ]
@@ -152,11 +303,26 @@
                 "label": "Alarm vibration",
                 "defaultValue": "5",
                 "options": [
-                    {"label": "Reveille", "value": "1"},
-                    {"label": "Mario", "value": "2"},
-                    {"label": "Nudge Nudge", "value": "3"},
-                    {"label": "Jackhammer", "value": "4"},
-                    {"label": "Standard", "value": "5"}
+                    {
+                        "label": "Reveille",
+                        "value": "1"
+                    },
+                    {
+                        "label": "Mario",
+                        "value": "2"
+                    },
+                    {
+                        "label": "Nudge Nudge",
+                        "value": "3"
+                    },
+                    {
+                        "label": "Jackhammer",
+                        "value": "4"
+                    },
+                    {
+                        "label": "Standard",
+                        "value": "5"
+                    }
                 ]
             },
             {
@@ -165,11 +331,26 @@
                 "label": "Timer vibration",
                 "defaultValue": "5",
                 "options": [
-                    {"label": "Reveille", "value": "1"},
-                    {"label": "Mario", "value": "2"},
-                    {"label": "Nudge Nudge", "value": "3"},
-                    {"label": "Jackhammer", "value": "4"},
-                    {"label": "Standard", "value": "5"}
+                    {
+                        "label": "Reveille",
+                        "value": "1"
+                    },
+                    {
+                        "label": "Mario",
+                        "value": "2"
+                    },
+                    {
+                        "label": "Nudge Nudge",
+                        "value": "3"
+                    },
+                    {
+                        "label": "Jackhammer",
+                        "value": "4"
+                    },
+                    {
+                        "label": "Standard",
+                        "value": "5"
+                    }
                 ]
             },
             {
@@ -179,9 +360,18 @@
                 "description": "What to do when Billy is launched via Quick Launch. If 'start conversation' is selected, Billy will start listening immediately. If 'stay open' is chosen, Billy will quit after a minute of inactivity. If 'open home screen' is chosen, Billy will behave the same as if launched from the app launcher.",
                 "defaultValue": "1",
                 "options": [
-                    {"label": "Start conversation and time out", "value": "1"},
-                    {"label": "Start conversation then stay open", "value": "2"},
-                    {"label": "Open home screen", "value": "3"}
+                    {
+                        "label": "Start conversation and time out",
+                        "value": "1"
+                    },
+                    {
+                        "label": "Start conversation then stay open",
+                        "value": "2"
+                    },
+                    {
+                        "label": "Open home screen",
+                        "value": "3"
+                    }
                 ]
             },
             {

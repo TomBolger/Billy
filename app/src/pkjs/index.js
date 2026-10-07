@@ -25,11 +25,49 @@ var reminders = require('./reminders');
 var feedback = require('./lib/feedback');
 var package_json = require('package.json');
 var runtimeRouter = require('./agent/runtime_router');
+var relay = require('./agent/relay');
 
 
-var clay = new Clay(clayConfig, customConfigFunction);
+// Keep setup's version label in sync with the PBW metadata.
+clayConfig[0].defaultValue = 'Billy ' + package_json.version;
+var clay = new Clay(clayConfig, customConfigFunction, {autoHandleEvents: false});
+var messageKeys = require('message_keys');
+
+// Only these settings are used by the watch itself. Everything else (API key,
+// memory, calendar links) stays on the phone, which keeps the settings message
+// small enough for the watch to accept.
+var WATCH_SETTINGS = [
+    'QUICK_LAUNCH_BEHAVIOUR', 'ALARM_VIBE_PATTERN', 'TIMER_VIBE_PATTERN',
+    'CONFIRM_TRANSCRIPTS', 'ASSISTANT_RUNTIME', 'GEMINI_MODEL', 'LOCATION_ENABLED'
+];
+
+Pebble.addEventListener('showConfiguration', function() {
+    Pebble.openURL(clay.generateUrl());
+});
+
+Pebble.addEventListener('webviewclosed', function(e) {
+    if (!e || !e.response) {
+        return;
+    }
+    var all = clay.getSettings(e.response);
+    var forWatch = {};
+    WATCH_SETTINGS.forEach(function(name) {
+        var key = messageKeys[name];
+        if (key !== undefined && all[key] !== undefined) {
+            forWatch[key] = all[key];
+        }
+    });
+    Pebble.sendAppMessage(forWatch, function() {
+        console.log('Settings sent to watch.');
+    }, function(err) {
+        console.log('Settings send failed: ' + JSON.stringify(err));
+    });
+});
 
 function main() {
+    // Keep the watch's copy of the model current so the Android companion
+    // (which reads it from each prompt) uses the same model as this runtime.
+    Pebble.sendAppMessage({GEMINI_MODEL: config.getGeminiModel()});
     doQuotaWarning();
     location.update();
     Pebble.addEventListener('appmessage', handleAppMessage);
@@ -46,6 +84,9 @@ function doQuotaWarning() {
     });
 }
 
+var handledPrompts = {};
+var currentSession = null;
+
 function handleAppMessage(e) {
     console.log("Inbound app message!");
     console.log(JSON.stringify(e));
@@ -54,9 +95,28 @@ function handleAppMessage(e) {
         runtimeRouter.recordAndroidCompanionSeen(data.ANDROID_REQUEST_ID);
         return;
     }
+    if (data.JS_TOOL_REQUEST) {
+        relay.handleRequest(data.JS_TOOL_REQUEST);
+        return;
+    }
+    if (data.JS_TOOL_RESULT) {
+        // Our own relay reply bounced back by the watch for the companion.
+        return;
+    }
     if (data.PROMPT) {
+        var id = String(data.ANDROID_REQUEST_ID || '');
+        var now = Date.now();
+        Object.keys(handledPrompts).forEach(function(key) {
+            if (now - handledPrompts[key] > 600000) { delete handledPrompts[key]; }
+        });
+        if (id && id !== '0') {
+            if (handledPrompts[id]) { return; }
+            handledPrompts[id] = now;
+        }
         console.log("Starting a new Session...");
         var s = new session.Session(data.PROMPT, data.THREAD_ID, data.ANDROID_REQUEST_ID);
+        if (currentSession) { currentSession.obsolete = true; }
+        currentSession = s;
         s.run();
         return;
     }
@@ -106,10 +166,11 @@ Pebble.addEventListener("ready",
             emulator_main.main();
             return;
         }
+        // Ordinary AI and the tool relay must work even when Timeline is unavailable.
+        main();
         Pebble.getTimelineToken(function(token) {
             console.log("Entering real mode.");
             session.userToken = token;
-            main();
         }, function(e) {
             console.log("Get timeline token failed???", e);
         })

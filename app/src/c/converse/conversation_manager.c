@@ -26,6 +26,7 @@
 #include <pebble-events/pebble-events.h>
 #include <pebble.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #if defined(PBL_PLATFORM_EMERY)
 #define WATCH_MEDIA_WIDTH 198
@@ -33,17 +34,24 @@
 #define WATCH_MEDIA_PBI_DEPTH 4
 #define WATCH_MEDIA_MAX_BYTES 40000
 #define WATCH_CLARIFY_OPTION_CHARS 28
+#elif defined(PBL_PLATFORM_GABBRO)
+// Round 260x260: pictures sit in the middle of the circle.
+#define WATCH_MEDIA_WIDTH 200
+#define WATCH_MEDIA_HEIGHT 170
+#define WATCH_MEDIA_PBI_DEPTH 4
+#define WATCH_MEDIA_MAX_BYTES 40000
+#define WATCH_CLARIFY_OPTION_CHARS 24
 #elif defined(PBL_PLATFORM_BASALT)
 #define WATCH_MEDIA_WIDTH 144
 #define WATCH_MEDIA_HEIGHT 100
 #define WATCH_MEDIA_PBI_DEPTH 2
-#define WATCH_MEDIA_MAX_BYTES 23000
+#define WATCH_MEDIA_MAX_BYTES 8000
 #define WATCH_CLARIFY_OPTION_CHARS 20
 #elif defined(PBL_PLATFORM_CHALK)
 #define WATCH_MEDIA_WIDTH 144
 #define WATCH_MEDIA_HEIGHT 100
 #define WATCH_MEDIA_PBI_DEPTH 2
-#define WATCH_MEDIA_MAX_BYTES 23000
+#define WATCH_MEDIA_MAX_BYTES 8000
 #define WATCH_CLARIFY_OPTION_CHARS 18
 #else
 #define WATCH_MEDIA_WIDTH 144
@@ -60,6 +68,9 @@ struct ConversationManager {
   AppTimer* pending_input_timer;
   char* pending_input;
   int pending_input_attempts;
+  uint32_t active_request_id;
+  uint32_t seen_sequences[16];
+  uint8_t sequence_slot;
   void* context;
   ConversationManagerUpdateHandler handler;
   ConversationManagerEntryDeletedHandler deletion_handler;
@@ -89,15 +100,23 @@ static ConversationManager* s_conversation_manager;
 #define INPUT_SEND_MAX_ATTEMPTS 5
 #define BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID 10125
 
-static uint32_t s_next_android_request_id = 1;
+static uint32_t s_next_android_request_id = 0;
 
 void conversation_manager_init() {
+  // Seed request ids per launch so a claim from a previous launch can never
+  // match a new prompt on the phone.
+  srand(time(NULL));
+  s_next_android_request_id = ((uint32_t)time(NULL) << 8) ^ (uint32_t)(rand() & 0xFFFF);
+  if (s_next_android_request_id == 0) {
+    s_next_android_request_id = 1;
+  }
   events_app_message_request_outbox_size(1024);
   events_app_message_request_inbox_size(1024);
 }
 
 ConversationManager* conversation_manager_create() {
   ConversationManager* manager = bmalloc(sizeof(ConversationManager));
+  memset(manager, 0, sizeof(*manager));
   manager->conversation = conversation_create();
   manager->handler = NULL;
   manager->pending_input_timer = NULL;
@@ -147,6 +166,9 @@ void conversation_manager_add_input(ConversationManager* manager, const char* in
 }
 
 void conversation_manager_add_input_with_display(ConversationManager* manager, const char* input, const char* display_text) {
+  prv_clear_pending_input(manager);
+  manager->active_request_id = s_next_android_request_id++;
+  if (s_next_android_request_id == 0) { s_next_android_request_id = 1; }
   conversation_add_prompt(manager->conversation, display_text ? display_text : input);
   prv_conversation_updated(manager, true);
 
@@ -171,22 +193,19 @@ static bool prv_send_input(ConversationManager* manager, const char* input) {
   dict_write_cstring(iter, MESSAGE_KEY_PROMPT, bridge_bodge);
   free(bridge_bodge);
   dict_write_cstring(iter, MESSAGE_KEY_ASSISTANT_RUNTIME, settings_get_assistant_runtime());
-  char prompt_context[64];
+  char prompt_context[112];
   snprintf(
       prompt_context,
       sizeof(prompt_context),
-      "media=%dx%d;pbi=%d;maxb=%d;opt=%d",
+      "media=%dx%d;pbi=%d;maxb=%d;opt=%d;model=%s",
       WATCH_MEDIA_WIDTH,
       WATCH_MEDIA_HEIGHT,
       WATCH_MEDIA_PBI_DEPTH,
       WATCH_MEDIA_MAX_BYTES,
-      WATCH_CLARIFY_OPTION_CHARS);
+      WATCH_CLARIFY_OPTION_CHARS,
+      settings_get_gemini_model());
   dict_write_cstring(iter, MESSAGE_KEY_PROMPT_CONTEXT, prompt_context);
-  uint32_t request_id = s_next_android_request_id++;
-  if (s_next_android_request_id == 0) {
-    s_next_android_request_id = 1;
-  }
-  dict_write_uint32(iter, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID, request_id);
+  dict_write_uint32(iter, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID, manager->active_request_id);
 
   const char* thread_id = conversation_get_thread_id(manager->conversation);
   if (thread_id[0] != 0) {
@@ -267,6 +286,8 @@ static void prv_handle_app_message_outbox_sent(DictionaryIterator *iterator, voi
 static void prv_handle_app_message_outbox_failed(DictionaryIterator *iterator, AppMessageResult reason, void *context) {
   BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Sending message failed: %d", reason);
   ConversationManager* manager = context;
+  Tuple *request_tuple = dict_find(iterator, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID);
+  if (request_tuple && request_tuple->value->uint32 != manager->active_request_id) { return; }
   Tuple *prompt_tuple = dict_find(iterator, MESSAGE_KEY_PROMPT);
   if (prompt_tuple && prompt_tuple->length > 1) {
     prv_schedule_input_retry(manager, prompt_tuple->value->cstring);
@@ -278,6 +299,15 @@ static void prv_handle_app_message_outbox_failed(DictionaryIterator *iterator, A
 
 static void prv_handle_app_message_inbox_received(DictionaryIterator *iter, void *context) {
   ConversationManager* manager = context;
+  if (!conversation_manager_accepts_response(iter)) { return; }
+  Tuple *sequence = dict_find(iter, MESSAGE_KEY_TRANSPORT_SEQUENCE);
+  if (sequence && sequence->value->uint32 != 0) {
+    uint32_t value = sequence->value->uint32;
+    for (int i = 0; i < 16; ++i) {
+      if (manager->seen_sequences[i] == value) { return; }
+    }
+    manager->seen_sequences[manager->sequence_slot++ % 16] = value;
+  }
   for (Tuple *tuple = dict_read_first(iter); tuple; tuple = dict_read_next(iter)) {
     if (tuple->key == MESSAGE_KEY_CHAT) {
       if (conversation_get_last_unanswered_clarification(manager->conversation) != NULL) {
@@ -630,4 +660,10 @@ static bool prv_handle_memory_pressure(void *context) {
   }
   conversation_delete_first_entry(manager->conversation);
   return true;
+}
+
+bool conversation_manager_accepts_response(DictionaryIterator *iter) {
+  Tuple *request = dict_find(iter, MESSAGE_KEY_RESPONSE_REQUEST_ID);
+  if (!request) { return true; } // Settings and legacy phone messages.
+  return s_conversation_manager && s_conversation_manager->active_request_id == request->value->uint32;
 }

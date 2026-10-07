@@ -1,0 +1,90 @@
+name: Store screenshots
+
+# Runs Billy in the Pebble emulator against scripted demo answers (no real
+# Gemini, no real account) and captures store screenshots for each platform.
+on:
+  workflow_dispatch:
+    inputs:
+      photo_file:
+        description: 'Pin a Wikimedia Commons file for the photo scene (e.g. File:Example.jpg). Blank = the pinned default in fetch_photo.py.'
+        required: false
+        default: ''
+  push:
+    paths:
+      - 'tools/screenshots/**'
+      - '.github/workflows/screenshots.yaml'
+
+permissions:
+  contents: write
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-24.04
+    env:
+      TZ: America/Los_Angeles
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Pebble tool, SDK and emulator libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsdl1.2debian libfdt1 libpixman-1-0 libfreetype6 libglib2.0-0 xvfb > /dev/null || true
+          pip install --quiet pebble-tool pillow
+          mkdir -p ~/.pebble-sdk && touch ~/.pebble-sdk/NO_TRACKING
+          yes | pebble sdk install latest
+      - name: Pick the demo photo
+        env:
+          PHOTO_FILE: ${{ github.event.inputs.photo_file }}
+        run: |
+          mkdir -p shots
+          set -o pipefail
+          python3 tools/screenshots/fetch_photo.py shots 2>&1 | tee shots/photo.log
+      - name: Build screenshot PBW
+        run: |
+          sed -i 's/#define ENABLE_FEATURE_STORE_SCREENSHOTS 0/#define ENABLE_FEATURE_STORE_SCREENSHOTS 1/' app/src/c/features.h
+          grep -q 'ENABLE_FEATURE_STORE_SCREENSHOTS 1' app/src/c/features.h
+          cd app && (yes | pebble build > ../shots/build.log 2>&1); tail -5 ../shots/build.log; test -f build/app.pbw
+      - name: Capture
+        run: |
+          PLATFORMS=$(node -e "console.log(require('./app/package.json').pebble.targetPlatforms.join(' '))")
+          echo "Platforms: $PLATFORMS"
+          # The watch takes its clock from this machine: show a tidy 9:41.
+          sudo timedatectl set-ntp false 2>/dev/null || true
+          sudo date -s "$(date +%Y-%m-%d) 09:41:00"
+          xvfb-run -a bash tools/screenshots/capture.sh app/build/app.pbw shots $PLATFORMS 2>&1 | tee shots/capture.log
+      - name: Package
+        if: always()
+        run: |
+          mkdir -p shots && cd shots && ls -R
+          for d in */; do
+            d=${d%/}
+            [ "$d" = candidates ] && continue
+            for f in "$d"/*.png; do [ -f "$f" ] && cp "$f" "../shot-${d}-$(basename "$f")"; done
+          done
+          cd candidates 2>/dev/null && for f in *; do cp "$f" "../../candidate-$f"; done; cd ..
+          cd .. && zip -qr store-screenshots.zip shots
+          ls -la
+      - name: Clear previous screenshots
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete store-screenshots --yes --repo ${{ github.repository }} || true
+      - name: Publish
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: store-screenshots
+          name: Store screenshots (work in progress)
+          prerelease: true
+          make_latest: false
+          files: |
+            shot-*
+            candidate-*
+            store-screenshots.zip
+            shots/CREDITS.txt
+            shots/*.log

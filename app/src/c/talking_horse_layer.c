@@ -157,7 +157,8 @@ static GFont prv_load_font_for_bounds(GRect bounds, bool *is_custom) {
   }
   return fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
 #else
-  return fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  // Small screens: the goat leaves little room beside the bubble.
+  return fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
 #endif
 }
 
