@@ -253,7 +253,7 @@ private suspend fun ResponseSender.sendClarificationCard(
     }
     val payload = mutableMapOf<UInt, PebbleDictionaryItem>(
         BillyPebbleProtocol.CLARIFY_WIDGET to PebbleDictionaryItem.Int32(1),
-        BillyPebbleProtocol.CLARIFY_QUESTION to PebbleDictionaryItem.Text(card.question.take(220)),
+        BillyPebbleProtocol.CLARIFY_QUESTION to PebbleDictionaryItem.Text(card.question.take(com.tombo.billyassistant.companion.agent.tools.PendingActions.MAX_QUESTION_CHARS)),
         BillyPebbleProtocol.CLARIFY_CONTEXT to PebbleDictionaryItem.Text(card.context.take(560)),
         BillyPebbleProtocol.CLARIFY_OPTION_COUNT to PebbleDictionaryItem.Int32(options.size),
     )
@@ -445,8 +445,9 @@ private fun String?.toWatchMediaSpec(): WatchMediaSpec {
 
 object BillyPebbleProtocol {
     val APP_UUID: UUID = UUID.fromString("f74b42bb-3473-444f-9722-dd34136d9b02")
-    const val CHAT_CHUNK_LENGTH = 80
-    const val IMAGE_CHUNK_LENGTH = 500
+    // One watch message holds 1024 bytes; leave room for keys and request ids.
+    const val CHAT_CHUNK_LENGTH = 200
+    const val IMAGE_CHUNK_LENGTH = 900
     const val IMAGE_CHUNK_START_DELAY_MS = 75L
     private val imageIds = AtomicInteger(10_000)
 

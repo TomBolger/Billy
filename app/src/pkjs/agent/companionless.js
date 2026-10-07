@@ -26,7 +26,8 @@ var config = require('../config');
 var location = require('../location');
 
 var MAX_STEPS = 8;
-var CHUNK_LENGTH = 80;
+// Fewer, larger pieces: each watch message waits for the previous one.
+var CHUNK_LENGTH = 200;
 
 function CompanionlessRuntime(session) {
     this.session = session;

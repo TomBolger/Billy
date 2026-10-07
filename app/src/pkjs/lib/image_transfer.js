@@ -16,7 +16,8 @@
 
 var messageQueue = require('./message_queue').Queue;
 
-var CHUNK_SIZE = 500;
+// One watch message holds 1024 bytes; leave room for keys and request ids.
+var CHUNK_SIZE = 900;
 
 function ImageManager() {
     this.nextImageId = 1;
