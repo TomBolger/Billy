@@ -115,12 +115,19 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         generation: String,
     ) {
         val deadline = android.os.SystemClock.elapsedRealtime() + REMOTE_TIMEOUT_MS
-        val checkCurrent = {
-            if (currentRequests[watch.toString()] != generation || android.os.SystemClock.elapsedRealtime() > deadline) {
-                throw CancellationException("Request superseded or expired")
+        val checkOwner = {
+            if (currentRequests[watch.toString()] != generation) {
+                throw CancellationException("Request superseded")
             }
         }
-        val sender = ResponseSender(DefaultPebbleSender(this), requestId, checkCurrent)
+        val checkCurrent = {
+            checkOwner()
+            if (android.os.SystemClock.elapsedRealtime() > deadline) {
+                throw CancellationException("Request expired")
+            }
+        }
+        // An expired request must still be able to deliver its timeout warning.
+        val sender = ResponseSender(DefaultPebbleSender(this), requestId, checkOwner)
         try {
             sender.sendThreadId(threadId, watch)
             sender.sendFunction("Thinking...", watch)
@@ -162,8 +169,14 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
                 }
             }
         } catch (e: CancellationException) {
-            // A new prompt owns the watch now. Never send an old warning into it.
-            Log.d(TAG, "Stopped obsolete request")
+            // Only the request that still owns the watch may report a timeout.
+            if (currentRequests[watch.toString()] == generation) {
+                runCatching {
+                    sender.sendWarning("That took too long. Please try again.", watch)
+                    sender.sendDone(watch)
+                }
+            }
+            Log.d(TAG, "Stopped obsolete or expired request")
         } catch (e: Exception) {
             Log.e(TAG, "Answering prompt failed", e)
             runCatching {
