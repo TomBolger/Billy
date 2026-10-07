@@ -30,6 +30,7 @@ async function queueTest() {
 }
 function startupTest() {
     const listeners = {};
+    const setup = [{type: 'heading', defaultValue: 'Billy'}];
     evaluate('index.js', {Pebble: {
         addEventListener: (event, fn) => { listeners[event] = fn; },
         sendAppMessage() {},
@@ -38,7 +39,7 @@ function startupTest() {
     }, window: {}}, {
         './location': {update() {}}, './session': {},
         './quota': {fetchQuota: cb => cb({hasSubscription: true})},
-        '@rebble/clay': function() {}, './config.json': {}, './custom_config': {},
+        '@rebble/clay': function(config) { assert.strictEqual(config[0].defaultValue, 'Billy 0.5'); }, './config.json': setup, './custom_config': {},
         './config': {getGeminiModel: () => 'gemini-test'}, './reminders': {},
         './lib/feedback': {}, 'package.json': {version: '0.5'}, './agent/runtime_router': {},
         './agent/relay': {}, message_keys: {}

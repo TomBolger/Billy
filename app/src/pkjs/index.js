@@ -28,6 +28,7 @@ var runtimeRouter = require('./agent/runtime_router');
 var relay = require('./agent/relay');
 
 
+// Keep setup's version label in sync with the PBW metadata.
 clayConfig[0].defaultValue = 'Billy ' + package_json.version;
 var clay = new Clay(clayConfig, customConfigFunction, {autoHandleEvents: false});
 var messageKeys = require('message_keys');
