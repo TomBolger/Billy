@@ -14,6 +14,9 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object PendingActions {
     private const val TTL_MS = 15 * 60 * 1000L
+    /** One watch message carries the card; ~400 characters of question fit with the options. */
+    const val MAX_QUESTION_CHARS = 400
+    private const val PAGE_CHARS = 340
     const val CONTEXT_PREFIX = "pending="
 
     data class Choice(val label: String, val run: () -> PendingOutcome)
@@ -34,7 +37,7 @@ object PendingActions {
         val kept = choices.take(if (cancelLabel != null) 2 else 3)
         entries[token] = Entry(question, kept, cancelLabel, System.currentTimeMillis())
         return ClarificationCard(
-            question = question.take(220),
+            question = question.take(MAX_QUESTION_CHARS),
             context = CONTEXT_PREFIX + token,
             options = kept.mapIndexed { index, choice -> "${choice.label.substringBefore("|")}|choice=$index" } +
                 listOfNotNull(cancelLabel?.let { "$it|choice=cancel" }),
@@ -46,7 +49,7 @@ object PendingActions {
         // Show all content on successive watch pages; Send exists only on the last page.
         val pages = reviewPages(question)
         fun page(index: Int): ClarificationCard {
-            val text = if (pages.size == 1) pages[index] else "${index + 1}/${pages.size}\n${pages[index]}"
+            val text = if (pages.size == 1) pages[index] else "(${index + 1}/${pages.size})\n${pages[index].trimEnd()}"
             return if (index == pages.lastIndex) {
                 offer(text, listOf(Choice(actionLabel, action)))
             } else {
@@ -56,16 +59,24 @@ object PendingActions {
         return page(0)
     }
 
+    /** Splits [text] into watch-sized pages at word or line breaks, losing nothing. */
     internal fun reviewPages(text: String): List<String> {
+        if (text.length <= PAGE_CHARS) return listOf(text)
         val pages = mutableListOf<String>()
         var offset = 0
         while (offset < text.length) {
-            var end = minOf(offset + 70, text.length)
-            if (end < text.length && text[end - 1].isHighSurrogate()) end--
+            var end = minOf(offset + PAGE_CHARS, text.length)
+            if (end < text.length) {
+                // Prefer a line break, then a space, in the last third of the page.
+                val window = text.substring(offset, end)
+                val cut = maxOf(window.lastIndexOf('\n'), window.lastIndexOf(' '))
+                if (cut > PAGE_CHARS * 2 / 3) end = offset + cut + 1
+                if (text[end - 1].isHighSurrogate()) end--
+            }
             pages += text.substring(offset, end)
             offset = end
         }
-        return pages.ifEmpty { listOf("") }
+        return pages
     }
 
     fun resolve(token: String, answer: String): Resolution {

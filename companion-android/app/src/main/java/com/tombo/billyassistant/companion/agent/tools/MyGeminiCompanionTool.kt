@@ -60,17 +60,28 @@ class MyGeminiCompanionTool(
                         }
                     }
                 }
-                var answer = GeminiImageReply.forWatch(plain(reply.text), image != null)
-                    .ifBlank { if (image != null) "" else "Done." }
-                if (image == null && reply.imageUrls.isNotEmpty()) answer += " (Couldn't load the picture on the watch.)"
+                // Gemini's text is written for its own app (it may say it can't show a
+                // picture that Billy did show, or describe UI the watch doesn't have).
+                // Billy writes the watch reply itself from these facts.
+                val pictureFound = reply.imageUrls.isNotEmpty()
                 CompanionToolExecution(
                     response = JSONObject()
                         .put("status", "ok")
-                        .put("summary", "Answer from the user's Gemini account. Relay it in your own short words." + if (image != null) " The first picture it showed is now on the watch." else "")
-                        .put("answer", answer.take(4000)),
-                    finalText = answer,
+                        .put("gemini_answer", plain(reply.text).take(4000))
+                        .put("picture_on_watch", image != null)
+                        .put("picture_found_but_not_shown", pictureFound && image == null)
+                        .put(
+                            "summary",
+                            "Answer from the user's own Gemini account. It was written for the Gemini app, so ignore anything it " +
+                                "says about what it can or can't display. Write the watch reply yourself in 1-2 short sentences " +
+                                "from the facts in gemini_answer. " +
+                                when {
+                                    image != null -> "The picture IS showing on the watch right now; say so naturally, never that it can't be shown."
+                                    pictureFound -> "Gemini found a picture but it couldn't be loaded onto the watch; say that briefly."
+                                    else -> "No picture is involved."
+                                },
+                        ),
                     watchImage = image,
-                    endTurn = true,
                 )
             }
         }

@@ -27,7 +27,11 @@ class PendingActionsTest {
 
     @Test fun fullMessageIsPreservedAndSendOnlyExistsOnLastPage() {
         val message = "Email somebody@example.com\nSubject: Hello\n" + "A message including 😀 and private details. ".repeat(25)
-        assertEquals(message, PendingActions.reviewPages(message).joinToString(""))
+        val pages = PendingActions.reviewPages(message)
+        assertEquals(message, pages.joinToString(""))
+        // Pages break between words, not inside them.
+        pages.dropLast(1).forEach { assertTrue(it.endsWith(" ") || it.endsWith("\n")) }
+        assertTrue(pages.size in 2..5)
         var sent = 0
         var card = PendingActions.confirm(message, "Send") { sent++; PendingOutcome("sent") }
         var pages = 0
@@ -47,5 +51,11 @@ class PendingActionsTest {
         val card = PendingActions.confirm("Long message ".repeat(50), "Send") { sent = true; PendingOutcome("sent") }
         assertTrue(PendingActions.resolve(token(card), card.options.last()) is PendingActions.Resolution.Cancelled)
         assertFalse(sent)
+    }
+
+    @Test fun shortMessagesFitOnOnePage() {
+        val card = PendingActions.confirm("Text Sam (555-0100):\n\"Running ten minutes late!\"", "Send") { PendingOutcome("sent") }
+        assertTrue(card.options[0].startsWith("Send|"))
+        assertFalse(card.question.startsWith("("))
     }
 }
