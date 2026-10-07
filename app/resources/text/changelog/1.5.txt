@@ -1,8 +1,7 @@
 # Billy 0.5
-This test release improves message delivery, action confirmation, and reminder reliability.
-## Personal Gemini
-Billy can use your own Gemini API key directly from the Pebble phone app, or through the optional Android companion.
-## Optional Android Companion
-The companion adds private phone and Google account tools for Calendar, Gmail, Tasks, Drive, Docs, Sheets, Slides, Photos, weather, maps, and media transfer without a hosted helper server.
-## Pebble-first UI
-Billy keeps Bobby's fast watch features, including on-watch alarms, timers, reminders, weather cards, sample prompts, feedback, settings, and Pebble-style chat formatting.
+## More watches
+Billy now runs on Pebble Time, Time Round, Pebble 2, Pebble 2 Duo and Pebble Round 2, as well as Pebble Time 2.
+## Your Gemini account
+With Billy Companion you can link your own Gemini account to find photos in your Google Photos library and use what Gemini knows about you.
+## More reliable
+Answers no longer get lost or land in the wrong chat, reminders only say "set" once they really are, and you can read a whole message before sending it.

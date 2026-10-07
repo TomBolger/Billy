@@ -1,162 +1,79 @@
 # Billy
 
-Billy is a Pebble smartwatch assistant built from Bobby with a different goal: keep the lightweight, Pebble-native assistant experience, but make it useful with modern personal AI and optional phone-side Google account tools.
+Billy is a Gemini assistant for Pebble watches, forked from Bobby. Ask a
+question or give a task by voice; Billy answers on the watch with short text
+and Pebble-style cards (weather, timers, numbers, maps, pictures) and can act
+on your phone and Google account.
 
-Billy is designed to be a drop-in Pebble app. It does not require a hosted helper server, proxy, Redis instance, or developer-operated backend. Users bring their own Gemini API key for model usage, and the optional Android companion keeps private Google API calls on the user's phone.
+No server is involved: requests go from your phone to Google with your own
+Gemini API key.
 
-## What Billy Does
+![Billy on Pebble Time 2](store/screenshots/emery/1-welcome-cover.png)
 
-- Answers natural-language questions from a Pebble watch using Gemini.
-- Preserves Bobby's watch-local features: alarms, timers, timeline reminders, settings, feedback, sample prompts, and weather cards.
-- Supports a companionless mode that runs through the Pebble phone app JavaScript runtime.
-- Supports an optional Android companion for richer Google account and phone tools.
-- Stores a local Billy profile/memory layer so user-approved facts can persist across prompts.
-- Displays Pebble-style cards for weather, maps, clarification choices, and transferred media.
-- Transfers selected photos and web images to the watch instead of only describing them.
-- Uses brief smartwatch-focused responses instead of long desktop-chat output.
+## Watches
 
-## Runtime Modes
+Pebble Time 2 (emery), Pebble Round 2 (gabbro), Pebble Time / Time Steel
+(basalt), Pebble Time Round (chalk), Pebble 2 (diorite), Pebble 2 Duo (flint).
+The original Pebble (aplite) has too little memory.
 
-Billy has three runtime options in Clay settings:
+## Two ways to run
 
-- `Automatic`: use the Android companion when it is available, otherwise use the companionless Gemini path.
-- `Companionless`: use only the Pebble phone app JavaScript runtime.
-- `Android companion`: require the Billy Companion app for all AI requests.
+- **Watch app only** (iPhone or Android): install the PBW and paste a Gemini
+  API key in its settings. Includes alarms, timers, timeline reminders,
+  weather, maps, pictures, web search, a read-only calendar from iCal links,
+  and memory.
+- **With Billy Companion** (Android): adds Google Calendar, Tasks, Gmail,
+  Drive/Docs, contacts, texts and calls, notifications and music, your phone's
+  photos, navigation, and opening apps. Sending, calling and deleting always
+  ask for confirmation on the watch.
 
-The companionless path is important because Billy should still be useful as a single PBW install. The Android companion is the enhanced mode for private data, faster phone-side execution, media handling, Google APIs, and maps.
+## Setup
 
-## Bring Your Own Keys
+1. Get a Gemini API key at https://aistudio.google.com/app/apikey (you pay
+   Google for your own usage).
+2. Watch app: open Billy's settings in the Pebble app and paste the key.
+3. Companion (optional): install the APK, open Billy Companion and follow its
+   four steps: Gemini key, Connect Google, phone access, memory.
+4. Optional, experimental: in Billy Companion, sign in to your own Gemini
+   account (card 5). Billy can then use what only the Gemini app knows: your
+   whole Google Photos library, Gemini's saved info and past chats, Gems,
+   Keep, YouTube and Google Home. If it stops working, Billy falls back to its
+   normal tools. The sign-in stays on the phone.
 
-Billy does not ship with the developer's API keys. Each user supplies their own credentials.
+Personal context can also be imported as a Profile Pack; see
+`docs/BILLY_PROFILE_PACK_TEMPLATE.md`.
 
-Gemini API key:
+## Building
 
-- Used for model calls to `generativelanguage.googleapis.com`.
-- Created by the user in Google AI Studio.
-- Stored locally by the Pebble phone app and/or Billy Companion.
-- Paid for by the user's own Google account or billing setup.
-
-Optional Google Maps Platform API key:
-
-- Used by Billy Companion for richer Places, Routes, Geocoding, Time Zone, and Static Maps features.
-- Stored locally on the phone.
-- Should be restricted to the Maps APIs Billy uses.
-
-Google OAuth:
-
-- Used by Billy Companion for user-approved Google account access.
-- Grants Calendar, Tasks, Gmail, Drive, Docs, Sheets, Slides, Forms, Contacts, and bounded Google Photos API access where Google permits it.
-- Identifies the app by Android package name and signing certificate SHA-1.
-- Does not pay for Gemini model usage and does not replace the Gemini API key.
-
-Billy profile/memory:
-
-- Stored locally on the user's phone.
-- Can be bootstrapped from Google OAuth identity/profile data.
-- Can be bootstrapped from a reviewed Billy Profile Pack generated with
-  `docs/BILLY_PROFILE_PACK_TEMPLATE.md`.
-- Billy Companion can import a filled Markdown Profile Pack, index the facts by
-  topic, and retrieve relevant slices per request.
-- Can be edited through Billy Companion or explicit watch requests such as "remember that my dog is named Scout."
-- Is included as compact prompt context for Billy requests.
-- Does not inherit consumer Gemini app memories, Gemini app chat history, or Gemini Connected Apps context.
-
-## Optional Android Companion
-
-The Android companion lives in `companion-android/`.
-
-It can:
-
-- receive watch prompts through PebbleKit,
-- verify the user's Gemini API key,
-- request Google account consent on device,
-- load basic Google profile information into Billy's local profile store,
-- remember or forget explicit user-approved facts for future Billy prompts,
-- read and create Google Calendar events,
-- read and manage Google Tasks,
-- draft and send Gmail with confirmation,
-- search Drive metadata and work with Docs, Sheets, Slides, and Forms APIs,
-- use Google Photos Picker and limited Photos Library API paths,
-- read Android local photos when granted permission,
-- render images for watch transfer,
-- call Google Maps Platform APIs when the user supplies a Maps key,
-- launch Android navigation intents from watch map flows.
-
-The companion does not run a local server. It is an Android app that listens for Billy watch requests when Android allows it to run.
-
-## Known Google API Limits
-
-Google Keep is not available for normal personal OAuth access in the same way Calendar, Gmail, Tasks, Drive, Docs, Sheets, and Slides are. Billy reports that restriction instead of pretending to create a Keep note somewhere else.
-
-Google Photos has public API limits. The Picker API can retrieve media the user explicitly selects. Current Photos Library API access does not provide the same full-library semantic search that the official Google Photos or Gemini apps can use.
-
-## Building The Pebble App
-
-From `app/` with the Pebble SDK installed:
-
-```sh
-pebble build
-```
-
-The PBW is written to:
-
-```text
-app/build/app.pbw
-```
-
-Billy currently targets Core Time 2 / Emery-class hardware so media and UI behavior do not have to be limited to older low-resolution Pebble targets.
-
-## Building The Android Companion
-
-From `companion-android/`:
-
-```sh
-./gradlew assembleDebug
-```
-
-On Windows:
+GitHub Actions builds everything on each push (`.github/workflows/build-pbw.yaml`)
+and publishes `Billy-dev.pbw` and `BillyCompanion-dev.apk` to the
+`dev-<branch>` prerelease. Locally:
 
 ```powershell
-.\gradlew.bat assembleDebug
+cd app; pebble build                                  # app/build/app.pbw
+cd companion-android; .\gradlew.bat assembleDebug     # app/build/outputs/apk/debug/
 ```
 
-The debug APK is written to:
+Tests: `node tools/pkjs-tests/agent.test.js`, `node tools/pkjs-tests/delivery.test.js`,
+and `.\gradlew.bat testDebugUnitTest` in `companion-android`.
 
-```text
-companion-android/app/build/outputs/apk/debug/app-debug.apk
-```
+Store screenshots come from the emulator with scripted answers
+(`.github/workflows/screenshots.yaml`); the results are in `store/screenshots/`.
 
-For distribution, use a properly signed release build or Play Store release, then add the release or Play App Signing SHA-1 to the Google OAuth client configuration.
+### Google setup (developer)
 
-## User Setup
-
-See `docs/USER_SETUP.md` for the current setup notes covering:
-
-- Gemini API keys,
-- Google OAuth clients and scopes,
-- Google API enablement,
-- optional Google Maps Platform keys,
-- credential separation so users pay for their own Gemini and Maps usage.
-- the Billy Profile Pack template for importing reviewed personal context.
-
-## Project Status
-
-Billy 0.5 is the current test release. The main architecture is in place: one PBW, optional Android companion, no helper server, user-owned API keys, and Pebble-native cards/media. Google API coverage is still actively being hardened.
+Google sign-in identifies Billy Companion by package
+`com.tombo.billyassistant.companion` and signing SHA-1
+`1B:98:A8:38:72:6D:27:12:AA:25:3B:2B:AE:AF:BB:B3:8D:2F:16:1B`. Enable the
+Calendar, Tasks, Gmail, Drive, People, Docs, Sheets, Slides and Forms APIs in
+the project that owns the Android OAuth client. A Play Store release needs its own SHA-1 added there.
 
 ## Credits
 
-Billy is forked from Bobby / Tiny Assistant by the Rebble and Pebble developer community.
+Forked from Bobby / Tiny Assistant by the Rebble and Pebble community.
+Developer: Thomas Bolger. Artwork: Sarah Bolger and Katherine Berry.
+The dog photo in the store screenshots is a public-domain US Forest Service
+photo (see `store/screenshots/CREDITS.txt`).
 
-Developer: Thomas Bolger.
-
-Artwork and iconography: Sarah Bolger and Katherine Berry.
-
-Original Bobby credits and Apache 2.0 licensing are preserved where applicable.
-
-## License
-
-Apache 2.0; see `LICENSE` for details.
-
-## Disclaimer
-
-Billy is not an official Google, Pebble, Core Devices, or Rebble product. Google API availability, scopes, pricing, quotas, and OAuth requirements are controlled by Google and can change independently of Billy.
+Apache 2.0; see `LICENSE`. Billy is not an official Google, Pebble, Core
+Devices or Rebble product.
