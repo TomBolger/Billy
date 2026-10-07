@@ -27,11 +27,11 @@ class PendingActionsTest {
 
     @Test fun fullMessageIsPreservedAndSendOnlyExistsOnLastPage() {
         val message = "Email somebody@example.com\nSubject: Hello\n" + "A message including 😀 and private details. ".repeat(25)
-        val pages = PendingActions.reviewPages(message)
-        assertEquals(message, pages.joinToString(""))
+        val split = PendingActions.reviewPages(message)
+        assertEquals(message, split.joinToString(""))
         // Pages break between words, not inside them.
-        pages.dropLast(1).forEach { assertTrue(it.endsWith(" ") || it.endsWith("\n")) }
-        assertTrue(pages.size in 2..5)
+        split.dropLast(1).forEach { assertTrue(it.endsWith(" ") || it.endsWith("\n")) }
+        assertTrue(split.size in 2..5)
         var sent = 0
         var card = PendingActions.confirm(message, "Send") { sent++; PendingOutcome("sent") }
         var pages = 0

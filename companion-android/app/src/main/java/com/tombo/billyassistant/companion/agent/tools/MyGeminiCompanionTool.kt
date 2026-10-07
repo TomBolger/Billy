@@ -70,14 +70,22 @@ class MyGeminiCompanionTool(
                         .put("gemini_answer", plain(reply.text).take(4000))
                         .put("picture_on_watch", image != null)
                         .put("picture_found_but_not_shown", pictureFound && image == null)
+                        // Shown as-is only if the model returns no text of its own.
                         .put(
                             "summary",
-                            "Answer from the user's own Gemini account. It was written for the Gemini app, so ignore anything it " +
-                                "says about what it can or can't display. Write the watch reply yourself in 1-2 short sentences " +
-                                "from the facts in gemini_answer. " +
+                            when {
+                                image != null -> "Here it is, from your Gemini account."
+                                pictureFound -> "Your Gemini found it, but the picture couldn't be loaded onto the watch."
+                                else -> "Answered by your Gemini account."
+                            },
+                        )
+                        .put(
+                            "how_to_reply",
+                            "gemini_answer was written for the Gemini app: ignore anything it says about what it can or can't " +
+                                "display. Write the watch reply yourself in 1-2 short sentences from its facts. " +
                                 when {
-                                    image != null -> "The picture IS showing on the watch right now; say so naturally, never that it can't be shown."
-                                    pictureFound -> "Gemini found a picture but it couldn't be loaded onto the watch; say that briefly."
+                                    image != null -> "The picture IS showing on the watch right now; never say it can't be shown."
+                                    pictureFound -> "Gemini found a picture but it couldn't be loaded onto the watch; say so briefly."
                                     else -> "No picture is involved."
                                 },
                         ),
