@@ -58,7 +58,7 @@ exports.map = function(session, params) {
     for (var i = 0; i < pbi.length; i++) {
         imageData[i] = pbi.charCodeAt(i);
     }
-    var imageId = imageManager.sendImage(width, height, imageData);
+    var imageId = imageManager.sendImage(width, height, imageData, session);
     var userLocation = 0;
     if (params['user_location_x'] && params['user_location_y']) {
         userLocation = (params['user_location_x'] << 16) | params['user_location_y'];

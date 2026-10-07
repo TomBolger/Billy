@@ -82,6 +82,8 @@ function doQuotaWarning() {
     });
 }
 
+var handledPrompts = {};
+
 function handleAppMessage(e) {
     console.log("Inbound app message!");
     console.log(JSON.stringify(e));
@@ -99,6 +101,15 @@ function handleAppMessage(e) {
         return;
     }
     if (data.PROMPT) {
+        var id = String(data.ANDROID_REQUEST_ID || '');
+        var now = Date.now();
+        Object.keys(handledPrompts).forEach(function(key) {
+            if (now - handledPrompts[key] > 600000) { delete handledPrompts[key]; }
+        });
+        if (id && id !== '0') {
+            if (handledPrompts[id]) { return; }
+            handledPrompts[id] = now;
+        }
         console.log("Starting a new Session...");
         var s = new session.Session(data.PROMPT, data.THREAD_ID, data.ANDROID_REQUEST_ID);
         s.run();

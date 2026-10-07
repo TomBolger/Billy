@@ -26,7 +26,7 @@ import java.time.format.DateTimeFormatter
  * - A tool's finalText is a suggested reply, not an early exit, so the model can
  *   chain further tools or recover from an error.
  */
-class GeminiClient(preferredModel: String? = null) {
+class GeminiClient(preferredModel: String? = null, private val checkActive: () -> Unit = {}) {
     private val models: List<String> = buildList {
         preferredModel?.trim()?.takeIf { it.startsWith("gemini-") }?.let { add(it) }
         FALLBACK_MODELS.forEach { if (it !in this) add(it) }
@@ -141,6 +141,7 @@ class GeminiClient(preferredModel: String? = null) {
         val executed = mutableMapOf<String, JSONObject>()
 
         for (step in 0 until MAX_STEPS) {
+            checkActive()
             val forceText = step == MAX_STEPS - 1
             val response = if (pinnedModel == null) {
                 generateFirst(key, contents, toolDeclarations, forceText)
@@ -173,6 +174,7 @@ class GeminiClient(preferredModel: String? = null) {
             val extraParts = JSONArray()
             var endWith: String? = null
             for (call in parsed.calls) {
+                checkActive()
                 val dedupeKey = call.name + ":" + call.args.toString()
                 val previous = executed[dedupeKey]
                 val execution = if (previous != null && call.name in MUTATING_TOOLS) {
@@ -183,6 +185,7 @@ class GeminiClient(preferredModel: String? = null) {
                     )
                 } else {
                     runCatching { toolExecutor(call.name, call.args) }.getOrElse { e ->
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         CompanionToolExecution(
                             JSONObject().put("status", "error").put("summary", "Tool ${call.name} crashed: ${e.message ?: e.javaClass.simpleName}"),
                         )
@@ -268,6 +271,7 @@ class GeminiClient(preferredModel: String? = null) {
         var tier = 0
         var attempt = 0
         while (true) {
+            checkActive()
             attempt++
             val body = buildBody(model, contents, declarations, tier, forceText)
             when (val http = post(apiKey, model, body)) {
