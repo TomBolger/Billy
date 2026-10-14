@@ -29,16 +29,28 @@ The original Pebble (aplite) has too little memory.
 
 ## Setup
 
-1. Get a Gemini API key at https://aistudio.google.com/app/apikey (you pay
-   Google for your own usage).
-2. Watch app: open Billy's settings in the Pebble app and paste the key.
-3. Companion (optional): install the APK, open Billy Companion and follow its
-   four steps: Gemini key, Connect Google, phone access, memory.
-4. Optional, experimental: in Billy Companion, sign in to your own Gemini
-   account (card 5). Billy can then use what only the Gemini app knows: your
-   whole Google Photos library, Gemini's saved info and past chats, Gems,
-   Keep, YouTube and Google Home. If it stops working, Billy falls back to its
-   normal tools. The sign-in stays on the phone.
+Everything runs on your own accounts; nobody has to invite you.
+
+1. **Watch app:** install `Billy-x.pbw` from the
+   [latest release](https://github.com/TomBolger/Billy/releases/latest) by
+   opening it on your phone with the Pebble app.
+2. **Gemini key (free):** go to https://aistudio.google.com/app/apikey, tap
+   *Create API key* and copy it.
+   - iPhone, or Android without the companion: paste it in Billy's settings
+     in the Pebble app.
+   - With Billy Companion: paste it in step 1 of the companion instead.
+3. **Billy Companion (Android, optional):** install `BillyCompanion-x.apk`
+   from the same release. Its screen lists each step with a button:
+   Gemini key, phone access, Google account, memory.
+4. **Google account (optional, about 10 minutes):** in Billy Companion tap
+   *Set up Google*. It walks you through making your own free Google Cloud
+   project (no card needed) with a button for every page, then signing in.
+   Google will say the app isn't verified, because it's your own project:
+   tap *Advanced*, then *Go to Billy (unsafe)*.
+5. **Your Gemini account (optional, experimental):** card 5 in Billy
+   Companion. Billy can then use what only the Gemini app knows: your Google
+   Photos library, Gemini's saved info and past chats, Gems, Keep, YouTube
+   and Google Home. The sign-in stays on the phone.
 
 Personal context can also be imported as a Profile Pack; see
 `docs/BILLY_PROFILE_PACK_TEMPLATE.md`.
@@ -60,13 +72,14 @@ and `.\gradlew.bat testDebugUnitTest` in `companion-android`.
 Store screenshots come from the emulator with scripted answers
 (`.github/workflows/screenshots.yaml`); the results are in `store/screenshots/`.
 
-### Google setup (developer)
+### Google sign-in
 
-Google sign-in identifies Billy Companion by package
-`com.tombo.billyassistant.companion` and signing SHA-1
-`1B:98:A8:38:72:6D:27:12:AA:25:3B:2B:AE:AF:BB:B3:8D:2F:16:1B`. Enable the
-Calendar, Tasks, Gmail, Drive, People, Docs, Sheets, Slides and Forms APIs in
-the project that owns the Android OAuth client. A Play Store release needs its own SHA-1 added there.
+Each user signs in through their own Google Cloud project with a "Desktop
+app" OAuth client (loopback redirect with PKCE, see
+`companion-android/.../auth/OwnGoogleProject.kt`). The older Android sign-in
+under Advanced only works for testers added to the developer's project
+(package `com.tombo.billyassistant.companion`, SHA-1
+`1B:98:A8:38:72:6D:27:12:AA:25:3B:2B:AE:AF:BB:B3:8D:2F:16:1B`).
 
 ## Credits
 

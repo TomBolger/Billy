@@ -50,6 +50,19 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".GoogleSetupActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:label="Set up Google">
+            <!-- The "Back to Billy" link on the page shown after Google sign-in. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="billy-companion" android:host="google-setup" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".gemini.GeminiSignInActivity"
             android:exported="false"
             android:label="Sign in to Gemini" />

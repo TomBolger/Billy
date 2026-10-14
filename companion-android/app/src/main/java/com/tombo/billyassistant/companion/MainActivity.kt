@@ -30,6 +30,7 @@ import com.tombo.billyassistant.companion.auth.GoogleApiAuthorization
 import com.tombo.billyassistant.companion.auth.GoogleApiAuthorizationResult
 import com.tombo.billyassistant.companion.auth.GoogleApiScopes
 import com.tombo.billyassistant.companion.auth.GoogleAuthStore
+import com.tombo.billyassistant.companion.auth.OwnGoogleProject
 import com.tombo.billyassistant.companion.gemini.GeminiAccountBridge
 import com.tombo.billyassistant.companion.gemini.GeminiSignInActivity
 import com.tombo.billyassistant.companion.phone.BillyNotificationListener
@@ -47,7 +48,7 @@ import kotlinx.coroutines.launch
 import java.security.MessageDigest
 
 /**
- * Billy Companion setup: one screen, four steps. Everything Billy can do on
+ * Billy Companion setup: one screen. Only the Gemini key is required. Everything Billy can do on
  * the phone is listed with a single button to turn it on.
  */
 class MainActivity : ComponentActivity() {
@@ -119,8 +120,28 @@ class MainActivity : ComponentActivity() {
             ).padTop(12),
         )
 
+        if (missing.isNotEmpty()) {
+            content.addView(text(
+                "Billy Companion runs Billy's brain on this phone so it can use your phone and Google account. " +
+                    "You also need the Billy watch app on your Pebble.",
+                14f, COLOR_MUTED,
+            ).padTop(6))
+            content.addView(row(button("Get the watch app", primary = false) { open(RELEASES_URL) }))
+        }
+
         card("1  Gemini API key") {
             val settings = settingsStore.load()
+            if (settings.geminiApiKey.isBlank()) {
+                addView(text(
+                    "Billy thinks with Google's Gemini, using your own free key:\n" +
+                        "1. Tap Get a free key and sign in with Google.\n" +
+                        "2. Tap Create API key (accept the terms if asked).\n" +
+                        "3. Tap the copy icon next to the key.\n" +
+                        "4. Come back and tap Paste & test.\n" +
+                        "The free tier is plenty for everyday use.",
+                    14f, COLOR_MUTED,
+                ))
+            }
             val input = EditText(this@MainActivity).apply {
                 setText(settings.geminiApiKey)
                 hint = "Paste your key"
@@ -131,11 +152,22 @@ class MainActivity : ComponentActivity() {
                 background = rounded(COLOR_FIELD, COLOR_STROKE)
                 setPadding(dp(12), dp(10), dp(12), dp(10))
             }
-            addView(input, matchWrap())
-            addView(row(
-                button("Save & test") { saveAndTestKey(input.text.toString()) },
-                button("Get a free key", primary = false) { open("https://aistudio.google.com/app/apikey") },
-            ))
+            addView(input, matchWrap().apply { topMargin = dp(8) })
+            if (settings.geminiApiKey.isBlank()) {
+                addView(row(
+                    button("Get a free key", primary = false) { open("https://aistudio.google.com/app/apikey") },
+                    button("Paste & test") {
+                        val pasted = clipboardText()
+                        if (pasted.isBlank()) toastStatus("Copy your key first.") else { input.setText(pasted); saveAndTestKey(pasted) }
+                    },
+                ))
+                addView(row(button("Save & test what I typed", primary = false) { saveAndTestKey(input.text.toString()) }))
+            } else {
+                addView(row(
+                    button("Save & test") { saveAndTestKey(input.text.toString()) },
+                    button("Get a new key", primary = false) { open("https://aistudio.google.com/app/apikey") },
+                ))
+            }
             addView(status(keyStatus.ifBlank { if (settings.geminiApiKey.isBlank()) "" else "Saved." }))
             val active = settings.modelOverride.ifBlank { settings.lastWatchModel }.ifBlank { GeminiClient.DEFAULT_MODEL }
             val label = SettingsStore.MODELS.firstOrNull { it.first == active }?.second ?: active
@@ -143,18 +175,7 @@ class MainActivity : ComponentActivity() {
             addView(row(button("Change model", primary = false) { pickModel() }))
         }
 
-        card("2  Google account") {
-            addView(text("Calendar, Tasks, Gmail, Drive & Docs, and Contacts. One consent screen.", 14f, COLOR_MUTED))
-            val granted = authStore.grantedScopes()
-            GOOGLE_SERVICES.forEach { (label, scopes) ->
-                addView(checkRow(label, granted.containsAll(scopes)))
-            }
-            val connected = granted.containsAll(GoogleApiScopes.allUseful)
-            addView(row(button(if (connected) "Reconnect Google" else "Connect Google", primary = !connected) { connectGoogle() }))
-            addView(status(googleStatus))
-        }
-
-        card("3  Phone access") {
+        card("2  Phone access") {
             addView(text("Turn on what you want Billy to do on this phone.", 14f, COLOR_MUTED))
             if (runtimePermissionsMissing().isNotEmpty()) {
                 addView(row(button("Allow all") { permissionLauncher.launch(runtimePermissionsMissing().toTypedArray()) }))
@@ -186,6 +207,28 @@ class MainActivity : ComponentActivity() {
                     startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
                 }
             }
+        }
+
+        card("3  Google account (optional)") {
+            val own = OwnGoogleProject.isConnected(this@MainActivity)
+            val granted = authStore.grantedScopes()
+            val connected = own || granted.containsAll(GoogleApiScopes.allUseful)
+            if (!connected) {
+                addView(text(
+                    "Lets Billy use your Calendar, Tasks, Gmail, Drive & Docs, and Contacts. " +
+                        "You make a free Google project of your own; the app walks you through it with a button for each step. About 10 minutes, once.",
+                    14f, COLOR_MUTED,
+                ))
+            } else if (own) {
+                addView(text("Connected as ${OwnGoogleProject.email(this@MainActivity).ifBlank { "your Google account" }}.", 14f, COLOR_MUTED))
+            }
+            if (connected || granted.isNotEmpty()) {
+                GOOGLE_SERVICES.forEach { (label, scopes) -> addView(checkRow(label, granted.containsAll(scopes))) }
+            }
+            addView(row(button(if (connected) "Google settings" else "Set up Google", primary = !connected) {
+                startActivity(Intent(this@MainActivity, GoogleSetupActivity::class.java))
+            }))
+            addView(status(googleStatus))
         }
 
         card("4  Memory") {
@@ -302,18 +345,21 @@ class MainActivity : ComponentActivity() {
                     ))
                     toastStatus(if (name != null) "Saved to Downloads as $name" else "Nothing to save yet.")
                 }))
-                addView(row(button("Forget Google sign-in", primary = false) {
-                    authStore.clear()
-                    googleStatus = "Forgotten. Tap Connect Google to sign in again."
-                    render()
-                }))
+                addView(text("Invited testers only: sign in with the developer's Google project instead of your own.", 13f, COLOR_MUTED).padTop(10))
+                addView(row(
+                    button("Tester sign-in", primary = false) { connectGoogle() },
+                    button("Forget Google sign-in", primary = false) {
+                        if (OwnGoogleProject.isConnected(this@MainActivity)) OwnGoogleProject.disconnect(this@MainActivity) else authStore.clear()
+                        googleStatus = "Forgotten."
+                        render()
+                    },
+                ))
             }
         }
     }
 
     private fun missingSteps(): List<String> = buildList {
         if (settingsStore.load().geminiApiKey.isBlank()) add("Gemini key")
-        if (!authStore.grantedScopes().containsAll(GoogleApiScopes.allUseful)) add("Google")
         if (!hasLocation()) add("Location")
     }
 
@@ -543,6 +589,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun clipboardText(): String {
+        val clip = (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClip
+        return clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()?.filterNot { it.isWhitespace() }.orEmpty()
+    }
+
     private fun open(url: String) {
         runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     }
@@ -687,6 +738,7 @@ class MainActivity : ComponentActivity() {
         private val COLOR_WARN = Color.rgb(251, 191, 36)
         private val COLOR_ACCENT = Color.rgb(170, 255, 255)
         private val COLOR_ACCENT_TEXT = Color.rgb(15, 23, 42)
+        private const val RELEASES_URL = "https://github.com/TomBolger/Billy/releases/latest"
         private val GOOGLE_SERVICES = listOf(
             "Calendar" to GoogleApiScopes.calendar,
             "Tasks" to GoogleApiScopes.tasks,

@@ -193,7 +193,7 @@ function isUsable(response) {
 exports.generateWithModel = function(model, contents, options, callback) {
     var apiKey = config.getGeminiApiKey();
     if (!apiKey) {
-        callback(new Error('Add a Gemini API key in Billy settings.'));
+        callback(new Error('Billy needs a free Gemini key. In the Pebble app, open Billy\'s settings and follow the steps under Gemini API key.'));
         return;
     }
     var attempt = 0;

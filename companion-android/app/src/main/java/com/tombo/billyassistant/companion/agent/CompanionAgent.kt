@@ -86,7 +86,7 @@ class CompanionAgent(
         val settings = settingsStore.load()
         if (prompt.isBlank()) return CompanionAgentResult.Failed("Prompt is blank.")
         if (settings.geminiApiKey.isBlank()) {
-            return CompanionAgentResult.Failed("Add your Gemini API key in Billy Companion.")
+            return CompanionAgentResult.Failed("Billy needs a free Gemini key: open Billy Companion on your phone and do step 1.")
         }
 
         var userText = prompt.trim()

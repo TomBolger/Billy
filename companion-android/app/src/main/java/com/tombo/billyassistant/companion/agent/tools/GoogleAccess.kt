@@ -23,7 +23,7 @@ internal class GoogleAccess(
             }
             is GoogleAccessTokenResult.NeedsUserGrant -> JSONObject()
                 .put("status", "needs_sign_in")
-                .put("summary", "Open Billy Companion and tap Connect Google to allow $service.")
+                .put("summary", "$service needs Google set up: open Billy Companion and tap Set up Google (one time, about 10 minutes).")
             is GoogleAccessTokenResult.Failed -> error("Google sign-in failed: ${token.reason}")
         }
     }
@@ -40,7 +40,11 @@ internal class GoogleAccess(
             is GoogleHttpResult.Success -> if (result.body.isBlank()) JSONObject() else JSONObject(result.body)
             is GoogleHttpResult.HttpError -> throw GoogleCallException(
                 when (result.responseCode) {
-                    401, 403 -> "$service refused the request (${result.reason.take(100)}). Reconnect Google in Billy Companion."
+                    401, 403 -> if (serviceDisabled(result.reason)) {
+                        "$service isn't turned on in your Google project. In Billy Companion, open Set up Google and do step 2 again."
+                    } else {
+                        "$service refused the request (${result.reason.take(100)}). Sign in to Google again in Billy Companion."
+                    }
                     404 -> "$service could not find that item. It may already be gone."
                     410 -> "That $service item was already deleted."
                     429 -> "$service is rate limiting Billy. Try again in a minute."
@@ -59,3 +63,7 @@ internal class GoogleAccess(
 }
 
 internal class GoogleCallException(message: String) : Exception(message)
+
+/** Google's answer when an API was never enabled in the user's own project. */
+internal fun serviceDisabled(reason: String): Boolean =
+    listOf("SERVICE_DISABLED", "accessNotConfigured", "has not been used in project", "it is disabled").any { reason.contains(it, ignoreCase = true) }

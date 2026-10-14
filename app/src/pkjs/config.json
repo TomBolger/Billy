@@ -12,34 +12,38 @@
                 "defaultValue": "Assistant"
             },
             {
-                "type": "select",
-                "id": "ASSISTANT_RUNTIME",
-                "messageKey": "ASSISTANT_RUNTIME",
-                "label": "Runtime",
-                "description": "Automatic sends prompts to Billy Companion when it is installed. Choose Companionless when using only the PBW.",
-                "defaultValue": "automatic",
-                "options": [
-                    {
-                        "label": "Automatic",
-                        "value": "automatic"
-                    },
-                    {
-                        "label": "Companionless",
-                        "value": "companionless"
-                    },
-                    {
-                        "label": "Android companion",
-                        "value": "android"
-                    }
-                ]
-            },
-            {
                 "type": "input",
                 "id": "GEMINI_API_KEY",
                 "messageKey": "GEMINI_API_KEY",
                 "label": "Gemini API key",
-                "description": "Stored locally by the Pebble phone app. Required for companionless mode.",
-                "defaultValue": ""
+                "description": "Required. Billy thinks with Google Gemini using your own free key: open <a href=\"https://aistudio.google.com/app/apikey\">aistudio.google.com/app/apikey</a>, sign in, tap <b>Create API key</b>, copy it and paste it here, then tap Save. If you use Billy Companion on Android, paste the key there instead (this box can stay empty). The key stays on your phone.",
+                "defaultValue": "",
+                "attributes": {
+                    "placeholder": "Paste your key",
+                    "autocomplete": "off"
+                }
+            },
+            {
+                "type": "select",
+                "id": "ASSISTANT_RUNTIME",
+                "messageKey": "ASSISTANT_RUNTIME",
+                "label": "Where Billy runs",
+                "description": "Automatic (recommended) uses Billy Companion when it's installed on an Android phone, and otherwise runs right here in the Pebble app (iPhone too). Billy Companion adds Google Calendar, Gmail, texts, calls and more.",
+                "defaultValue": "automatic",
+                "options": [
+                    {
+                        "label": "Automatic (recommended)",
+                        "value": "automatic"
+                    },
+                    {
+                        "label": "Pebble app only",
+                        "value": "companionless"
+                    },
+                    {
+                        "label": "Billy Companion only",
+                        "value": "android"
+                    }
+                ]
             },
             {
                 "type": "select",
@@ -82,22 +86,6 @@
                 "label": "Gemini monthly budget",
                 "description": "Used only for Billy's local estimate on the Quota screen. Google AI Studio billing is authoritative.",
                 "defaultValue": "10"
-            },
-            {
-                "type": "input",
-                "id": "GITHUB_ISSUES_URL",
-                "messageKey": "GITHUB_ISSUES_URL",
-                "label": "Feedback GitHub issues URL",
-                "description": "Feedback opens a prefilled issue here. Use your fork's /issues/new URL.",
-                "defaultValue": "https://github.com/tombolger/Billy/issues/new"
-            },
-            {
-                "type": "input",
-                "id": "FEEDBACK_POST_URL",
-                "messageKey": "FEEDBACK_POST_URL",
-                "label": "Feedback POST endpoint",
-                "description": "Optional. Bobby-style feedback posts JSON here and returns Sent/Error on the watch. Leave blank to open a prefilled GitHub issue instead.",
-                "defaultValue": ""
             },
             {
                 "type": "input",
@@ -396,6 +384,31 @@
                 "defaultValue": true,
                 "label": "Allow location access",
                 "description": "Billy can use your location to provide contextually relevant information, including local weather and transit as well as more broadly understanding your local context."
+            }
+        ]
+    },
+    {
+        "type": "section",
+        "items": [
+            {
+                "type": "heading",
+                "defaultValue": "Advanced"
+            },
+            {
+                "type": "input",
+                "id": "GITHUB_ISSUES_URL",
+                "messageKey": "GITHUB_ISSUES_URL",
+                "label": "Feedback GitHub issues URL",
+                "description": "Feedback opens a prefilled issue here. Use your fork's /issues/new URL.",
+                "defaultValue": "https://github.com/tombolger/Billy/issues/new"
+            },
+            {
+                "type": "input",
+                "id": "FEEDBACK_POST_URL",
+                "messageKey": "FEEDBACK_POST_URL",
+                "label": "Feedback POST endpoint",
+                "description": "Optional. Bobby-style feedback posts JSON here and returns Sent/Error on the watch. Leave blank to open a prefilled GitHub issue instead.",
+                "defaultValue": ""
             }
         ]
     },
