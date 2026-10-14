@@ -72,14 +72,16 @@ and `.\gradlew.bat testDebugUnitTest` in `companion-android`.
 Store screenshots come from the emulator with scripted answers
 (`.github/workflows/screenshots.yaml`); the results are in `store/screenshots/`.
 
-### Google sign-in
+### Google sign-in and signing
 
 Each user signs in through their own Google Cloud project with a "Desktop
 app" OAuth client (loopback redirect with PKCE, see
-`companion-android/.../auth/OwnGoogleProject.kt`). The older Android sign-in
-under Advanced only works for testers added to the developer's project
-(package `com.tombo.billyassistant.companion`, SHA-1
-`1B:98:A8:38:72:6D:27:12:AA:25:3B:2B:AE:AF:BB:B3:8D:2F:16:1B`).
+`companion-android/.../auth/OwnGoogleProject.kt`).
+
+Official APKs are signed in GitHub Actions with the key in the
+`BILLY_KEYSTORE_B64` and `BILLY_KEYSTORE_PASSWORD` secrets (SHA-1
+`47:8E:DB:B5:F2:03:7C:B8:44:45:D0:F8:24:E7:65:C0:1C:53:4E:1B`). Builds without
+those secrets use Android's standard debug key.
 
 ## Credits
 

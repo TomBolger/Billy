@@ -50,8 +50,16 @@ jobs:
       - name: Build watch app
         run: cd app && yes | pebble build
       - name: Build Billy Companion
+        env:
+          KEYSTORE_B64: ${{ secrets.BILLY_KEYSTORE_B64 }}
+          BILLY_KEYSTORE_PASSWORD: ${{ secrets.BILLY_KEYSTORE_PASSWORD }}
         run: |
-          test -f companion-android/debug.keystore || { echo "debug.keystore missing"; exit 1; }
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/billy.p12"
+            export BILLY_KEYSTORE="$RUNNER_TEMP/billy.p12"
+          else
+            echo "::error::Add the BILLY_KEYSTORE_B64 and BILLY_KEYSTORE_PASSWORD secrets first"; exit 1
+          fi
           echo "sdk.dir=$ANDROID_HOME" > companion-android/local.properties
           cd companion-android && chmod +x gradlew && ./gradlew --no-daemon testDebugUnitTest assembleDebug
       - name: Name files

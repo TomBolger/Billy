@@ -345,15 +345,11 @@ class MainActivity : ComponentActivity() {
                     ))
                     toastStatus(if (name != null) "Saved to Downloads as $name" else "Nothing to save yet.")
                 }))
-                addView(text("Invited testers only: sign in with the developer's Google project instead of your own.", 13f, COLOR_MUTED).padTop(10))
-                addView(row(
-                    button("Tester sign-in", primary = false) { connectGoogle() },
-                    button("Forget Google sign-in", primary = false) {
-                        if (OwnGoogleProject.isConnected(this@MainActivity)) OwnGoogleProject.disconnect(this@MainActivity) else authStore.clear()
-                        googleStatus = "Forgotten."
-                        render()
-                    },
-                ))
+                addView(row(button("Forget Google sign-in", primary = false) {
+                    if (OwnGoogleProject.isConnected(this@MainActivity)) OwnGoogleProject.disconnect(this@MainActivity) else authStore.clear()
+                    googleStatus = "Forgotten."
+                    render()
+                }))
             }
         }
     }

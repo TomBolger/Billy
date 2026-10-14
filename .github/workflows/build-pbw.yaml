@@ -51,8 +51,16 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Build companion
+        env:
+          KEYSTORE_B64: ${{ secrets.BILLY_KEYSTORE_B64 }}
+          BILLY_KEYSTORE_PASSWORD: ${{ secrets.BILLY_KEYSTORE_PASSWORD }}
         run: |
-          test -f companion-android/debug.keystore || { echo "debug.keystore missing"; exit 1; }
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/billy.p12"
+            export BILLY_KEYSTORE="$RUNNER_TEMP/billy.p12"
+          else
+            echo "::warning::No signing secrets: this APK uses a throwaway debug key"
+          fi
           echo "sdk.dir=$ANDROID_HOME" > companion-android/local.properties
           cd companion-android && chmod +x gradlew && ./gradlew --no-daemon testDebugUnitTest assembleDebug
       - name: Upload APK
