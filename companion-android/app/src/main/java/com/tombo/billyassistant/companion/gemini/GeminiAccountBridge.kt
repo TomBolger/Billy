@@ -30,10 +30,13 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * A hidden WebView keeps gemini.google.com open with the user's sign-in; a
  * question is sent by running the same request the website makes, from inside
- * that page, so Google's own cookies and token refresh apply. Everything here
- * is a bonus: when it is off, signed out, slow, or broken, Billy's normal
- * tools answer instead. Three failures in a row switch it off until the user
- * signs in again. The sign-in never leaves the phone.
+ * that page, so Google's own cookies and token refresh apply. The link is
+ * optional, but once the user has turned it on, Billy does NOT quietly answer
+ * from other sources when it fails: ask_my_gemini stays declared and returns a
+ * plain error that Billy relays ("your Gemini account didn't answer, because
+ * ..."), and the failure is added to the turn report. Three failures in a row
+ * (or a sign-out) mark it as needing attention until the user signs in again.
+ * The sign-in never leaves the phone.
  */
 object GeminiAccountBridge {
     enum class State { OFF, NOT_SIGNED_IN, WORKING, NEEDS_ATTENTION }
@@ -73,6 +76,15 @@ object GeminiAccountBridge {
     }
 
     fun isUsable(context: Context) = state(context) == State.WORKING
+
+    /**
+     * The user turned the link on (even if it has since stopped working). While true,
+     * ask_my_gemini stays available so a broken link produces a clear error, not a
+     * silently missing tool.
+     */
+    fun isLinkEnabled(context: Context) = state(context) != State.OFF
+
+    const val NEEDS_SIGN_IN = "Your Gemini account link needs you to sign in again in Billy Companion"
 
     fun isSignedIn(context: Context) = prefs(context).getBoolean("signed_in", false)
 
@@ -120,7 +132,14 @@ object GeminiAccountBridge {
     /** Ask the user's Gemini. Blocking; never call on the main thread. */
     fun ask(context: Context, question: String): Reply {
         if (Looper.myLooper() == Looper.getMainLooper()) return Reply.Failed("Called on the main thread.")
-        if (!isUsable(context)) return Reply.Failed("The Gemini account link is off.")
+        when (state(context)) {
+            State.OFF -> return Reply.Failed("The Gemini account link is turned off in Billy Companion.")
+            State.NOT_SIGNED_IN, State.NEEDS_ATTENTION -> {
+                val last = lastError(context)
+                return Reply.Failed(NEEDS_SIGN_IN + if (last.isNotBlank()) " (last problem: $last)" else "")
+            }
+            State.WORKING -> Unit
+        }
         val app = context.applicationContext
         val reply = synchronized(lock) {
             val started = System.currentTimeMillis()

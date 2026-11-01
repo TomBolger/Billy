@@ -1,14 +1,17 @@
 package com.tombo.billyassistant.companion.agent.tools
 
 import android.content.Context
+import com.tombo.billyassistant.companion.diagnostics.DiagnosticsLog
 import com.tombo.billyassistant.companion.gemini.GeminiAccountBridge
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * ask_my_gemini: passes a question to the user's own Gemini account. Only
- * offered while the optional account link is on and healthy; any failure tells
- * Billy to carry on with its normal tools.
+ * ask_my_gemini: passes a question to the user's own Gemini account. Offered
+ * whenever the user has turned the optional account link on, even if it has
+ * since broken. There is no silent fallback: a failure comes back as an error
+ * that tells Billy to say plainly that the user's Gemini account didn't answer
+ * (and why), and it is added to the turn report so it can be reported.
  */
 class MyGeminiCompanionTool(
     private val context: Context,
@@ -23,7 +26,7 @@ class MyGeminiCompanionTool(
                 "and Gemini's connections to Gmail, Drive, YouTube, YouTube Music, Google Home, and Keep. Use it for those, and when the user says \"ask Gemini\". " +
                 "Don't use it for things your own tools already do (timers, alarms, weather, calendar, texts, calls, searches), " +
                 "or for general knowledge, science, news, or how-to questions. " +
-                "It's slower than your tools. If it returns an error, answer with your normal tools instead and don't dwell on the failure.",
+                "It's slower than your tools. If it returns an error, tell the user plainly that their Gemini account didn't answer and why; don't answer from other sources unless they ask.",
         )
         .put(
             "parameters",
@@ -36,12 +39,14 @@ class MyGeminiCompanionTool(
         )
 
     override val declarations: List<JSONObject>
-        get() = if (GeminiAccountBridge.isUsable(context)) listOf(declaration) else emptyList()
+        get() = if (GeminiAccountBridge.isLinkEnabled(context)) listOf(declaration) else emptyList()
 
     override fun execute(name: String, args: JSONObject): CompanionToolExecution? {
         if (name != "ask_my_gemini") return null
         val question = args.optString("question").trim()
-        if (question.isBlank()) return error("No question given.")
+        if (question.isBlank()) {
+            return CompanionToolExecution(JSONObject().put("status", "error").put("summary", "No question given. Call ask_my_gemini again with the user's request."))
+        }
         val prompt = "$question\n\n(Brief answer, it's for my smartwatch.)"
         return when (val reply = GeminiAccountBridge.ask(context, prompt)) {
             is GeminiAccountBridge.Reply.Failed -> error(
@@ -119,9 +124,18 @@ class MyGeminiCompanionTool(
         .replace(Regex("""\n{3,}"""), "\n\n")
         .trim()
 
-    private fun error(reason: String) = CompanionToolExecution(
-        JSONObject()
-            .put("status", "error")
-            .put("summary", "The Gemini account link isn't available right now ($reason). Use your normal tools to answer instead."),
-    )
+    private fun error(reason: String): CompanionToolExecution {
+        DiagnosticsLog.problem("ask_my_gemini failed: ${reason.take(120)}")
+        val told = when {
+            reason.startsWith(GeminiAccountBridge.NEEDS_SIGN_IN) ->
+                "Tell the user: $reason. Don't answer from other sources unless they ask."
+            else ->
+                "Tell the user: your Gemini account didn't answer ($reason). Don't answer from other sources unless they ask."
+        }
+        return CompanionToolExecution(
+            JSONObject()
+                .put("status", "error")
+                .put("summary", told),
+        )
+    }
 }

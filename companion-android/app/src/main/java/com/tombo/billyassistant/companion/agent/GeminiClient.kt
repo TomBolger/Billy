@@ -1,14 +1,19 @@
 package com.tombo.billyassistant.companion.agent
 
+import android.os.SystemClock
 import com.tombo.billyassistant.companion.agent.tools.CompanionToolExecution
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
 import com.tombo.billyassistant.companion.agent.tools.WatchToolsCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
+import com.tombo.billyassistant.companion.diagnostics.DiagnosticsLog
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
@@ -19,20 +24,20 @@ import java.time.format.DateTimeFormatter
  * - One API surface (generateContent). No fallback that flattens tool results into text.
  * - Google Search + function declarations are sent together with
  *   toolConfig.includeServerSideToolInvocations, which Gemini 3 requires.
- * - The model is chosen on the first call of a turn and then pinned, because
- *   thought signatures are only valid for the model that produced them.
+ * - One model per turn: the user's chosen one (or DEFAULT_MODEL). There is no
+ *   fallback model and no dropping of built-in tools: if Gemini rejects or fails
+ *   a request, the turn fails with a plain message (and a problem report), so a
+ *   bug gets reported instead of quietly getting a weaker answer.
+ * - Only these are retried: one re-ask on a completely empty answer, and one
+ *   retry of the same model after a connection-level failure or HTTP 503. Every
+ *   retry is written to DiagnosticsLog.
  * - Model content is replayed untouched, all function responses of one step go
  *   back in one user turn with their call ids.
  * - A tool's finalText is a suggested reply, not an early exit, so the model can
  *   chain further tools or recover from an error.
  */
 class GeminiClient(preferredModel: String? = null, private val checkActive: () -> Unit = {}) {
-    private val models: List<String> = buildList {
-        preferredModel?.trim()?.takeIf { it.startsWith("gemini-") }?.let { add(it) }
-        FALLBACK_MODELS.forEach { if (it !in this) add(it) }
-    }
-
-    val primaryModel: String get() = models.first()
+    val primaryModel: String = preferredModel?.trim()?.takeIf { it.startsWith("gemini-") } ?: DEFAULT_MODEL
 
     // Per-turn context; a GeminiClient serves one watch request at a time.
     private var turnContext: String = ""
@@ -92,7 +97,14 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
             .put("generationConfig", generationConfig(primaryModel, forceJson = true))
-        val result = post(key, primaryModel, body) as? HttpResult.Ok ?: return null
+        val result = when (val http = post(key, primaryModel, body)) {
+            is HttpResult.Ok -> http
+            is HttpResult.Error -> {
+                // Not "no match": ranking itself failed, so make sure it shows up in the problem report.
+                DiagnosticsLog.problem("Gemini photo ranking failed: ${http.message}")
+                return null
+            }
+        }
         val text = parseResponse(primaryModel, result.json).text
         val json = runCatching { JSONObject(text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1)) }.getOrNull()
         val index = json?.optInt("index", -1) ?: -1
@@ -131,7 +143,6 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
         }
         contents.put(userText(prompt.trim()))
 
-        var pinnedModel: String? = null
         var watchImage: WatchImage? = null
         var watchWeather: WatchWeatherCurrent? = null
         var suggestedReply: String? = null
@@ -143,16 +154,10 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
         for (step in 0 until MAX_STEPS) {
             checkActive()
             val forceText = step == MAX_STEPS - 1
-            val response = if (pinnedModel == null) {
-                generateFirst(key, contents, toolDeclarations, forceText)
-            } else {
-                generateWithModel(key, pinnedModel, contents, toolDeclarations, forceText)
-            }
-            val parsed = when (response) {
+            val parsed = when (val response = generateStep(key, primaryModel, contents, toolDeclarations, forceText)) {
                 is StepResult.Failed -> return CompanionAgentResult.Failed(response.reason)
                 is StepResult.Ok -> response.parsed
             }
-            pinnedModel = parsed.model
             contents.put(parsed.modelContent)
 
             val leaked = parsed.calls.isEmpty() && looksLikeLeakedToolCall(parsed.text, toolNames)
@@ -166,7 +171,10 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
             if (parsed.calls.isEmpty() || forceText) {
                 val clean = if (leaked) "" else parsed.text
                 val text = clean.ifBlank { suggestedReply ?: lastOkSummary.orEmpty() }
-                    .ifBlank { if (watchImage != null || watchWeather != null) "" else "Sorry, I did not get an answer. Please try again." }
+                if (text.isBlank() && watchImage == null && watchWeather == null) {
+                    DiagnosticsLog.event("no usable text at step ${step + 1} (leakedToolCall=$leaked)")
+                    return CompanionAgentResult.Failed("Gemini ($primaryModel) finished without giving Billy any words to show.")
+                }
                 return CompanionAgentResult.Passed(text = text, watchImage = watchImage, watchWeatherCurrent = watchWeather)
             }
 
@@ -184,9 +192,11 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
                     )
                 } else {
                     val toolStartedAt = System.currentTimeMillis()
-                    runCatching { toolExecutor(call.name, call.args) }.also {
-                        debugSink?.invoke("TIMING tool ${call.name}: ${System.currentTimeMillis() - toolStartedAt} ms")
-                    }.getOrElse { e ->
+                    val ran = runCatching { toolExecutor(call.name, call.args) }
+                    val toolMs = System.currentTimeMillis() - toolStartedAt
+                    debugSink?.invoke("TIMING tool ${call.name}: $toolMs ms")
+                    DiagnosticsLog.addTool(call.name, toolMs, ran.getOrNull()?.response?.optString("status", "ok") ?: "crashed")
+                    ran.getOrElse { e ->
                         if (e is kotlinx.coroutines.CancellationException) throw e
                         CompanionToolExecution(
                             JSONObject().put("status", "error").put("summary", "Tool ${call.name} crashed: ${e.message ?: e.javaClass.simpleName}"),
@@ -238,68 +248,48 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
         return CompanionAgentResult.Failed("Billy ran out of steps. Please try a simpler request.")
     }
 
-    private fun generateFirst(
-        apiKey: String,
-        contents: JSONArray,
-        declarations: JSONArray,
-        forceText: Boolean,
-    ): StepResult {
-        var lastFailure: StepResult.Failed? = null
-        for (model in models) {
-            when (val result = generateWithModel(apiKey, model, contents, declarations, forceText)) {
-                is StepResult.Ok -> return result
-                is StepResult.Failed -> {
-                    lastFailure = result
-                    if (!result.tryNextModel) {
-                        return result
-                    }
-                }
-            }
-        }
-        return lastFailure ?: StepResult.Failed("Gemini did not answer. Try again.", tryNextModel = false)
-    }
-
-    private fun generateWithModel(
+    /**
+     * One generateContent call on [model] with the full tool set. Retries only:
+     * a completely empty answer (once), and a connection-level failure or HTTP 503
+     * (once, same model). Everything else fails with a plain message.
+     */
+    private fun generateStep(
         apiKey: String,
         model: String,
         contents: JSONArray,
         declarations: JSONArray,
         forceText: Boolean,
     ): StepResult {
-        // Built-in tool tiers: everything, then Search only, then none, in case a
-        // model rejects a combination.
-        var tier = 0
-        var attempt = 0
+        var emptyRetried = false
+        var connectionRetried = false
+        var isRetry = false
         while (true) {
             checkActive()
-            attempt++
-            val body = buildBody(model, contents, declarations, tier, forceText)
-            when (val http = post(apiKey, model, body)) {
+            val body = buildBody(model, contents, declarations, forceText)
+            when (val http = post(apiKey, model, body, isRetry)) {
                 is HttpResult.Ok -> {
                     val parsed = parseResponse(model, http.json)
-                    if (parsed.calls.isEmpty() && parsed.text.isBlank() && attempt < 2) {
-                        continue
-                    }
                     if (parsed.calls.isEmpty() && parsed.text.isBlank()) {
-                        return StepResult.Failed("Gemini returned an empty answer.", tryNextModel = true)
+                        val why = http.emptyReason
+                        if (!emptyRetried) {
+                            emptyRetried = true
+                            isRetry = true
+                            DiagnosticsLog.event("empty answer from $model ($why); asking once more")
+                            continue
+                        }
+                        return StepResult.Failed("Gemini ($model) sent an empty answer twice ($why).")
                     }
                     return StepResult.Ok(parsed)
                 }
                 is HttpResult.Error -> {
-                    val lower = http.raw.lowercase()
-                    if (tier < 2 && http.code == 400 &&
-                        listOf("search", "tool", "server_side", "server-side", "combination", "function", "maps", "url", "code").any { it in lower }
-                    ) {
-                        tier++
-                        continue
-                    }
-                    if (http.transient && attempt < 2 && http.raw != "timeout") {
+                    if (http.retryable && !connectionRetried) {
+                        connectionRetried = true
+                        isRetry = true
+                        DiagnosticsLog.event("retrying $model once after ${http.detail}")
                         Thread.sleep(RETRY_DELAY_MS)
                         continue
                     }
-                    val nextModel = http.transient || http.code == 404 ||
-                        listOf("overloaded", "unavailable", "high demand", "not found", "not supported").any { it in lower }
-                    return StepResult.Failed(http.message, tryNextModel = nextModel)
+                    return StepResult.Failed(http.message)
                 }
             }
         }
@@ -309,7 +299,6 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
         model: String,
         contents: JSONArray,
         declarations: JSONArray,
-        tier: Int,
         forceText: Boolean,
     ): JSONObject {
         val body = JSONObject()
@@ -317,9 +306,10 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
             .put("contents", contents)
             .put("generationConfig", generationConfig(model, forceJson = false))
         val tools = JSONArray()
-        val builtIns = tier < 2 && (declarations.length() == 0 || isGemini3(model))
+        // Search + function calling together needs Gemini 3. The built-in tools are always sent in full.
+        val builtIns = declarations.length() == 0 || isGemini3(model)
         val search = builtIns
-        val extras = builtIns && tier == 0 && declarations.length() > 0
+        val extras = builtIns && declarations.length() > 0
         if (search) {
             tools.put(JSONObject().put("googleSearch", JSONObject()))
         }
@@ -367,41 +357,119 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
         return config
     }
 
-    private fun post(apiKey: String, model: String, body: JSONObject): HttpResult {
-        val startedAt = System.currentTimeMillis()
-        val result = postTimed(apiKey, model, body)
+    /** One timed, diagnosed HTTP call. Written to the TIMING debug line and to DiagnosticsLog. */
+    private fun post(apiKey: String, model: String, body: JSONObject, isRetry: Boolean = false): HttpResult {
+        val startedAt = SystemClock.elapsedRealtime()
+        val call = JSONObject()
+            .put("model", model)
+            .put("retry", isRetry)
+            .put("start", DiagnosticsLog.deviceState())
+        val result = postTimed(apiKey, model, body, call)
+        call.put("totalMs", SystemClock.elapsedRealtime() - startedAt)
+        call.put("end", DiagnosticsLog.deviceState())
+        DiagnosticsLog.addCall(call)
         val outcome = when (result) {
             is HttpResult.Ok -> "ok"
-            is HttpResult.Error -> "error ${result.code} ${result.raw.take(20)}"
+            is HttpResult.Error -> "error ${result.code} ${result.detail.take(40)}"
         }
-        debugSink?.invoke("TIMING model call $model: ${System.currentTimeMillis() - startedAt} ms ($outcome)")
+        debugSink?.invoke(
+            "TIMING model call $model: ${call.optLong("totalMs")} ms ($outcome) " +
+                "[connect ${call.optLong("connectMs", -1)} ms, ttfb ${call.optLong("ttfbMs", -1)} ms, body ${call.optLong("bodyMs", -1)} ms]",
+        )
         return result
     }
 
-    private fun postTimed(apiKey: String, model: String, body: JSONObject): HttpResult {
-        return try {
-            val connection = (URL("$BASE_URL$model:generateContent").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                doOutput = true
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("x-goog-api-key", apiKey)
-            }
-            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val code = connection.responseCode
-            val text = (if (code in 200..299) connection.inputStream else connection.errorStream)
+    /**
+     * The request, split into connect / send / wait-for-headers / read-body so a stall
+     * can be pinned on a phase. Fills [call] with the numbers as it goes.
+     */
+    private fun postTimed(apiKey: String, model: String, body: JSONObject, call: JSONObject): HttpResult {
+        val bytes = body.toString().toByteArray(Charsets.UTF_8)
+        call.put("reqBytes", bytes.size)
+        var phase = "connect"
+        var connection: HttpURLConnection? = null
+        try {
+            val conn = URL("$BASE_URL$model:generateContent").openConnection() as HttpURLConnection
+            connection = conn
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.connectTimeout = CONNECT_TIMEOUT_MS
+            conn.readTimeout = READ_TIMEOUT_MS
+            // Streaming mode makes the body go out on write, so "send" and "wait" are separate.
+            conn.setFixedLengthStreamingMode(bytes.size)
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("x-goog-api-key", apiKey)
+
+            val t0 = SystemClock.elapsedRealtime()
+            conn.connect()
+            val t1 = SystemClock.elapsedRealtime()
+            call.put("connectMs", t1 - t0)
+            phase = "send"
+            conn.outputStream.use { it.write(bytes) }
+            val t2 = SystemClock.elapsedRealtime()
+            call.put("sendMs", t2 - t1)
+            phase = "wait"
+            val code = conn.responseCode
+            val t3 = SystemClock.elapsedRealtime()
+            call.put("ttfbMs", t3 - t2)
+            call.put("code", code)
+            phase = "read"
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
                 ?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code in 200..299) {
-                debugSink?.invoke("model $model reply: ${text.take(6000)}")
-                HttpResult.Ok(JSONObject(text))
-            } else {
-                HttpResult.Error(code, friendlyError(code, text, model), text, transient = code in TRANSIENT_CODES)
+            call.put("bodyMs", SystemClock.elapsedRealtime() - t3)
+            call.put("respBytes", text.toByteArray(Charsets.UTF_8).size)
+            if (code !in 200..299) {
+                val message = friendlyError(code, text, model)
+                call.put("error", message.take(200))
+                return HttpResult.Error(code, message, "HTTP $code", retryable = code == 503)
             }
+            debugSink?.invoke("model $model reply: ${text.take(6000)}")
+            val root = try {
+                JSONObject(text)
+            } catch (e: Exception) {
+                val message = "Gemini ($model) sent a reply Billy couldn't read."
+                call.put("error", message)
+                return HttpResult.Error(code, message, "unreadable reply", retryable = false)
+            }
+            val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
+            val finishReason = candidate?.optString("finishReason").orEmpty()
+            val blockReason = root.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()
+            call.put("finishReason", finishReason)
+            if (blockReason.isNotBlank()) call.put("blockReason", blockReason)
+            root.optJSONObject("usageMetadata")?.let { usage ->
+                call.put("promptTokens", usage.optInt("promptTokenCount", -1))
+                call.put("thoughtsTokens", usage.optInt("thoughtsTokenCount", 0))
+                call.put("candidatesTokens", usage.optInt("candidatesTokenCount", 0))
+                call.put("totalTokens", usage.optInt("totalTokenCount", -1))
+            }
+            val emptyReason = when {
+                blockReason.isNotBlank() -> "blocked: $blockReason"
+                finishReason.isNotBlank() -> "finishReason $finishReason"
+                else -> "no reason given"
+            }
+            return HttpResult.Ok(root, emptyReason)
         } catch (e: SocketTimeoutException) {
-            HttpResult.Error(0, "Gemini took too long to answer.", "timeout", transient = true)
+            val message = when (phase) {
+                "connect" -> "Phone couldn't connect to Gemini within ${CONNECT_TIMEOUT_MS / 1000} seconds."
+                "read" -> "Gemini ($model) stopped sending its answer partway through (${READ_TIMEOUT_MS / 1000} seconds with no data)."
+                else -> "Gemini ($model) didn't respond within ${READ_TIMEOUT_MS / 1000} seconds."
+            }
+            call.put("error", "timeout in $phase phase")
+            return HttpResult.Error(0, message, "timeout in $phase phase", retryable = false)
         } catch (e: Exception) {
-            HttpResult.Error(0, "Could not reach Gemini: ${e.message ?: e.javaClass.simpleName}", "network", transient = true)
+            val detail = "${e.javaClass.simpleName}: ${e.message.orEmpty()}".take(120)
+            call.put("error", "$detail ($phase phase)")
+            val connectionLevel = e is UnknownHostException || e is ConnectException || e is SocketException ||
+                listOf("reset", "refused", "broken pipe").any { it in e.message.orEmpty().lowercase() }
+            val message = when {
+                DiagnosticsLog.isOffline() -> "Phone has no internet connection."
+                e is UnknownHostException -> "Phone couldn't look up Gemini's address. Its internet connection may be down."
+                connectionLevel -> "The connection to Gemini dropped (${e.message.orEmpty().take(60).ifBlank { e.javaClass.simpleName }})."
+                else -> "Billy couldn't reach Gemini (${e.message.orEmpty().take(60).ifBlank { e.javaClass.simpleName }})."
+            }
+            return HttpResult.Error(0, message, detail, retryable = connectionLevel)
+        } finally {
+            runCatching { connection?.disconnect() }
         }
     }
 
@@ -455,8 +523,11 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
                 "Gemini API key is blocked. Allow the Generative Language API (and this app, if the key is restricted)."
             "api key not valid" in lower || "invalid authentication" in lower ->
                 "Gemini did not accept the API key. Use a key from Google AI Studio."
-            code == 429 -> "Gemini rate limit or quota reached. Try again shortly."
-            else -> "Gemini error ($model): ${message.take(MAX_ERROR_LENGTH)}"
+            code == 429 -> "Your free Gemini quota is used up for now (429)."
+            code == 503 -> "Gemini is overloaded right now (503)."
+            code == 404 -> "Gemini doesn't know the model $model (404): ${message.take(MAX_ERROR_LENGTH)}"
+            code == 400 -> "Google rejected Billy's request to $model (400): ${message.take(MAX_ERROR_LENGTH)}"
+            else -> "Gemini ($model) returned error $code: ${message.take(MAX_ERROR_LENGTH)}"
         }
     }
 
@@ -490,7 +561,6 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
         /** Receives raw model replies for the "Save last answer" debug file. */
         @Volatile var debugSink: ((String) -> Unit)? = null
         const val DEFAULT_MODEL = "gemini-3.8-flash"
-        private val FALLBACK_MODELS = listOf(DEFAULT_MODEL, "gemini-3.7-flash", "gemini-3.1-flash-lite")
         private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
         private const val MAX_STEPS = 6
         private const val MAX_OUTPUT_TOKENS = 4096
@@ -498,7 +568,6 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
         private const val READ_TIMEOUT_MS = 25_000
         private const val RETRY_DELAY_MS = 900L
         private const val MAX_ERROR_LENGTH = 180
-        private val TRANSIENT_CODES = setOf(429, 500, 502, 503, 504)
         private val MUTATING_TOOLS = WatchToolsCompanionTool.MUTATING + setOf(
             "create_calendar_event", "create_google_task", "complete_google_task", "create_gmail_draft",
             "create_google_doc", "create_google_sheet", "create_google_slides", "update_google_doc", "show_image",
@@ -525,7 +594,7 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
             "- Phone: send_text_message (SMS), reply_to_notification (WhatsApp/Signal/etc.), call_contact, get_notifications, control_media / play_music, set_phone_volume, set_flashlight, get_phone_status, find_my_phone, open_app, start_navigation (+ show_map for the watch). If a result says the phone is locked, tell the user to unlock it to finish.",
             "- Photos: if you have ask_my_gemini, use it for the user's photos (whole Google Photos library, shown on the watch); use find_photo only for photos from the last day or two, screenshots, or \"my last photo\". Without ask_my_gemini: find_photo searches the phone's camera roll (you'll see the photo, so describe it or answer questions about it); if it isn't found, open_google_photos_search opens the full library on the phone.",
             "- Google: Gmail (search_gmail, prepare_gmail_send to send, create_gmail_draft only when a draft is asked for), Tasks, Drive/Docs/Sheets/Slides.",
-            "- If you have ask_my_gemini, it reaches the user's own Gemini account: Google Photos library, Gemini's saved info and past chats, Gems, Keep, YouTube, Google Home. If it errors, carry on with your normal tools.",
+            "- If you have ask_my_gemini, it reaches the user's own Gemini account: Google Photos library, Gemini's saved info and past chats, Gems, Keep, YouTube, Google Home. If it errors, tell the user plainly that their Gemini account didn't answer and why; don't answer from other sources unless they ask.",
             "- Without ask_my_gemini, Google Keep isn't available to third-party apps; say so briefly if asked.",
             "",
             "INFO CARDS",
@@ -555,12 +624,14 @@ private data class ParsedResponse(
 
 private sealed interface StepResult {
     data class Ok(val parsed: ParsedResponse) : StepResult
-    data class Failed(val reason: String, val tryNextModel: Boolean) : StepResult
+    data class Failed(val reason: String) : StepResult
 }
 
 private sealed interface HttpResult {
-    data class Ok(val json: JSONObject) : HttpResult
-    data class Error(val code: Int, val message: String, val raw: String, val transient: Boolean) : HttpResult
+    /** [emptyReason] explains an answer with no text and no tool call (finishReason or blockReason). */
+    data class Ok(val json: JSONObject, val emptyReason: String) : HttpResult
+    /** [detail] is a short technical note for the diagnostics; [message] is what the user sees. */
+    data class Error(val code: Int, val message: String, val detail: String, val retryable: Boolean) : HttpResult
 }
 
 sealed interface GeminiKeyTestResult {

@@ -9,6 +9,8 @@ import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
 import com.tombo.billyassistant.companion.agent.tools.WatchMediaSpec
 import com.tombo.billyassistant.companion.agent.tools.shortPickerLabel
+import com.tombo.billyassistant.companion.diagnostics.DiagnosticsLog
+import com.tombo.billyassistant.companion.diagnostics.ProblemReporter
 import io.rebble.pebblekit2.client.BasePebbleListenerService
 import io.rebble.pebblekit2.client.DefaultPebbleSender
 import io.rebble.pebblekit2.common.model.PebbleDictionary
@@ -128,6 +130,11 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         }
         // An expired request must still be able to deliver its timeout warning.
         val sender = ResponseSender(DefaultPebbleSender(this), requestId, checkOwner)
+        // Keep the CPU awake while this turn runs (released in finally; the timeout is a safety net).
+        val wakeLock = acquireTurnWakeLock()
+        val turnId = DiagnosticsLog.beginTurn(this)
+        var outcome = "ok"
+        var failure: String? = null
         try {
             sender.sendThreadId(threadId, watch)
             sender.sendFunction("Thinking...", watch)
@@ -145,7 +152,9 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
                 }
             }
             if (result == null) {
-                sender.sendWarning("That took too long. Please try again.", watch)
+                outcome = "timeout"
+                failure = GAVE_UP_MESSAGE
+                sender.sendWarning(warningText(GAVE_UP_MESSAGE), watch)
                 sender.sendDone(watch)
                 return
             }
@@ -166,29 +175,54 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
                     sender.sendDone(watch)
                 }
                 is CompanionAgentResult.Failed -> {
-                    sender.sendWarning(result.reason, watch)
+                    outcome = "failed"
+                    failure = result.reason
+                    sender.sendWarning(warningText(result.reason), watch)
                     sender.sendDone(watch)
                 }
             }
         } catch (e: CancellationException) {
             // Only the request that still owns the watch may report a timeout.
             if (currentRequests[watch.toString()] == generation) {
+                outcome = "timeout"
+                failure = GAVE_UP_MESSAGE
                 runCatching {
-                    sender.sendWarning("That took too long. Please try again.", watch)
+                    sender.sendWarning(warningText(GAVE_UP_MESSAGE), watch)
                     sender.sendDone(watch)
                 }
+            } else {
+                outcome = "superseded"
             }
             Log.d(TAG, "Stopped obsolete or expired request")
         } catch (e: Exception) {
             Log.e(TAG, "Answering prompt failed", e)
+            outcome = "crashed"
+            val crashMessage = "Billy Companion hit an error: ${e.javaClass.simpleName}: ${e.message.orEmpty().take(80)}"
+            failure = crashMessage
             runCatching {
-                sender.sendWarning("Billy Companion hit an error: ${e.message ?: e.javaClass.simpleName}", watch)
+                sender.sendWarning(warningText(crashMessage), watch)
                 sender.sendDone(watch)
             }
         } finally {
             sender.close()
+            runCatching { wakeLock?.let { if (it.isHeld) it.release() } }
+            // Record the turn and, if it failed or was slow, offer a one-tap bug report.
+            runCatching {
+                DiagnosticsLog.endTurn(turnId, outcome, failure)?.let { report -> ProblemReporter.maybeReport(this, report) }
+            }
         }
     }
+
+    /** What the watch shows for a failed turn; ends with the report hint when a notification will be posted. */
+    private fun warningText(reason: String): String = ProblemReporter.withHint(this, reason, WARNING_MAX_CHARS)
+
+    private fun acquireTurnWakeLock(): android.os.PowerManager.WakeLock? = runCatching {
+        val power = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        power.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "Billy:turn").apply {
+            setReferenceCounted(false)
+            acquire(WAKE_LOCK_TIMEOUT_MS)
+        }
+    }.getOrNull()
 
     override fun onAppOpened(watchappUUID: UUID, watch: WatchIdentifier) {
         if (watchappUUID == BillyPebbleProtocol.APP_UUID) {
@@ -209,6 +243,9 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         private const val RUNTIME_AUTOMATIC = "automatic"
         private const val RUNTIME_COMPANIONLESS = "companionless"
         private const val REMOTE_TIMEOUT_MS = 100_000L
+        private const val WAKE_LOCK_TIMEOUT_MS = 110_000L
+        private const val WARNING_MAX_CHARS = 180
+        private const val GAVE_UP_MESSAGE = "Billy gave up after 100 seconds without an answer."
 
         // Outlives individual binder calls so an answer in progress is not
         // cancelled when the Pebble app's request returns.

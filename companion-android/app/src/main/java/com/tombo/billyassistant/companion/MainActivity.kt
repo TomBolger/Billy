@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
@@ -31,6 +32,8 @@ import com.tombo.billyassistant.companion.auth.GoogleApiAuthorizationResult
 import com.tombo.billyassistant.companion.auth.GoogleApiScopes
 import com.tombo.billyassistant.companion.auth.GoogleAuthStore
 import com.tombo.billyassistant.companion.auth.OwnGoogleProject
+import com.tombo.billyassistant.companion.diagnostics.DiagnosticsLog
+import com.tombo.billyassistant.companion.diagnostics.ProblemReporter
 import com.tombo.billyassistant.companion.gemini.GeminiAccountBridge
 import com.tombo.billyassistant.companion.gemini.GeminiSignInActivity
 import com.tombo.billyassistant.companion.phone.BillyNotificationListener
@@ -207,6 +210,20 @@ class MainActivity : ComponentActivity() {
                     startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
                 }
             }
+            accessRow("Stay connected when the screen is off", "Lets Billy answer quickly while your phone is asleep.", isBatteryExempt()) {
+                requestBatteryExemption()
+            }
+            accessRow("Problem alerts", "Tells you when an answer fails or is slow, with a one-tap bug report.", ProblemReporter.canPost(this@MainActivity)) {
+                if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
+                    permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                } else {
+                    runCatching {
+                        startActivity(
+                            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName),
+                        )
+                    }
+                }
+            }
         }
 
         card("3  Google account (optional)") {
@@ -246,7 +263,7 @@ class MainActivity : ComponentActivity() {
         card("5  Your Gemini account (optional)") {
             addView(text(
                 "Lets Billy ask your own Gemini for things only it can reach: your Google Photos library, Gemini's saved info and past chats, Gems, Keep, YouTube, and Google Home. " +
-                    "Experimental: it uses the Gemini website the way a browser does, which Google doesn't officially support. If it ever stops working, Billy just uses its normal tools. Your sign-in stays on this phone.",
+                    "Experimental: it uses the Gemini website the way a browser does, which Google doesn't officially support. If it ever stops working, Billy tells you so and asks you to sign in again here; it won't quietly answer from somewhere else. Your sign-in stays on this phone.",
                 14f,
                 COLOR_MUTED,
             ))
@@ -342,6 +359,7 @@ class MainActivity : ComponentActivity() {
                         "Billy's last answer" to DebugFiles.lastTurn(this@MainActivity),
                         "Gemini account: last reply" to GeminiAccountBridge.lastReplyFile(this@MainActivity),
                         "Gemini account: picture attempts" to GeminiAccountBridge.imageLogFile(this@MainActivity),
+                        "Billy turn reports (last 30; timings and device state, no prompts or answers)" to DiagnosticsLog.file(this@MainActivity),
                     ))
                     toastStatus(if (name != null) "Saved to Downloads as $name" else "Nothing to save yet.")
                 }))
@@ -614,6 +632,19 @@ class MainActivity : ComponentActivity() {
 
     private fun hasPhotos() = photoPermissions().all(::granted)
 
+    private fun isBatteryExempt(): Boolean = runCatching {
+        (getSystemService(POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(packageName)
+    }.getOrDefault(false)
+
+    /** Asks Android to let Billy skip battery optimization; falls back to the general settings list. */
+    private fun requestBatteryExemption() {
+        try {
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        } catch (e: Exception) {
+            runCatching { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+        }
+    }
+
     private fun runtimePermissionsMissing(): List<String> =
         (listOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -621,7 +652,7 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.SEND_SMS,
             Manifest.permission.CALL_PHONE,
-        ) + photoPermissions()).filterNot(::granted)
+        ) + photoPermissions() + (if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList())).filterNot(::granted)
 
     // ---- view helpers -----------------------------------------------------------
 

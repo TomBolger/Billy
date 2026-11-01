@@ -163,30 +163,33 @@ class CompanionAgent(
     /**
      * With the Gemini account linked, photo lookups go to the user's whole
      * Google Photos library through Gemini (which can show the photo on the
-     * watch) before falling back to the camera roll or opening the Photos app.
+     * watch) instead of the camera roll or the Photos app. If the Gemini account
+     * link is on but fails, its error goes back to Billy as-is (no quiet switch to
+     * the weaker camera-roll or open-the-app path).
      */
     private fun routed(name: String, args: JSONObject): CompanionToolExecution {
         val ownPhotos = OWN_PHOTO_REQUEST.containsMatchIn(currentUserText)
         // Only escalate to the user's Google Photos when they actually asked for
         // their own photos, not when Billy reached for a picture as a visual aid.
-        val linked = GeminiAccountBridge.isUsable(context) && ownPhotos
+        val linked = GeminiAccountBridge.isLinkEnabled(context) && ownPhotos
         if (linked && name == "open_google_photos_search") {
-            askGeminiForPhoto(args.optString("query"))?.let { return it }
+            return askGeminiForPhoto(args.optString("query"))
         }
         val execution = tools.execute(name, args)
         if (linked && name == "find_photo" && !execution.response.optString("status", "ok").equals("ok", ignoreCase = true)) {
             val when_ = listOf(args.optString("taken_after"), args.optString("taken_before")).filter { it.isNotBlank() }
             val described = args.optString("description").ifBlank { "my most recent photo" } +
                 if (when_.isNotEmpty()) " (taken between ${when_.joinToString(" and ")})" else ""
-            askGeminiForPhoto(described)?.let { return it }
+            return askGeminiForPhoto(described)
         }
         return execution
     }
 
-    private fun askGeminiForPhoto(description: String): CompanionToolExecution? {
-        val result = myGemini.execute("ask_my_gemini", JSONObject().put("question", "Find and show me this photo from my Google Photos: $description")) ?: return null
+    private fun askGeminiForPhoto(description: String): CompanionToolExecution {
+        val result = myGemini.execute("ask_my_gemini", JSONObject().put("question", "Find and show me this photo from my Google Photos: $description"))
+            ?: CompanionToolExecution(JSONObject().put("status", "error").put("summary", "ask_my_gemini is not available."))
         actions += "ask_my_gemini (photo: ${description.take(80)}) -> ${result.response.optString("status")}"
-        return result.takeIf { it.response.optString("status") == "ok" }
+        return result
     }
 
     private fun buildContext(prompt: String): String {
