@@ -49,8 +49,6 @@ exports.getGeminiApiKey = function() {
 }
 
 exports.DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
-// Used only when the chosen model is unavailable (overloaded, 404, network).
-exports.FALLBACK_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.1-flash-lite'];
 var LEGACY_DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 var MODEL_MIGRATION_KEY = 'billyModelDefaultMigratedV2';
 

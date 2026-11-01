@@ -22,6 +22,7 @@ var localHistory = require('./local_history');
 var promptBuilder = require('./prompt');
 var registry = require('./tool_registry');
 var usage = require('./usage');
+var diagnostics = require('./diagnostics');
 var config = require('../config');
 var location = require('../location');
 
@@ -88,9 +89,12 @@ function Turn(session) {
     this.searchCounted = false;
     this.progressTimers = [];
     this.finished = false;
+    var info = session.diagInfo || {};
+    this.diag = diagnostics.begin(info.path || 'phone-companionless', info.claimWaitMs || 0);
 }
 
 Turn.prototype.start = function() {
+    var self = this;
     this.threadId = localHistory.ensureThreadId(this.session);
     this.contents = localHistory.contents(this.threadId).concat([{
         role: 'user',
@@ -100,10 +104,12 @@ Turn.prototype.start = function() {
         functions: registry.declarations(),
         systemInstruction: promptBuilder.buildSystemInstruction(),
         search: true,
-        latLng: currentLatLng()
+        latLng: currentLatLng(),
+        onAttempt: function(rec) {
+            diagnostics.recordGemini(self.diag, rec);
+        }
     };
     this.progress('Thinking');
-    var self = this;
     this.progressTimers.push(setTimeout(function() {
         self.progress('Still thinking');
     }, 8000));
@@ -154,7 +160,7 @@ function looksLikeLeakedToolCall(text) {
 }
 exports.looksLikeLeakedToolCall = looksLikeLeakedToolCall;
 
-Turn.prototype.step = function(index, model) {
+Turn.prototype.step = function(index) {
     var self = this;
     var options = this.options;
     if (index >= MAX_STEPS - 1) {
@@ -187,7 +193,7 @@ Turn.prototype.step = function(index, model) {
                     return;
                 }
                 self.progress('Writing the answer');
-                self.step(index + 1, response.model);
+                self.step(index + 1);
             });
             return;
         }
@@ -196,16 +202,12 @@ Turn.prototype.step = function(index, model) {
             // The model wrote a tool request as text instead of calling it. Ask once more.
             self.nudgedLeak = true;
             self.contents.push({role: 'user', parts: [{text: '(Billy system note: your last reply came out as a raw tool request in text. Call the tool properly, or answer the user\'s question in plain words.)'}]});
-            self.step(index + 1, response.model);
+            self.step(index + 1);
             return;
         }
         self.finish(leaked ? '' : response.text, false);
     };
-    if (model) {
-        gemini.generateWithModel(model, this.contents, options, handle);
-    } else {
-        gemini.generateFirst(this.contents, options, handle);
-    }
+    gemini.generate(this.contents, options, handle);
 };
 
 Turn.prototype.runTools = function(calls, done) {
@@ -251,7 +253,9 @@ Turn.prototype.runTools = function(calls, done) {
             respond({status: previous.status, summary: 'Already done earlier in this turn; not repeated.', original: previous});
             return;
         }
+        var toolStarted = Date.now();
         registry.execute(self.session, call.name, call.args, function(result) {
+            diagnostics.recordTool(self.diag, call.name, Date.now() - toolStarted, result && result.status);
             if (registry.isMutating(call.name)) {
                 self.executed[key] = result;
             }
@@ -261,12 +265,13 @@ Turn.prototype.runTools = function(calls, done) {
     next();
 };
 
-Turn.prototype.fail = function(message) {
-    if (this.finished) {
+Turn.prototype.fail = function(message, force) {
+    if (this.finished && !force) {
         return;
     }
     this.finished = true;
     this.stopProgress();
+    diagnostics.end(this.diag, 'error', message);
     this.session.handleMessage({data: 'w' + message});
     this.close();
 };
@@ -278,6 +283,7 @@ Turn.prototype.finish = function(text, silent) {
     this.finished = true;
     this.stopProgress();
     if (silent) {
+        diagnostics.end(this.diag, 'stood-down');
         return;
     }
     text = formatting.forWatch(text || '');
@@ -285,8 +291,11 @@ Turn.prototype.finish = function(text, silent) {
         text = this.lastSummary;
     }
     if (!text && !this.cardShown && !this.actions.some(isQuestion)) {
-        text = 'Sorry, I did not get an answer. Please try again.';
+        // Never pretend: an empty answer is a failure the user can report.
+        this.fail('Gemini (' + config.getGeminiModel() + ') sent back an empty answer.' + gemini.REPORT_HINT, true);
+        return;
     }
+    diagnostics.end(this.diag, 'ok');
     localHistory.recordTurn(this.threadId, this.userText, text, this.actions);
     if (!text && this.actions.some(isQuestion)) {
         // The picker already ended the response on the watch.

@@ -79,9 +79,11 @@ exports.execute = function(session, name, args, callback) {
         });
         callback({
             status: failures.length === links.length ? 'error' : 'ok',
-            summary: items.length === 0 ? 'Nothing on the calendar in that window.' : items.length + ' events.',
+            summary: (items.length === 0 ? 'Nothing on the calendar in that window.' : items.length + ' events.') +
+                (failures.length > 0 ? ' WARNING: ' + failures.length + ' of ' + links.length + ' calendar links could not be read, so this list may be incomplete.' : ''),
             events: list,
-            unreadable_links: failures.length
+            unreadable_links: failures.length,
+            tell_user: failures.length > 0 ? 'Say plainly that some calendar links could not be read and the list may be incomplete.' : undefined
         });
     });
     return true;

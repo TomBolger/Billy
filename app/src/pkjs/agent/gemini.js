@@ -22,30 +22,24 @@
 // - Google Search and custom functions are sent together with
 //   toolConfig.includeServerSideToolInvocations, which Gemini 3 requires for
 //   the combination. Without the flag every tool request fails.
-// - The model is chosen once per turn (see pickModel) and then pinned, because
-//   thought signatures from one model are not valid for another.
+// - Exactly one model: the user's GEMINI_MODEL setting (or the default). No
+//   fallback chain and no dropping of tools. If Google rejects the request the
+//   user sees Google's message and can report it.
+// - Retries: ONE retry of the same model for network-level errors and HTTP 503,
+//   and ONE re-ask when the answer is completely empty. Nothing else.
 // - Model content is returned untouched so thought signatures survive.
 
 var config = require('../config');
 
 var BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
-var REQUEST_TIMEOUT_MS = 30000;
+var REQUEST_TIMEOUT_MS = 25000;
 var MAX_OUTPUT_TOKENS = 4096;
 var TRANSIENT_RETRY_DELAY_MS = 900;
+var REPORT_HINT = ' You can report this from the menu.';
 
 function isGemini3(model) {
     return /^gemini-3/.test(String(model || ''));
 }
-
-exports.candidateModels = function() {
-    var models = [config.getGeminiModel()];
-    config.FALLBACK_MODELS.forEach(function(model) {
-        if (models.indexOf(model) === -1) {
-            models.push(model);
-        }
-    });
-    return models;
-};
 
 function buildBody(model, contents, options) {
     var body = {
@@ -69,11 +63,11 @@ function buildBody(model, contents, options) {
         };
     });
     var tools = [];
-    // tier 0: Search + Maps + URL reading + code; tier 1: Search only; tier 2: none.
-    var tier = options.builtInTier || 0;
-    var builtIns = tier < 2 && (declarations.length === 0 || isGemini3(model));
-    var useSearch = !!options.search && builtIns;
-    var extras = useSearch && tier === 0 && declarations.length > 0;
+    // Search, Maps, URL reading and code always ride along. Combining them with
+    // functions needs Gemini 3; an older model answers with Google's own error,
+    // which the user sees.
+    var useSearch = !!options.search;
+    var extras = useSearch && declarations.length > 0;
     if (useSearch) {
         tools.push({googleSearch: {}});
     }
@@ -130,13 +124,15 @@ function post(apiKey, model, body, callback) {
         }
     };
     req.onerror = function() {
-        var err = new Error('Could not reach Gemini. Check the phone connection.');
-        err.transient = true;
+        var err = new Error('No internet connection on your phone.' + REPORT_HINT);
+        err.kind = 'network';
+        err.status = 0;
         finish(err);
     };
     req.ontimeout = function() {
-        var err = new Error('Gemini took too long to answer.');
-        err.transient = true;
+        var err = new Error('Gemini (' + model + ') didn\'t respond within ' + Math.round(REQUEST_TIMEOUT_MS / 1000) + ' seconds.' + REPORT_HINT);
+        err.kind = 'timeout';
+        err.status = 0;
         finish(err);
     };
     req.send(JSON.stringify(body));
@@ -188,33 +184,49 @@ function isUsable(response) {
     return response.functionCalls.length > 0 || response.text.length > 0;
 }
 
-// Sends one request to a specific model, retrying once on transient errors,
-// and once without Google Search if this model rejects the tool combination.
-exports.generateWithModel = function(model, contents, options, callback) {
+function usageOf(raw) {
+    var u = (raw && raw.usageMetadata) || {};
+    return {
+        prompt: typeof u.promptTokenCount === 'number' ? u.promptTokenCount : null,
+        thoughts: typeof u.thoughtsTokenCount === 'number' ? u.thoughtsTokenCount : null,
+        candidates: typeof u.candidatesTokenCount === 'number' ? u.candidatesTokenCount : null
+    };
+}
+
+// Sends one request to the user's chosen model. options.onAttempt (optional)
+// is called once per HTTP attempt with timing facts for diagnostics (never
+// prompt text).
+exports.generate = function(contents, options, callback) {
+    var model = config.getGeminiModel();
     var apiKey = config.getGeminiApiKey();
     if (!apiKey) {
         callback(new Error('Billy needs a free Gemini key. In the Pebble app, open Billy\'s settings and follow the steps under Gemini API key.'));
         return;
     }
     var attempt = 0;
-    var tier = 0;
+    var errorRetried = false;
+    var emptyRetried = false;
+    function note(start, status, extra) {
+        if (typeof options.onAttempt === 'function') {
+            var rec = {model: model, ms: Date.now() - start, status: status, retry: attempt - 1};
+            Object.keys(extra || {}).forEach(function(k) {
+                rec[k] = extra[k];
+            });
+            try {
+                options.onAttempt(rec);
+            } catch (e) {
+                // diagnostics must never break an answer
+            }
+        }
+    }
     function run() {
         attempt++;
-        var effective = {};
-        Object.keys(options).forEach(function(key) {
-            effective[key] = options[key];
-        });
-        effective.builtInTier = tier;
-        post(apiKey, model, buildBody(model, contents, effective), function(err, raw) {
+        var started = Date.now();
+        post(apiKey, model, buildBody(model, contents, options), function(err, raw) {
             if (err) {
-                if (options.search && tier < 2 && err.status === 400 &&
-                    /search|tool|server.?side|combination|function|maps|url|code/i.test(err.messageText || '')) {
-                    tier++;
-                    console.log('Gemini rejected built-in tools on ' + model + '; retrying with tier ' + tier + '.');
-                    run();
-                    return;
-                }
-                if (attempt < 2 && isTransient(err)) {
+                note(started, err.status || 0, {error: err.kind || ('http' + err.status)});
+                if (!errorRetried && (err.kind === 'network' || err.status === 503)) {
+                    errorRetried = true;
                     setTimeout(run, TRANSIENT_RETRY_DELAY_MS);
                     return;
                 }
@@ -222,7 +234,10 @@ exports.generateWithModel = function(model, contents, options, callback) {
                 return;
             }
             var response = parseResponse(model, raw);
-            if (!isUsable(response) && attempt < 2 && response.finishReason !== 'SAFETY') {
+            var u = usageOf(raw);
+            note(started, 200, {finishReason: response.finishReason, prompt: u.prompt, thoughts: u.thoughts, candidates: u.candidates});
+            if (!isUsable(response) && !emptyRetried && response.finishReason !== 'SAFETY') {
+                emptyRetried = true;
                 setTimeout(run, TRANSIENT_RETRY_DELAY_MS);
                 return;
             }
@@ -231,45 +246,6 @@ exports.generateWithModel = function(model, contents, options, callback) {
     }
     run();
 };
-
-// First call of a turn: try the configured model, then fall back to the next
-// model only for availability problems. The caller must pin response.model for
-// every later call in the same turn.
-exports.generateFirst = function(contents, options, callback) {
-    var models = exports.candidateModels();
-    var lastErr = null;
-    function next() {
-        var model = models.shift();
-        if (!model) {
-            callback(lastErr || new Error('Gemini did not answer. Try again.'));
-            return;
-        }
-        exports.generateWithModel(model, contents, options, function(err, response) {
-            if (!err && isUsable(response)) {
-                callback(null, response);
-                return;
-            }
-            lastErr = err || new Error('Gemini returned an empty answer.');
-            if (err && !shouldTryNextModel(err)) {
-                callback(err);
-                return;
-            }
-            console.log('Falling back from ' + model + ': ' + lastErr.message);
-            next();
-        });
-    }
-    next();
-};
-
-function isTransient(err) {
-    return !!err.transient || err.status === 429 || err.status === 500 || err.status === 502 ||
-        err.status === 503 || err.status === 504;
-}
-
-function shouldTryNextModel(err) {
-    return isTransient(err) || err.status === 404 ||
-        /overloaded|unavailable|high demand|not found|not supported/i.test(err.messageText || err.message || '');
-}
 
 function parseError(status, responseText, model) {
     var message = responseText;
@@ -286,21 +262,28 @@ function parseError(status, responseText, model) {
     message = String(message || 'unknown error');
     var lower = message.toLowerCase();
     var friendly = null;
+    var shortMessage = message.replace(/\s+/g, ' ').substring(0, 200);
     if (status === 403 && lower.indexOf('blocked') !== -1) {
         friendly = 'Gemini API key is blocked. Allow the Generative Language API for this key.';
     } else if ((status === 400 || status === 401 || status === 403) &&
         (lower.indexOf('api key not valid') !== -1 || lower.indexOf('invalid authentication') !== -1)) {
         friendly = 'Gemini did not accept the API key. Use a key from Google AI Studio.';
     } else if (status === 429) {
-        friendly = 'Gemini rate limit or quota reached. Try again shortly.';
+        friendly = 'Your free Gemini quota is used up for now (429).';
+    } else if (status === 503) {
+        friendly = 'Gemini is overloaded right now (503).';
+    } else if (status === 404) {
+        friendly = 'Gemini does not know the model "' + model + '" (404). Check the model name in Billy\'s settings. Google said: ' + shortMessage;
     }
-    var err = new Error(friendly || ('Gemini error (' + model + '): ' + message.substring(0, 160)));
+    var err = new Error((friendly || ('Gemini (' + model + ') returned error ' + status + ': ' + shortMessage)) + REPORT_HINT);
     err.status = status;
     err.code = code;
     err.messageText = message;
     return err;
 }
 
+exports.REPORT_HINT = REPORT_HINT;
+exports.REQUEST_TIMEOUT_MS = REQUEST_TIMEOUT_MS;
 exports.isGemini3 = isGemini3;
 exports._buildBody = buildBody;
 exports._parseResponse = parseResponse;

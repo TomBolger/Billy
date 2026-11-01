@@ -141,6 +141,16 @@ global.XMLHttpRequest = function() {
             if (typeof reply === 'function') {
                 reply = reply(parsed, self.url);
             }
+            if (reply && reply.networkError) {
+                self.status = 0;
+                self.onerror();
+                return;
+            }
+            if (reply && reply.timeout) {
+                self.status = 0;
+                self.ontimeout();
+                return;
+            }
             if (!reply) {
                 reply = {status: 500, json: {error: {message: 'script exhausted'}}};
             }
@@ -380,30 +390,90 @@ test('built-in tools: Search, Maps, URL reading and code ride along with functio
     });
 });
 
-test('model rejecting built-ins steps down (all -> Search only -> none) instead of flattening', async function() {
-    var reject = {status: 400, json: {error: {message: 'Tool combination is unsupported', status: 'INVALID_ARGUMENT'}}};
-    gemini.script.push(reject);
-    gemini.script.push(reject);
-    gemini.script.push(text('ok'));
+function warningText() {
+    return watch.sent.filter(function(m) { return m.WARNING; }).map(function(m) { return m.WARNING; }).join('|');
+}
+
+test('a model that rejects the tools fails with Google\'s message; tools are never dropped', async function() {
+    gemini.script.push({status: 400, json: {error: {message: 'Tool combination is unsupported', status: 'INVALID_ARGUMENT'}}});
+    gemini.script.push(text('must not be asked'));
     newSession('hello').run();
     await waitFor(done);
-    assert.strictEqual(gemini.requests.length, 3);
-    var second = gemini.requests[1].body.tools;
-    assert(second.some(function(t) { return t.googleSearch; }), 'tier 1 keeps Search');
-    assert(!second.some(function(t) { return t.googleMaps; }), 'tier 1 drops Maps');
-    assert(!gemini.requests[2].body.tools.some(function(t) { return t.googleSearch; }), 'tier 2 drops Search');
-    assert(/:generateContent/.test(gemini.requests[2].url));
+    assert.strictEqual(gemini.requests.length, 1, 'no retry or step-down after a 400');
+    assert(/Tool combination is unsupported/.test(warningText()), warningText());
+    assert(/gemini-3\.8-flash/.test(warningText()), warningText());
+    assert(/You can report this from the menu\./.test(warningText()));
+    assert.strictEqual(chatText(), '', 'nothing may be answered after a failure');
 });
 
-test('overloaded model falls back to the next model on the first call only', async function() {
+test('exactly one model: a 404 does not fall back to another model', async function() {
+    setSettings({GEMINI_MODEL: 'gemini-9-imaginary'});
+    gemini.script.push({status: 404, json: {error: {message: 'models/gemini-9-imaginary is not found'}}});
+    gemini.script.push(text('must not be asked'));
+    newSession('hello').run();
+    await waitFor(done);
+    assert.strictEqual(gemini.requests.length, 1);
+    assert(/gemini-9-imaginary/.test(gemini.requests[0].url));
+    assert(/gemini-9-imaginary/.test(warningText()), warningText());
+    var config = require(path.join(PKJS, 'config'));
+    assert.strictEqual(config.FALLBACK_MODELS, undefined, 'FALLBACK_MODELS must be gone');
+});
+
+test('HTTP 503 is retried once on the same model, then reported plainly', async function() {
     gemini.script.push({status: 503, json: {error: {message: 'overloaded'}}});
     gemini.script.push({status: 503, json: {error: {message: 'overloaded'}}});
-    gemini.script.push(modelTurn([call('set_timer', {minutes: 1})]));
-    gemini.script.push(text('Go.'));
-    newSession('one minute timer').run();
+    gemini.script.push(text('must not be asked'));
+    newSession('hello').run();
     await waitFor(done, 6000);
-    assert(/gemini-3\.7-flash/.test(gemini.requests[2].url), gemini.requests[2].url);
-    assert(/gemini-3\.7-flash/.test(gemini.requests[3].url), 'model not pinned after fallback');
+    assert.strictEqual(gemini.requests.length, 2);
+    assert.strictEqual(gemini.requests[0].url, gemini.requests[1].url, 'retry must use the same model');
+    assert(/^Gemini is overloaded right now \(503\)\. You can report this from the menu\.$/.test(warningText()), warningText());
+});
+
+test('a 503 followed by success answers from the same model', async function() {
+    gemini.script.push({status: 503, json: {error: {message: 'overloaded'}}});
+    gemini.script.push(text('Back.'));
+    newSession('hello').run();
+    await waitFor(done, 6000);
+    assert.strictEqual(chatText(), 'Back.');
+    assert.strictEqual(gemini.requests[0].url, gemini.requests[1].url);
+});
+
+test('network error is retried once; then "No internet connection"', async function() {
+    gemini.script.push({networkError: true});
+    gemini.script.push({networkError: true});
+    newSession('hello').run();
+    await waitFor(done, 6000);
+    assert.strictEqual(gemini.requests.length, 2);
+    assert(/^No internet connection on your phone\. You can report this from the menu\.$/.test(warningText()), warningText());
+});
+
+test('a timeout is not retried and says how long it waited', async function() {
+    gemini.script.push({timeout: true});
+    gemini.script.push(text('must not be asked'));
+    newSession('hello').run();
+    await waitFor(done, 6000);
+    assert.strictEqual(gemini.requests.length, 1);
+    assert(/^Gemini \(gemini-3\.8-flash\) didn't respond within 25 seconds\. You can report this from the menu\.$/.test(warningText()), warningText());
+});
+
+test('429 says the free quota is used up and is not retried', async function() {
+    gemini.script.push({status: 429, json: {error: {message: 'quota'}}});
+    newSession('hello').run();
+    await waitFor(done);
+    assert.strictEqual(gemini.requests.length, 1);
+    assert(/^Your free Gemini quota is used up for now \(429\)\./.test(warningText()), warningText());
+});
+
+test('an empty answer is re-asked once, then reported instead of faked', async function() {
+    var empty = modelTurn([]);
+    gemini.script.push(empty);
+    gemini.script.push(empty);
+    newSession('hello').run();
+    await waitFor(done, 6000);
+    assert.strictEqual(gemini.requests.length, 2);
+    assert(/empty answer/.test(warningText()), warningText());
+    assert(/report this from the menu/.test(warningText()));
 });
 
 test('old Flash-Lite default is migrated once to the new default', async function() {
@@ -425,14 +495,92 @@ test('router: automatic mode stands down when the companion claims the request',
     assert.strictEqual(gemini.requests.length, 0, 'phone runtime answered a claimed prompt');
 });
 
-test('router: automatic mode answers itself when the companion stays silent', async function() {
+test('router: automatic mode with a recently seen companion shows an error instead of silently answering', async function() {
     setSettings({ASSISTANT_RUNTIME: 'automatic'});
     var router = require(path.join(PKJS, 'agent/runtime_router'));
     router.recordAndroidCompanionSeen(0);
     gemini.script.push(text('Here.'));
     newSession('hello', 5151).run();
+    await waitFor(done, 6000);
+    assert.strictEqual(gemini.requests.length, 0, 'phone runtime must not answer');
+    assert.strictEqual(chatText(), '');
+    assert.strictEqual(warningText(), router.COMPANION_MISSING_MESSAGE);
+    assert(/^Billy Companion on your phone didn't pick this up\. Open Billy Companion once, and check that it's allowed to run in the background\. You can report this from the menu\.$/.test(warningText()));
+    // a late claim must not produce a second message or an answer
+    await new Promise(function(r) { setTimeout(r, 400); });
+    var before = watch.sent.length;
+    router.recordAndroidCompanionSeen(5151);
+    await new Promise(function(r) { setTimeout(r, 300); });
+    assert.strictEqual(watch.sent.length, before, 'late claim added messages');
+    assert.strictEqual(gemini.requests.length, 0);
+});
+
+test('router: android mode never falls back to the phone runtime', async function() {
+    setSettings({ASSISTANT_RUNTIME: 'android'});
+    gemini.script.push(text('Here.'));
+    newSession('hello', 6161).run();
+    await waitFor(done, 8000);
+    assert.strictEqual(gemini.requests.length, 0);
+    assert(/Billy Companion on your phone didn't pick this up/.test(warningText()), warningText());
+});
+
+test('router: automatic mode with no companion ever seen answers from the phone (iPhone)', async function() {
+    setSettings({ASSISTANT_RUNTIME: 'automatic'});
+    gemini.script.push(text('Phone answer.'));
+    newSession('hello', 7171).run();
+    await waitFor(done, 3000);
+    assert.strictEqual(chatText(), 'Phone answer.');
+    assert.strictEqual(warningText(), '');
+});
+
+// ---- diagnostics --------------------------------------------------------------
+test('diagnostics: records timings per turn, never the prompt, reply or tool arguments', async function() {
+    var secretPrompt = 'remind me to call dr zebrowski about my rash';
+    var secretReply = 'Sure, I will mention the zebrowski rash call.';
+    gemini.script.push(modelTurn([call('set_timer', {minutes: 5, name: 'zebrowski rash call'}, 'd1')]));
+    gemini.script.push(text(secretReply));
+    newSession(secretPrompt).run();
     await waitFor(done, 5000);
-    assert.strictEqual(chatText(), 'Here.');
+    var diag = require(path.join(PKJS, 'agent/diagnostics'));
+    var turns = diag.recent(5);
+    assert.strictEqual(turns.length, 1);
+    var t = turns[0];
+    assert.strictEqual(t.path, 'phone-companionless');
+    assert.strictEqual(t.outcome, 'ok');
+    assert.strictEqual(t.gemini.length, 2);
+    assert.strictEqual(t.gemini[0].model, 'gemini-3.8-flash');
+    assert.strictEqual(t.gemini[0].status, 200);
+    assert.strictEqual(t.gemini[0].finishReason, 'STOP');
+    assert.strictEqual(t.gemini[0].prompt, 10);
+    assert.strictEqual(t.tools[0].name, 'set_timer');
+    assert(typeof t.totalMs === 'number');
+    var everything = store[diag.STORAGE_KEY] + '\n' + diag.formatRecent(5);
+    ['zebrowski', 'rash', 'remind me'].forEach(function(word) {
+        assert(everything.indexOf(word) === -1, 'diagnostics leaked "' + word + '"');
+    });
+    // and the report carries them
+    var feedback = require(path.join(PKJS, 'lib/feedback'));
+    var opened = null;
+    Pebble.openURL = function(u) { opened = u; };
+    feedback.handleReportRequest({REPORT_THREAD_UUID: 'abc', FEEDBACK_APP_MAJOR: 1, FEEDBACK_APP_MINOR: 2, FEEDBACK_ALARM_COUNT: 0});
+    assert(opened, 'no report URL opened');
+    var body = decodeURIComponent(/body=([^&]*)/.exec(opened)[1]);
+    assert(/path=phone-companionless/.test(body), body);
+    assert(/lastTurnRuntimePath: phone-companionless/.test(body), body);
+    assert(/tool set_timer/.test(body));
+    assert(/gemini-3\.8-flash/.test(body));
+    assert(/body=([^&]*)/.exec(opened)[1].length <= 6000);
+});
+
+test('diagnostics: keeps only the last 20 turns and notes errors', async function() {
+    var diag = require(path.join(PKJS, 'agent/diagnostics'));
+    for (var i = 0; i < 25; i++) {
+        var t = diag.begin('phone-companionless', 0);
+        diag.end(t, i === 24 ? 'error' : 'ok', i === 24 ? 'Gemini is overloaded right now (503).' : '');
+    }
+    var all = diag.recent(100);
+    assert.strictEqual(all.length, 20);
+    assert.strictEqual(all[19].outcome, 'error');
 });
 
 test('relay: companion request runs the watch tool and returns a JS_TOOL_RESULT', async function() {

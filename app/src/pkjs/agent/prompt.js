@@ -73,6 +73,10 @@ exports.buildSystemInstruction = function() {
     var locationContext = location.getPromptContextSentence();
     if (locationContext) {
         parts.push('- ' + locationContext);
+    } else if (config.isLocationEnabled()) {
+        // Location is switched on but the phone has no usable fix. Say so
+        // instead of letting the model guess a place.
+        parts.push('- The user turned location on, but the phone has no recent location right now. If the answer depends on where they are (weather, nearby places, directions), do not guess: tell them Billy could not get the phone location and to try again in a moment.');
     }
     if (units) {
         parts.push('- Preferred units: ' + units + '.');
