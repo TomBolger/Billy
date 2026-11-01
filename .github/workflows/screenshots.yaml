@@ -34,7 +34,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libsdl1.2debian libfdt1 libpixman-1-0 libfreetype6 libglib2.0-0 xvfb > /dev/null || true
-          pip install --quiet pebble-tool pillow
+          pip install --quiet pebble-tool uv pillow
           mkdir -p ~/.pebble-sdk && touch ~/.pebble-sdk/NO_TRACKING
           yes | pebble sdk install latest
       - name: Pick the demo photo
