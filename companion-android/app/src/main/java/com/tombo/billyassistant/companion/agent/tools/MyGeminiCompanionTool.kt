@@ -54,7 +54,8 @@ class MyGeminiCompanionTool(
                 // Gemini often attaches stock images to plain factual answers.
                 val imageUrls = if (PICTURE_REQUEST.containsMatchIn(question)) reply.imageUrls else emptyList()
                 val personal = imageUrls.filter(::isPersonalPhoto)
-                val image = personal.ifEmpty { imageUrls }.take(3).firstNotNullOfOrNull { url ->
+                // Each failed picture can cost up to ~40 s, so only try two.
+                val image = personal.ifEmpty { imageUrls }.take(2).firstNotNullOfOrNull { url ->
                     GeminiAccountBridge.downloadImage(context, url)?.let { bitmap ->
                         try {
                             bitmap.toWatchImage(watchMediaSpec)

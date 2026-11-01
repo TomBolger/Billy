@@ -424,6 +424,16 @@ object GeminiAccountBridge {
         val log = StringBuilder("image: ").append(url.take(160)).append('\n')
         val candidates = listOf(sizedForWatch(url), url).distinct()
         val deadline = System.currentTimeMillis() + 25_000
+        // Pictures from the user's own Photos library need the signed-in page; a plain
+        // download or in-page fetch has failed every time (debug exports), so render
+        // it first instead of burning ~10+ s on attempts that cannot work.
+        if (url.contains("photos-askphotos")) {
+            val rendered = renderInBrowser(app, url, 12_000, log)
+            if (rendered != null) {
+                saveImageLog(app, log.append("rendered ok (first)").toString())
+                return rendered
+            }
+        }
         for (candidate in candidates) {
             try {
                 val connection = (URL(candidate).openConnection() as HttpURLConnection).apply {
@@ -457,7 +467,9 @@ object GeminiAccountBridge {
                 log.append("direct ").append(candidate.takeLast(12)).append(": ").append(e.javaClass.simpleName).append(' ').append(e.message).append('\n')
             }
         }
-        for (candidate in candidates) {
+        // The in-page attempts for the original and the resized URL fail the same way,
+        // so only try the watch-sized one.
+        for (candidate in candidates.take(1)) {
             val left = deadline - System.currentTimeMillis()
             if (left < 3_000) { log.append("out of time\n"); break }
             val raw = synchronized(lock) { runInPage(app, left.coerceAtMost(15_000)) { id -> imageScript(id, candidate) } }
@@ -476,7 +488,7 @@ object GeminiAccountBridge {
             }
         }
         val left = deadline - System.currentTimeMillis()
-        if (left >= 3_000) {
+        if (left >= 3_000 && !url.contains("photos-askphotos")) {
             val rendered = renderInBrowser(app, url, left.coerceAtMost(12_000), log)
             if (rendered != null) {
                 saveImageLog(app, log.append("rendered ok").toString())

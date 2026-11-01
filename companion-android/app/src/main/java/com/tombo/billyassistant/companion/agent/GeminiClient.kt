@@ -183,7 +183,10 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
                             .put("summary", "Already done earlier in this turn; not repeated."),
                     )
                 } else {
-                    runCatching { toolExecutor(call.name, call.args) }.getOrElse { e ->
+                    val toolStartedAt = System.currentTimeMillis()
+                    runCatching { toolExecutor(call.name, call.args) }.also {
+                        debugSink?.invoke("TIMING tool ${call.name}: ${System.currentTimeMillis() - toolStartedAt} ms")
+                    }.getOrElse { e ->
                         if (e is kotlinx.coroutines.CancellationException) throw e
                         CompanionToolExecution(
                             JSONObject().put("status", "error").put("summary", "Tool ${call.name} crashed: ${e.message ?: e.javaClass.simpleName}"),
@@ -290,7 +293,7 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
                         tier++
                         continue
                     }
-                    if (http.transient && attempt < 2) {
+                    if (http.transient && attempt < 2 && http.raw != "timeout") {
                         Thread.sleep(RETRY_DELAY_MS)
                         continue
                     }
@@ -365,6 +368,17 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
     }
 
     private fun post(apiKey: String, model: String, body: JSONObject): HttpResult {
+        val startedAt = System.currentTimeMillis()
+        val result = postTimed(apiKey, model, body)
+        val outcome = when (result) {
+            is HttpResult.Ok -> "ok"
+            is HttpResult.Error -> "error ${result.code} ${result.raw.take(20)}"
+        }
+        debugSink?.invoke("TIMING model call $model: ${System.currentTimeMillis() - startedAt} ms ($outcome)")
+        return result
+    }
+
+    private fun postTimed(apiKey: String, model: String, body: JSONObject): HttpResult {
         return try {
             val connection = (URL("$BASE_URL$model:generateContent").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -478,10 +492,10 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
         const val DEFAULT_MODEL = "gemini-3.8-flash"
         private val FALLBACK_MODELS = listOf(DEFAULT_MODEL, "gemini-3.7-flash", "gemini-3.1-flash-lite")
         private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
-        private const val MAX_STEPS = 8
+        private const val MAX_STEPS = 6
         private const val MAX_OUTPUT_TOKENS = 4096
         private const val CONNECT_TIMEOUT_MS = 15_000
-        private const val READ_TIMEOUT_MS = 35_000
+        private const val READ_TIMEOUT_MS = 25_000
         private const val RETRY_DELAY_MS = 900L
         private const val MAX_ERROR_LENGTH = 180
         private val TRANSIENT_CODES = setOf(429, 500, 502, 503, 504)

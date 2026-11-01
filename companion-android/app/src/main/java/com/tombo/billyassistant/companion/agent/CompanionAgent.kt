@@ -122,6 +122,7 @@ class CompanionAgent(
         hydrateGoogleProfile()
         actions = mutableListOf()
         val location = currentAndroidLocation(context)
+        val turnStartedAt = System.currentTimeMillis()
         val result = geminiClient.generateWithTools(
             prompt = userText,
             apiKey = settings.geminiApiKey,
@@ -132,6 +133,7 @@ class CompanionAgent(
             latitude = location?.latitude,
             longitude = location?.longitude,
         )
+        com.tombo.billyassistant.companion.DebugFiles.note(context, "TIMING whole turn (model + tools, before sending to watch): ${System.currentTimeMillis() - turnStartedAt} ms")
         com.tombo.billyassistant.companion.DebugFiles.note(context, "=== shown on watch ===\n" + when (result) {
             is CompanionAgentResult.Passed -> result.text
             is CompanionAgentResult.Failed -> "FAILED: " + result.reason
