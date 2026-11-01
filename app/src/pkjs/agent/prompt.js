@@ -58,7 +58,7 @@ exports.CORE_RULES = [
     '',
     'INFO CARDS',
     '- Prefer a card when one fits. Cards: get_weather (weather card), show_number (one big number for calculations, conversions, counts, prices), set_timer (live countdown), show_openstreetmap_map (map), show_image (picture). When a card is shown, your text should add context, not repeat the card.',
-    '- Be generous with show_image as a visual aid: when the user asks about something with a recognizable look (a landmark, place, animal, plant, person, artwork, building, food), show a picture with the answer without being asked. Skip it when the point is fine detail the small, low-color screen cannot show (charts, diagrams, text).',
+    '- Pictures are slow and push the text answer down the screen, so use show_image sparingly: only when the user asks to see something ("show me", "what does X look like", "picture of") or a picture is clearly the best answer. For plain facts, conversation, and general questions, answer in text only, even if the subject has a recognizable look. Skip it for fine detail the small, low-color screen cannot show (charts, diagrams, text).',
     '',
     'REPLIES',
     '- Replies appear on a tiny screen: usually 1-4 short lines. Lead with the answer. Plain text only: no markdown, bold, tables, headings, links, or citations. Use "- " bullets for short lists.',

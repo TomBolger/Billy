@@ -50,8 +50,11 @@ class MyGeminiCompanionTool(
             is GeminiAccountBridge.Reply.Answer -> {
                 // The user's own photos come first; if Gemini found one, never fall
                 // back to an unrelated web picture it attached alongside.
-                val personal = reply.imageUrls.filter(::isPersonalPhoto)
-                val image = personal.ifEmpty { reply.imageUrls }.take(3).firstNotNullOfOrNull { url ->
+                // Only attach a picture when the request was about seeing something;
+                // Gemini often attaches stock images to plain factual answers.
+                val imageUrls = if (PICTURE_REQUEST.containsMatchIn(question)) reply.imageUrls else emptyList()
+                val personal = imageUrls.filter(::isPersonalPhoto)
+                val image = personal.ifEmpty { imageUrls }.take(3).firstNotNullOfOrNull { url ->
                     GeminiAccountBridge.downloadImage(context, url)?.let { bitmap ->
                         try {
                             bitmap.toWatchImage(watchMediaSpec)
@@ -63,7 +66,7 @@ class MyGeminiCompanionTool(
                 // Gemini's text is written for its own app (it may say it can't show a
                 // picture that Billy did show, or describe UI the watch doesn't have).
                 // Billy writes the watch reply itself from these facts.
-                val pictureFound = reply.imageUrls.isNotEmpty()
+                val pictureFound = imageUrls.isNotEmpty()
                 CompanionToolExecution(
                     response = JSONObject()
                         .put("status", "ok")
@@ -93,6 +96,14 @@ class MyGeminiCompanionTool(
                 )
             }
         }
+    }
+
+    private companion object {
+        /** The request is about a photo or seeing something (not a plain factual question). */
+        val PICTURE_REQUEST = Regex(
+            """\b(photos?|pictures?|pics?|images?|selfies?|screenshots?|snaps?|show me|look(s|ed)? like|see)\b""",
+            RegexOption.IGNORE_CASE,
+        )
     }
 
     private fun isPersonalPhoto(url: String) =

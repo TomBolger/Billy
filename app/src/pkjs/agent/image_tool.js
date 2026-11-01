@@ -13,7 +13,7 @@ var USER_AGENT_NOTE = 'BillyAssistant (Pebble watch app)';
 exports.getDeclarations = function() {
     return [{
         name: 'show_image',
-        description: 'Show a picture of something on the watch (from Wikipedia/Wikimedia). Use it proactively, alongside your text answer, whenever the user asks about something with a recognizable look: landmarks, places, animals, plants, famous people, artworks, buildings, vehicles, dishes. ' +
+        description: 'Show a picture of something on the watch (from Wikipedia/Wikimedia). Use it only when the user asks to see something ("show me", "what does it look like", "picture of") or a picture is clearly the best answer. Do NOT use it for plain facts, conversation, or general questions about a subject; the picture slows the reply and pushes the text down. ' +
             'Skip it when the answer depends on fine detail the tiny low-color screen cannot show (charts, diagrams, text; use show_openstreetmap_map for maps).',
         parameters: {
             type: 'object',

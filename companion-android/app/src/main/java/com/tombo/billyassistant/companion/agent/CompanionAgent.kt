@@ -195,7 +195,7 @@ class CompanionAgent(
                 "(it searches the whole Google Photos library and shows the photo on the watch); facts about the user and their life " +
                 "(home or work address, family, birthdays, preferences, anything Gemini has saved); their past Gemini chats, Gems, Keep, YouTube, and Google Home. " +
                 "Billy's own notes below are partial: if they don't clearly answer a question about the user, use ask_my_gemini instead of saying you don't know. " +
-                "Never use it for general knowledge, science, news, or how-to questions: answer those yourself (with show_image for a picture of the subject)."
+                "Never use it for general knowledge, science, news, or how-to questions: answer those yourself in text."
         }
         profileStore.promptContext(prompt)?.let {
             parts += (if (linked) "Billy's own notes about the user (partial): " else "What Billy knows about the user (use when relevant, don't recite): ") + it

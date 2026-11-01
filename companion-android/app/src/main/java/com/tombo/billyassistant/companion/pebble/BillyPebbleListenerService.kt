@@ -151,9 +151,9 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
             }
             when (result) {
                 is CompanionAgentResult.Passed -> {
-                    result.watchImage?.let { image -> sender.sendWatchImage(image, watch) }
                     result.watchWeatherCurrent?.let { weather -> sender.sendWeatherCurrent(weather, watch) }
                     if (result.clarificationCard != null) {
+                        result.watchImage?.let { image -> sender.sendWatchImage(image, watch) }
                         sender.sendClarificationCard(result.clarificationCard, watch, watchMediaSpec.pickerOptionChars)
                         sender.sendDone(watch)
                         return
@@ -161,6 +161,8 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
                     if (result.text.isNotBlank()) {
                         sender.sendChunks(result.text, watch)
                     }
+                    // Text first so the answer shows immediately; the picture follows below it.
+                    result.watchImage?.let { image -> sender.sendWatchImage(image, watch) }
                     sender.sendDone(watch)
                 }
                 is CompanionAgentResult.Failed -> {
