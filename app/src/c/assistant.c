@@ -209,6 +209,10 @@ static void prv_prompt_inbox_received(DictionaryIterator *iter, void *context) {
   if (!prompt_tuple || prompt_tuple->length <= 1) {
     return;
   }
+  if (session_window_continue(prompt_tuple->value->cstring)) {
+    BOBBY_LOG(APP_LOG_LEVEL_INFO, "Continuing the open conversation with a typed phone prompt.");
+    return;
+  }
   BOBBY_LOG(APP_LOG_LEVEL_INFO, "Launching session from typed phone prompt.");
   session_window_push(0, prompt_tuple->value->cstring);
 }

@@ -36,7 +36,14 @@ import java.time.format.DateTimeFormatter
  * - A tool's finalText is a suggested reply, not an early exit, so the model can
  *   chain further tools or recover from an error.
  */
-class GeminiClient(preferredModel: String? = null, private val checkActive: () -> Unit = {}) {
+class GeminiClient(
+    preferredModel: String? = null,
+    private val checkActive: () -> Unit = {},
+    thinkingLevel: String? = null,
+) {
+    /** How hard Gemini 3 thinks; chosen in the watch app (Settings, or Billy's settings page). */
+    private val thinkingLevel: String = thinkingLevel?.takeIf { it in THINKING_LEVELS } ?: DEFAULT_THINKING_LEVEL
+
     val primaryModel: String = preferredModel?.trim()?.takeIf { it.startsWith("gemini-") } ?: DEFAULT_MODEL
 
     // Per-turn context; a GeminiClient serves one watch request at a time.
@@ -349,7 +356,7 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
             .put("candidateCount", 1)
             .put("maxOutputTokens", MAX_OUTPUT_TOKENS)
         if (isGemini3(model)) {
-            config.put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
+            config.put("thinkingConfig", JSONObject().put("thinkingLevel", thinkingLevel))
         }
         if (forceJson) {
             config.put("responseMimeType", "application/json")
@@ -561,6 +568,8 @@ class GeminiClient(preferredModel: String? = null, private val checkActive: () -
         /** Receives raw model replies for the "Save last answer" debug file. */
         @Volatile var debugSink: ((String) -> Unit)? = null
         const val DEFAULT_MODEL = "gemini-3.8-flash"
+        const val DEFAULT_THINKING_LEVEL = "low"
+        val THINKING_LEVELS = setOf("minimal", "low", "medium", "high")
         private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
         private const val MAX_STEPS = 6
         private const val MAX_OUTPUT_TOKENS = 4096

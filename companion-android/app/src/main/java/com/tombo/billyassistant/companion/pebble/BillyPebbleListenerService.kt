@@ -102,7 +102,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         val generation = UUID.randomUUID().toString()
         currentRequests[watch.toString()] = generation
         agentScope.launch {
-            answerPrompt(prompt, watch, watchMediaSpec, model, threadId, requestId, generation)
+            answerPrompt(prompt, watch, watchMediaSpec, model, threadId, requestId, generation, promptContext.thinkingLevel())
         }
         return ReceiveResult.Ack
     }
@@ -115,6 +115,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
         threadId: String,
         requestId: Int?,
         generation: String,
+        thinkingLevel: String?,
     ) {
         val deadline = android.os.SystemClock.elapsedRealtime() + REMOTE_TIMEOUT_MS
         val checkOwner = {
@@ -143,7 +144,7 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
                 withContext(Dispatchers.IO) {
                     CompanionAgent(
                         context = this@BillyPebbleListenerService,
-                        geminiClient = GeminiClient(model, checkCurrent),
+                        geminiClient = GeminiClient(model, checkCurrent, thinkingLevel),
                         watchMediaSpec = watchMediaSpec,
                         threadId = threadId,
                         checkActive = checkCurrent,
@@ -445,6 +446,12 @@ private fun String.forWatch(): String {
         .replace(Regex("[ \\t]+\\n"), "\n")
         .replace(Regex("\\n{3,}"), "\n\n")
         .trim()
+}
+
+/** Thinking level chosen on the watch ("think=low" in the prompt context). */
+private fun String?.thinkingLevel(): String? {
+    if (isNullOrBlank()) return null
+    return Regex("""think=([a-z]+)""").find(this)?.groupValues?.getOrNull(1)
 }
 
 private fun String?.geminiModel(): String? {

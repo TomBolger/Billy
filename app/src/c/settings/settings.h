@@ -41,3 +41,9 @@ bool settings_get_should_confirm_transcripts();
 const char* settings_get_assistant_runtime();
 // Gemini model chosen in Billy settings, or "" if never synced.
 const char* settings_get_gemini_model();
+// How hard Gemini thinks: "minimal", "low", "medium" or "high" ("low" if never set).
+const char* settings_get_gemini_thinking();
+// Change a setting on the watch; it is saved here and sent to the phone so
+// Billy's settings page and both runtimes use it too.
+void settings_set_gemini_model(const char* model);
+void settings_set_gemini_thinking(const char* level);

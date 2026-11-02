@@ -68,6 +68,15 @@ exports.getGeminiModel = function() {
     return model || exports.DEFAULT_GEMINI_MODEL;
 }
 
+exports.THINKING_LEVELS = ['minimal', 'low', 'medium', 'high'];
+exports.DEFAULT_THINKING_LEVEL = 'low';
+
+// How hard Gemini thinks before answering; set in Billy's settings or on the watch.
+exports.getGeminiThinking = function() {
+    var level = String(exports.getSetting('GEMINI_THINKING', '') || '');
+    return exports.THINKING_LEVELS.indexOf(level) >= 0 ? level : exports.DEFAULT_THINKING_LEVEL;
+}
+
 exports.getGeminiMonthlyBudgetUsd = function() {
     return exports.getSetting('GEMINI_MONTHLY_BUDGET_USD', '10');
 }

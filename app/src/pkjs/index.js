@@ -38,7 +38,7 @@ var messageKeys = require('message_keys');
 // small enough for the watch to accept.
 var WATCH_SETTINGS = [
     'QUICK_LAUNCH_BEHAVIOUR', 'ALARM_VIBE_PATTERN', 'TIMER_VIBE_PATTERN',
-    'CONFIRM_TRANSCRIPTS', 'ASSISTANT_RUNTIME', 'GEMINI_MODEL', 'LOCATION_ENABLED'
+    'CONFIRM_TRANSCRIPTS', 'ASSISTANT_RUNTIME', 'GEMINI_MODEL', 'GEMINI_THINKING', 'LOCATION_ENABLED'
 ];
 
 Pebble.addEventListener('showConfiguration', function() {
@@ -67,7 +67,7 @@ Pebble.addEventListener('webviewclosed', function(e) {
 function main() {
     // Keep the watch's copy of the model current so the Android companion
     // (which reads it from each prompt) uses the same model as this runtime.
-    Pebble.sendAppMessage({GEMINI_MODEL: config.getGeminiModel()});
+    Pebble.sendAppMessage({GEMINI_MODEL: config.getGeminiModel(), GEMINI_THINKING: config.getGeminiThinking()});
     doQuotaWarning();
     location.update();
     Pebble.addEventListener('appmessage', handleAppMessage);
@@ -101,6 +101,17 @@ function handleAppMessage(e) {
     }
     if (data.JS_TOOL_RESULT) {
         // Our own relay reply bounced back by the watch for the companion.
+        return;
+    }
+    // Model or thinking changed in the watch's Settings menu.
+    if (!data.PROMPT && ('GEMINI_MODEL' in data || 'GEMINI_THINKING' in data)) {
+        if (data.GEMINI_MODEL && /^gemini-[A-Za-z0-9.-]+$/.test(data.GEMINI_MODEL)) {
+            config.setSetting('GEMINI_MODEL', data.GEMINI_MODEL);
+        }
+        if (config.THINKING_LEVELS.indexOf(data.GEMINI_THINKING) >= 0) {
+            config.setSetting('GEMINI_THINKING', data.GEMINI_THINKING);
+        }
+        console.log('Watch settings: model ' + config.getGeminiModel() + ', thinking ' + config.getGeminiThinking());
         return;
     }
     if (data.PROMPT) {

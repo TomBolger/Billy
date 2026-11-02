@@ -50,7 +50,7 @@
                 "id": "GEMINI_MODEL",
                 "messageKey": "GEMINI_MODEL",
                 "label": "Gemini model",
-                "description": "Used by both the phone runtime and Billy Companion. Flash models pick the right tool far more reliably than Flash-Lite.",
+                "description": "Used by both the phone runtime and Billy Companion. Flash models pick the right tool far more reliably than Flash-Lite. You can also change this on the watch under Settings.",
                 "defaultValue": "gemini-3.8-flash",
                 "options": [
                     {
@@ -76,6 +76,32 @@
                     {
                         "label": "Gemini 3.1 Pro preview (slow)",
                         "value": "gemini-3.1-pro-preview"
+                    }
+                ]
+            },
+            {
+                "type": "select",
+                "id": "GEMINI_THINKING",
+                "messageKey": "GEMINI_THINKING",
+                "label": "Thinking",
+                "description": "How hard Gemini thinks before answering. More thinking can give better answers to hard questions but is slower and uses more of your quota. You can also change this on the watch under Settings.",
+                "defaultValue": "low",
+                "options": [
+                    {
+                        "label": "Minimal (fastest)",
+                        "value": "minimal"
+                    },
+                    {
+                        "label": "Low (recommended)",
+                        "value": "low"
+                    },
+                    {
+                        "label": "Medium",
+                        "value": "medium"
+                    },
+                    {
+                        "label": "High (slowest)",
+                        "value": "high"
                     }
                 ]
             },

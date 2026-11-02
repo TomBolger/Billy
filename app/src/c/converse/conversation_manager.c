@@ -197,13 +197,14 @@ static bool prv_send_input(ConversationManager* manager, const char* input) {
   snprintf(
       prompt_context,
       sizeof(prompt_context),
-      "media=%dx%d;pbi=%d;maxb=%d;opt=%d;model=%s",
+      "media=%dx%d;pbi=%d;maxb=%d;opt=%d;model=%s;think=%s",
       WATCH_MEDIA_WIDTH,
       WATCH_MEDIA_HEIGHT,
       WATCH_MEDIA_PBI_DEPTH,
       WATCH_MEDIA_MAX_BYTES,
       WATCH_CLARIFY_OPTION_CHARS,
-      settings_get_gemini_model());
+      settings_get_gemini_model(),
+      settings_get_gemini_thinking());
   dict_write_cstring(iter, MESSAGE_KEY_PROMPT_CONTEXT, prompt_context);
   dict_write_uint32(iter, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID, manager->active_request_id);
 

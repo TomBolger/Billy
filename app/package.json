@@ -147,7 +147,8 @@
       "JS_TOOL_RESULT",
       "CALENDAR_LINKS",
       "RESPONSE_REQUEST_ID",
-      "TRANSPORT_SEQUENCE"
+      "TRANSPORT_SEQUENCE",
+      "GEMINI_THINKING"
     ],
     "resources": {
       "media": [
@@ -366,6 +367,27 @@
           "file": "images/sent.pdc",
           "name": "SENT_IMAGE",
           "type": "raw"
+        },
+        {
+          "file": "icons/menu_settings.png",
+          "name": "MENU_ICON_SETTINGS",
+          "type": "bitmap",
+          "targetPlatforms": [
+            "basalt",
+            "chalk",
+            "emery",
+            "gabbro"
+          ]
+        },
+        {
+          "file": "icons/menu_settings_bw.png",
+          "name": "MENU_ICON_SETTINGS",
+          "type": "bitmap",
+          "memoryFormat": "1Bit",
+          "targetPlatforms": [
+            "diorite",
+            "flint"
+          ]
         },
         {
           "file": "icons/menu_about.png",

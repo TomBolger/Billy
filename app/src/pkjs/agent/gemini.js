@@ -50,7 +50,7 @@ function buildBody(model, contents, options) {
         }
     };
     if (isGemini3(model)) {
-        body.generationConfig.thinkingConfig = {thinkingLevel: options.thinkingLevel || 'low'};
+        body.generationConfig.thinkingConfig = {thinkingLevel: options.thinkingLevel || config.getGeminiThinking()};
     }
     if (options.systemInstruction) {
         body.systemInstruction = {parts: [{text: options.systemInstruction}]};

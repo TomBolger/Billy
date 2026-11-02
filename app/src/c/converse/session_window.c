@@ -98,6 +98,21 @@ static void prv_start_dictation(SessionWindow *sw);
 static SessionWindow* prv_active_session_window(void);
 static bool prv_submit_clarification_answer(SessionWindow *sw, const char *answer_text, const char *display_override);
 
+// The conversation currently on screen, so a prompt typed on the phone can
+// continue it instead of starting a new one.
+static SessionWindow *s_open_session = NULL;
+
+bool session_window_continue(const char *prompt) {
+  SessionWindow *sw = s_open_session;
+  if (!sw || !prompt || window_stack_get_top_window() != sw->window) {
+    return false;
+  }
+  prv_refresh_timeout(sw);
+  conversation_manager_add_input(sw->manager, prompt);
+  sw->query_time = time(NULL);
+  return true;
+}
+
 void session_window_push(int timeout, char *starting_prompt) {
   Window *window = bwindow_create();
   SessionWindow *sw = bmalloc(sizeof(SessionWindow));
@@ -148,6 +163,7 @@ static void prv_window_load(Window *window) {
   GRect window_bounds = layer_get_frame(window_get_root_layer(window));
   GSize window_size = window_bounds.size;
   SessionWindow *sw = window_get_user_data(window);
+  s_open_session = sw;
   sw->dictation_pending = true;
   BOBBY_LOG(APP_LOG_LEVEL_INFO, "created SessionWindow %p.", sw);
   sw->manager = conversation_manager_create();
@@ -236,6 +252,9 @@ static void prv_window_disappear(Window *window) {
 static void prv_window_unload(Window *window) {
   SessionWindow *sw = (SessionWindow *)window_get_user_data(window);
   window_set_user_data(window, (void*)0);
+  if (s_open_session == sw) {
+    s_open_session = NULL;
+  }
   prv_destroy(sw);
 }
 
