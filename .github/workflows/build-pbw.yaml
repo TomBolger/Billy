@@ -5,6 +5,7 @@ on:
     paths:
       - 'app/**'
       - 'companion-android/**'
+      - 'tools/pkjs-tests/**'
       - '.github/workflows/build-pbw.yaml'
   workflow_dispatch:
 
