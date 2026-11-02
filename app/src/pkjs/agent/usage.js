@@ -1,7 +1,15 @@
 var STORAGE_KEY = 'billy-gemini-usage-v1';
 
-var FLASH_LITE_INPUT_PER_MILLION = 0.25;
-var FLASH_LITE_OUTPUT_PER_MILLION = 1.50;
+// USD per million tokens (paid tier, text). Unknown models use the 3.8 Flash rate.
+var PRICES = {
+    'gemini-3.8-flash': [0.75, 3.75],
+    'gemini-3.7-flash': [0.75, 3.75],
+    'gemini-3.5-flash': [1.50, 9.00],
+    'gemini-3.5-flash-lite': [0.30, 2.50],
+    'gemini-3.1-flash-lite': [0.25, 1.50],
+    'gemini-3.1-pro-preview': [2.00, 12.00]
+};
+var DEFAULT_PRICE = PRICES['gemini-3.8-flash'];
 var SEARCH_FREE_PER_MONTH = 5000;
 var SEARCH_PER_THOUSAND = 14.00;
 
@@ -10,6 +18,7 @@ function emptyUsage() {
         period: currentPeriod(),
         inputTokens: 0,
         outputTokens: 0,
+        costUsd: 0,
         totalTokens: 0,
         groundedSearches: 0,
         requestCount: 0
@@ -57,7 +66,8 @@ exports.recordGeminiResponse = function(response) {
     }
     var metadata = response.raw.usageMetadata || response.raw.usage || {};
     var inputTokens = tokenCount(metadata, ['promptTokenCount', 'input_tokens', 'inputTokens']);
-    var outputTokens = tokenCount(metadata, ['candidatesTokenCount', 'output_tokens', 'outputTokens']);
+    var outputTokens = tokenCount(metadata, ['candidatesTokenCount', 'output_tokens', 'outputTokens']) +
+        tokenCount(metadata, ['thoughtsTokenCount']);
     var totalTokens = tokenCount(metadata, ['totalTokenCount', 'total_tokens', 'totalTokens']);
     if (!inputTokens && !outputTokens && !totalTokens) {
         return;
@@ -67,6 +77,8 @@ exports.recordGeminiResponse = function(response) {
     usage.outputTokens += outputTokens;
     usage.totalTokens += totalTokens || (inputTokens + outputTokens);
     usage.requestCount += 1;
+    var price = PRICES[response.model] || DEFAULT_PRICE;
+    usage.costUsd = (usage.costUsd || 0) + inputTokens / 1000000 * price[0] + outputTokens / 1000000 * price[1];
     save(usage);
 }
 
@@ -78,11 +90,11 @@ exports.recordGroundedSearch = function() {
 
 exports.getSummary = function(budgetUsd) {
     var usage = load();
-    var inputCost = usage.inputTokens / 1000000 * FLASH_LITE_INPUT_PER_MILLION;
-    var outputCost = usage.outputTokens / 1000000 * FLASH_LITE_OUTPUT_PER_MILLION;
+    var tokenCost = usage.costUsd !== undefined ? usage.costUsd :
+        usage.inputTokens / 1000000 * DEFAULT_PRICE[0] + usage.outputTokens / 1000000 * DEFAULT_PRICE[1];
     var billableSearches = Math.max(0, usage.groundedSearches - SEARCH_FREE_PER_MONTH);
     var searchCost = billableSearches / 1000 * SEARCH_PER_THOUSAND;
-    var estimatedCost = inputCost + outputCost + searchCost;
+    var estimatedCost = tokenCost + searchCost;
     var budget = isFinite(budgetUsd) && budgetUsd > 0 ? budgetUsd : 10;
     return {
         period: usage.period,

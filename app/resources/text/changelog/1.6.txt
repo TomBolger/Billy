@@ -1,0 +1,3 @@
+# Billy 0.6
+## Easier setup
+Billy Companion now walks anyone through connecting their own Google account, step by step, with a button for each step. No invitation needed.

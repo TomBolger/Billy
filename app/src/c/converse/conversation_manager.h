@@ -25,6 +25,7 @@ typedef void (*ConversationManagerUpdateHandler)(bool entry_added, void* context
 typedef void (*ConversationManagerEntryDeletedHandler)(int index, void* context);
 
 void conversation_manager_init();
+bool conversation_manager_accepts_response(DictionaryIterator *iter);
 ConversationManager* conversation_manager_create();
 ConversationManager* conversation_manager_get_current();
 void conversation_manager_destroy(ConversationManager* manager);

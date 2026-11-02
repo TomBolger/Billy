@@ -16,12 +16,17 @@
 
 #include "settings.h"
 #include <pebble.h>
+#include <string.h>
 #include <pebble-events/pebble-events.h>
 
 #include "../util/persist_keys.h"
 
 static EventHandle s_event_handle;
 static char s_assistant_runtime[16];
+static char s_gemini_model[40];
+static char s_gemini_thinking[12];
+static AppTimer *s_sync_timer;
+static int s_sync_attempts;
 
 static void prv_app_message_handler(DictionaryIterator *iter, void *context);
 
@@ -31,6 +36,10 @@ void settings_init() {
 
 void settings_deinit() {
   events_app_message_unsubscribe(s_event_handle);
+  if (s_sync_timer) {
+    app_timer_cancel(s_sync_timer);
+    s_sync_timer = NULL;
+  }
 }
 
 QuickLaunchBehaviour settings_get_quick_launch_behaviour() {
@@ -71,6 +80,69 @@ const char* settings_get_assistant_runtime() {
   return "automatic";
 }
 
+const char* settings_get_gemini_model() {
+  if (persist_exists(PERSIST_KEY_GEMINI_MODEL)) {
+    persist_read_string(PERSIST_KEY_GEMINI_MODEL, s_gemini_model, sizeof(s_gemini_model));
+    s_gemini_model[sizeof(s_gemini_model) - 1] = '\0';
+    return s_gemini_model;
+  }
+  return "";
+}
+
+const char* settings_get_gemini_thinking() {
+  if (persist_exists(PERSIST_KEY_GEMINI_THINKING)) {
+    persist_read_string(PERSIST_KEY_GEMINI_THINKING, s_gemini_thinking, sizeof(s_gemini_thinking));
+    s_gemini_thinking[sizeof(s_gemini_thinking) - 1] = '\0';
+    if (s_gemini_thinking[0] != '\0') {
+      return s_gemini_thinking;
+    }
+  }
+  return "low";
+}
+
+// Sends the current model and thinking level to the phone. The outbox may be
+// busy with a conversation, so retry a few times.
+static void prv_sync_to_phone(void *context) {
+  s_sync_timer = NULL;
+  DictionaryIterator *iter;
+  if (app_message_outbox_begin(&iter) != APP_MSG_OK) {
+    if (++s_sync_attempts < 10) {
+      s_sync_timer = app_timer_register(500, prv_sync_to_phone, NULL);
+    }
+    return;
+  }
+  const char *model = settings_get_gemini_model();
+  if (model[0] != '\0') {
+    dict_write_cstring(iter, MESSAGE_KEY_GEMINI_MODEL, model);
+  }
+  dict_write_cstring(iter, MESSAGE_KEY_GEMINI_THINKING, settings_get_gemini_thinking());
+  app_message_outbox_send();
+}
+
+static void prv_schedule_sync(void) {
+  s_sync_attempts = 0;
+  if (s_sync_timer) {
+    app_timer_cancel(s_sync_timer);
+  }
+  s_sync_timer = app_timer_register(50, prv_sync_to_phone, NULL);
+}
+
+void settings_set_gemini_model(const char* model) {
+  if (!model || strlen(model) >= sizeof(s_gemini_model)) {
+    return;
+  }
+  persist_write_string(PERSIST_KEY_GEMINI_MODEL, model);
+  prv_schedule_sync();
+}
+
+void settings_set_gemini_thinking(const char* level) {
+  if (!level || strlen(level) >= sizeof(s_gemini_thinking)) {
+    return;
+  }
+  persist_write_string(PERSIST_KEY_GEMINI_THINKING, level);
+  prv_schedule_sync();
+}
+
 static void prv_app_message_handler(DictionaryIterator *iter, void *context) {
   for (Tuple *tuple = dict_read_first(iter); tuple; tuple = dict_read_next(iter)) {
     if (tuple->key == MESSAGE_KEY_QUICK_LAUNCH_BEHAVIOUR) {
@@ -84,6 +156,12 @@ static void prv_app_message_handler(DictionaryIterator *iter, void *context) {
       persist_write_bool(PERSIST_KEY_CONFIRM_TRANSCRIPTS, tuple->value->int8);
     } else if (tuple->key == MESSAGE_KEY_ASSISTANT_RUNTIME) {
       persist_write_string(PERSIST_KEY_ASSISTANT_RUNTIME, tuple->value->cstring);
+    } else if (tuple->key == MESSAGE_KEY_GEMINI_MODEL && tuple->type == TUPLE_CSTRING &&
+               strlen(tuple->value->cstring) < sizeof(s_gemini_model)) {
+      persist_write_string(PERSIST_KEY_GEMINI_MODEL, tuple->value->cstring);
+    } else if (tuple->key == MESSAGE_KEY_GEMINI_THINKING && tuple->type == TUPLE_CSTRING &&
+               strlen(tuple->value->cstring) < sizeof(s_gemini_thinking)) {
+      persist_write_string(PERSIST_KEY_GEMINI_THINKING, tuple->value->cstring);
     }
   }
 }

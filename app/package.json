@@ -1,7 +1,7 @@
 {
   "name": "Billy",
   "author": "Thomas Bolger",
-  "version": "0.1",
+  "version": "0.6",
   "keywords": [
     "pebble-app"
   ],
@@ -20,7 +20,12 @@
       "location"
     ],
     "targetPlatforms": [
-      "emery"
+      "basalt",
+      "chalk",
+      "diorite",
+      "emery",
+      "flint",
+      "gabbro"
     ],
     "watchapp": {
       "watchface": false
@@ -125,9 +130,9 @@
       "CLARIFY_OPTION_1",
       "CLARIFY_OPTION_2",
       "CLARIFY_OPTION_3",
-        "CONFIRM_TRANSCRIPTS",
-        "ACTION_SETTINGS_UPDATED",
-        "ASSISTANT_RUNTIME",
+      "CONFIRM_TRANSCRIPTS",
+      "ACTION_SETTINGS_UPDATED",
+      "ASSISTANT_RUNTIME",
       "GEMINI_API_KEY",
       "GEMINI_MODEL",
       "GEMINI_MONTHLY_BUDGET_USD",
@@ -137,7 +142,13 @@
       "WATCH_PROMPT",
       "WATCH_READY",
       "ANDROID_COMPANION_READY",
-      "ANDROID_REQUEST_ID"
+      "ANDROID_REQUEST_ID",
+      "JS_TOOL_REQUEST",
+      "JS_TOOL_RESULT",
+      "CALENDAR_LINKS",
+      "RESPONSE_REQUEST_ID",
+      "TRANSPORT_SEQUENCE",
+      "GEMINI_THINKING"
     ],
     "resources": {
       "media": [
@@ -358,12 +369,35 @@
           "type": "raw"
         },
         {
+          "file": "icons/menu_settings.png",
+          "name": "MENU_ICON_SETTINGS",
+          "type": "bitmap",
+          "targetPlatforms": [
+            "basalt",
+            "chalk",
+            "emery",
+            "gabbro"
+          ]
+        },
+        {
+          "file": "icons/menu_settings_bw.png",
+          "name": "MENU_ICON_SETTINGS",
+          "type": "bitmap",
+          "memoryFormat": "1Bit",
+          "targetPlatforms": [
+            "diorite",
+            "flint"
+          ]
+        },
+        {
           "file": "icons/menu_about.png",
           "name": "MENU_ICON_ABOUT",
           "type": "bitmap",
           "targetPlatforms": [
             "basalt",
-            "emery"
+            "chalk",
+            "emery",
+            "gabbro"
           ]
         },
         {
@@ -372,7 +406,8 @@
           "type": "bitmap",
           "memoryFormat": "1Bit",
           "targetPlatforms": [
-            "diorite"
+            "diorite",
+            "flint"
           ]
         },
         {
@@ -381,7 +416,9 @@
           "type": "bitmap",
           "targetPlatforms": [
             "basalt",
-            "emery"
+            "chalk",
+            "emery",
+            "gabbro"
           ]
         },
         {
@@ -390,7 +427,8 @@
           "type": "bitmap",
           "memoryFormat": "1Bit",
           "targetPlatforms": [
-            "diorite"
+            "diorite",
+            "flint"
           ]
         },
         {
@@ -399,7 +437,9 @@
           "type": "bitmap",
           "targetPlatforms": [
             "basalt",
-            "emery"
+            "chalk",
+            "emery",
+            "gabbro"
           ]
         },
         {
@@ -408,7 +448,8 @@
           "type": "bitmap",
           "memoryFormat": "1Bit",
           "targetPlatforms": [
-            "diorite"
+            "diorite",
+            "flint"
           ]
         },
         {
@@ -417,7 +458,9 @@
           "type": "bitmap",
           "targetPlatforms": [
             "basalt",
-            "emery"
+            "chalk",
+            "emery",
+            "gabbro"
           ]
         },
         {
@@ -426,7 +469,8 @@
           "type": "bitmap",
           "memoryFormat": "1Bit",
           "targetPlatforms": [
-            "diorite"
+            "diorite",
+            "flint"
           ]
         },
         {
@@ -435,7 +479,9 @@
           "type": "bitmap",
           "targetPlatforms": [
             "basalt",
-            "emery"
+            "chalk",
+            "emery",
+            "gabbro"
           ]
         },
         {
@@ -444,7 +490,8 @@
           "type": "bitmap",
           "memoryFormat": "1Bit",
           "targetPlatforms": [
-            "diorite"
+            "diorite",
+            "flint"
           ]
         },
         {
@@ -453,7 +500,9 @@
           "type": "bitmap",
           "targetPlatforms": [
             "basalt",
-            "emery"
+            "chalk",
+            "emery",
+            "gabbro"
           ]
         },
         {
@@ -462,7 +511,8 @@
           "type": "bitmap",
           "memoryFormat": "1Bit",
           "targetPlatforms": [
-            "diorite"
+            "diorite",
+            "flint"
           ]
         },
         {
@@ -471,7 +521,9 @@
           "type": "bitmap",
           "targetPlatforms": [
             "basalt",
-            "emery"
+            "chalk",
+            "emery",
+            "gabbro"
           ]
         },
         {
@@ -480,7 +532,8 @@
           "type": "bitmap",
           "memoryFormat": "1Bit",
           "targetPlatforms": [
-            "diorite"
+            "diorite",
+            "flint"
           ]
         },
         {
@@ -519,7 +572,9 @@
           "type": "bitmap",
           "targetPlatforms": [
             "basalt",
-            "emery"
+            "chalk",
+            "emery",
+            "gabbro"
           ]
         },
         {
@@ -528,7 +583,8 @@
           "type": "bitmap",
           "memoryFormat": "1BitPalette",
           "targetPlatforms": [
-            "diorite"
+            "diorite",
+            "flint"
           ]
         },
         {
@@ -547,11 +603,17 @@
           "type": "raw"
         },
         {
+          "file": "text/changelog/1.6.txt",
+          "name": "CHANGELOG_1_6",
+          "type": "raw"
+        },
+        {
           "file": "fonts/GOTHIC_36.pbf",
           "name": "FONT_GOTHIC_36",
           "type": "raw",
           "targetPlatforms": [
-            "emery"
+            "emery",
+            "gabbro"
           ]
         },
         {
@@ -559,7 +621,8 @@
           "name": "FONT_GOTHIC_36_BOLD",
           "type": "raw",
           "targetPlatforms": [
-            "emery"
+            "emery",
+            "gabbro"
           ]
         }
       ]
