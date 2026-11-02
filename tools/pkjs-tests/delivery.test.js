@@ -40,7 +40,7 @@ function startupTest() {
         './location': {update() {}}, './session': {},
         './quota': {fetchQuota: cb => cb({hasSubscription: true})},
         '@rebble/clay': function(config) { assert.strictEqual(config[0].defaultValue, 'Billy 0.5'); }, './config.json': setup, './custom_config': {},
-        './config': {getGeminiModel: () => 'gemini-test'}, './reminders': {},
+        './config': {getGeminiModel: () => 'gemini-test', getGeminiThinking: () => 'low'}, './reminders': {},
         './lib/feedback': {}, 'package.json': {version: '0.5'}, './agent/runtime_router': {},
         './agent/relay': {}, message_keys: {}
     });
