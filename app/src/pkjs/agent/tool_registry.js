@@ -16,12 +16,13 @@ var osmMapTool = require('./osm_map_tool');
 var profileTools = require('./profile_tools');
 var imageTool = require('./image_tool');
 var calendarTool = require('./calendar_tool');
+var pluginTools = require('./plugin_tools');
 
 // Tools that change something. A repeated identical call in the same turn is
 // answered from the first result instead of running twice (no double alarms).
 var MUTATING = [
     'set_alarm', 'delete_alarm', 'set_timer', 'delete_timer', 'set_reminder',
-    'delete_reminder', 'update_settings', 'remember_billy_user_fact', 'forget_billy_user_fact', 'show_image'
+    'delete_reminder', 'update_settings', 'remember_billy_user_fact', 'forget_billy_user_fact', 'show_image', 'use_phone_plugin'
 ];
 
 // Legacy modules take (session, {name, arguments}, callback).
@@ -45,7 +46,7 @@ function legacy(module) {
     };
 }
 
-var MODULES = [uiTools, watchTools, imageTool, calendarTool, legacy(weatherTool), legacy(osmMapTool), legacy(profileTools)];
+var MODULES = [uiTools, watchTools, imageTool, calendarTool, pluginTools, legacy(weatherTool), legacy(osmMapTool), legacy(profileTools)];
 
 exports.declarations = function() {
     var all = [];

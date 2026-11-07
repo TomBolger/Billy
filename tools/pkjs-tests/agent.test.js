@@ -673,6 +673,140 @@ test('relay keys stay where the Android companion expects them', function() {
     assert(checked > 20, 'only checked ' + checked + ' keys');
 });
 
+// ---- Pebble plugins (preview) ----------------------------------------------------
+var FAKE_PLUGINS = [
+    {uuid: '00000000-0000-0000-0001-000000000004', name: 'Calendar', actions: [],
+        sources: [{category: 'calendar', items: ['event'], properties: {name: ['shortText', 'longText'], starts_at: ['timestamp'], ends_at: ['timestamp']}}]},
+    {uuid: '00000000-0000-0000-0001-000000000003', name: 'Music',
+        sources: [{category: 'music', items: ['track'], properties: {title: ['shortText'], artist: ['shortText'], artwork: ['image']}}],
+        actions: [{name: 'set_playing', description: 'Play or pause.', parameters: {type: 'object', properties: {on: {type: 'boolean'}}, required: ['on']}},
+            {name: 'next_track', description: 'Skip.', parameters: null}]},
+    {uuid: 'aaaa-bbbb', name: 'Todoist', sources: [],
+        actions: [{name: 'delete_task', description: 'Delete a task.', parameters: {type: 'object', properties: {id: {type: 'string'}}}, destructive: true}]},
+    {uuid: '00000000-0000-0000-0001-000000000008', name: 'Find My Phone', actions: [{name: 'ring', parameters: null}],
+        sources: [{category: 'phone', items: ['find_my_phone'], properties: {ringing: ['boolean']}}]}
+];
+
+function withPlugins(fn) {
+    var invoked = [];
+    var subscriptions = 0;
+    var inNow = Math.round(Date.now() / 1000) + 3600;
+    Pebble.enumeratePlugins = function() { return FAKE_PLUGINS; };
+    Pebble.subscribeToSource = function(config) {
+        subscriptions++;
+        setTimeout(function() {
+            if (config.category === 'calendar') {
+                config.onData({pluginUuid: FAKE_PLUGINS[0].uuid, instances: [{instanceId: '0', properties: {
+                    name: {shortText: {text: 'Dentist'}, longText: {text: 'Dentist'}},
+                    starts_at: {timestamp: {value: inNow}}, ends_at: {timestamp: {value: inNow + 1800}}}}]});
+            } else if (config.category === 'music') {
+                config.onData({instances: [{instanceId: 'track', properties: {title: {shortText: {text: 'Song'}}, artwork: {image: {pixels: 'xx'}}}}]});
+            } else {
+                config.onError({code: 'PERMISSION_DENIED', message: 'not allowed'});
+            }
+        }, 1);
+        return {unsubscribe: function() { subscriptions--; }};
+    };
+    Pebble.invokeAction = function(request) {
+        invoked.push(request);
+        return Promise.resolve({ok: true, text: 'Paused.'});
+    };
+    return Promise.resolve(fn(invoked, function() { return subscriptions; })).finally(function() {
+        delete Pebble.enumeratePlugins;
+        delete Pebble.subscribeToSource;
+        delete Pebble.invokeAction;
+    });
+}
+
+test('plugins: no plugin tools when plugins are off', async function() {
+    gemini.script.push(text('Hi'));
+    newSession('hello').run();
+    await waitFor(done);
+    var names = declaredNames(gemini.requests[0]);
+    assert(names.indexOf('read_phone_data') === -1 && names.indexOf('use_phone_plugin') === -1, 'plugin tools offered while off');
+});
+
+test('plugins: catalog is in the tool descriptions and music can be paused', async function() {
+    await withPlugins(async function(invoked) {
+        gemini.script.push(modelTurn([call('use_phone_plugin', {plugin: 'Music', action: 'set_playing', args_json: '{"on": false}'}, 'm1')]));
+        gemini.script.push(text('Paused.'));
+        newSession('pause the music').run();
+        await waitFor(done);
+        var decls = gemini.requests[0].body.tools.filter(function(t) { return t.functionDeclarations; })[0].functionDeclarations;
+        var act = decls.filter(function(d) { return d.name === 'use_phone_plugin'; })[0];
+        assert(act && /Music > set_playing\(on\*\)/.test(act.description), 'catalog missing from description');
+        var read = decls.filter(function(d) { return d.name === 'read_phone_data'; })[0];
+        assert(/calendar\/event \(Calendar\)/.test(read.description), 'sources missing');
+        assert(!/find_my_phone/.test(read.description), 'find_my_phone must not be readable (it rings the phone)');
+        assert.strictEqual(invoked.length, 1);
+        assert.strictEqual(invoked[0].plugin, '00000000-0000-0000-0001-000000000003');
+        assert.deepStrictEqual(invoked[0].args, {on: false});
+    });
+});
+
+test('plugins: destructive actions need the user to confirm first', async function() {
+    await withPlugins(async function(invoked) {
+        gemini.script.push(modelTurn([call('use_phone_plugin', {plugin: 'todoist', action: 'delete_task', args_json: '{"id":"1"}'}, 'd1')]));
+        gemini.script.push(text('Should I delete it?'));
+        newSession('delete my milk task').run();
+        await waitFor(done);
+        assert.strictEqual(invoked.length, 0, 'destructive action ran without confirmation');
+        var fr = gemini.requests[1].body.contents.slice(-1)[0].parts[0].functionResponse;
+        assert.strictEqual(fr.response.status, 'needs_confirmation');
+    });
+});
+
+test('plugins: reads are simplified, images dropped, subscription closed', async function() {
+    await withPlugins(async function(invoked, openSubscriptions) {
+        gemini.script.push(modelTurn([call('read_phone_data', {category: 'music', item: 'track'}, 'r1')]));
+        gemini.script.push(text('You are listening to Song.'));
+        newSession("what's playing").run();
+        await waitFor(done);
+        var fr = gemini.requests[1].body.contents.slice(-1)[0].parts[0].functionResponse;
+        assert.deepStrictEqual(fr.response.items, [{id: 'track', title: 'Song'}]);
+        assert.strictEqual(openSubscriptions(), 0, 'subscription left open');
+    });
+});
+
+test('plugins: a refused permission is explained, not hidden', async function() {
+    await withPlugins(async function() {
+        gemini.script.push(modelTurn([call('read_phone_data', {category: 'notifications', item: 'notification'}, 'n1')]));
+        gemini.script.push(text('Billy needs permission.'));
+        newSession('any notifications?').run();
+        await waitFor(done);
+        var fr = gemini.requests[1].body.contents.slice(-1)[0].parts[0].functionResponse;
+        assert.strictEqual(fr.response.status, 'error');
+        assert(/allow it on Billy's page/.test(fr.response.summary), fr.response.summary);
+    });
+});
+
+test("plugins: the phone's calendar answers without calendar links", async function() {
+    await withPlugins(async function() {
+        gemini.script.push(modelTurn([call('get_calendar_events', {}, 'c1')]));
+        gemini.script.push(text('Dentist in an hour.'));
+        newSession("what's next on my calendar").run();
+        await waitFor(done);
+        var fr = gemini.requests[1].body.contents.slice(-1)[0].parts[0].functionResponse;
+        assert.strictEqual(fr.response.status, 'ok', JSON.stringify(fr.response));
+        assert.strictEqual(fr.response.events.length, 1);
+        assert.strictEqual(fr.response.events[0].title, 'Dentist');
+    });
+});
+
+test('plugins: the companion can list and use plugins through the relay', async function() {
+    await withPlugins(async function(invoked) {
+        var relay = require(path.join(PKJS, 'agent/relay'));
+        relay.handleRequest(JSON.stringify({id: 'p1', name: 'list_phone_plugins', args: {}}));
+        relay.handleRequest(JSON.stringify({id: 'p2', name: 'use_phone_plugin', args: {plugin: 'Music', action: 'next_track'}}));
+        await waitFor(function() { return watch.sent.filter(function(m) { return m.JS_TOOL_RESULT; }).length >= 2; });
+        var results = watch.sent.filter(function(m) { return m.JS_TOOL_RESULT; }).map(function(m) { return JSON.parse(m.JS_TOOL_RESULT); });
+        var list = results.filter(function(r) { return r.id === 'p1'; })[0].result;
+        assert(list.available && list.actions.some(function(a) { return /Music > next_track/.test(a); }), JSON.stringify(list));
+        assert(results.every(function(r) { return r.id !== 'p1' || JSON.stringify(r).length < 1000; }), 'relay result too big for the watch');
+        assert.strictEqual(invoked[0].action, 'next_track');
+    });
+});
+
 (async function() {
     var failed = 0;
     for (var i = 0; i < tests.length; i++) {

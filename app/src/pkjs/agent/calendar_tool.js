@@ -7,6 +7,7 @@
 
 var config = require('../config');
 var ical = require('../lib/ical');
+var plugins = require('./plugins');
 
 var CACHE_MS = 10 * 60 * 1000;
 var cache = {};
@@ -25,7 +26,7 @@ exports.links = function() {
 exports.getDeclarations = function() {
     return [{
         name: 'get_calendar_events',
-        description: "Read the user's calendar (from the calendar links in Billy settings). Use for \"what's on my calendar\", \"when is my next meeting\", \"am I free Friday\". Read-only: Billy can't add or change events in this mode; offer a reminder instead.",
+        description: "Read the user's calendar: the phone's own calendar (through Pebble plugins, next 10 events within a week) and any calendar links in Billy settings. Use for \"what's on my calendar\", \"when is my next meeting\", \"am I free Friday\". Read-only: Billy can't add or change events in this mode; offer a reminder instead.",
         parameters: {
             type: 'object',
             properties: {
@@ -48,10 +49,11 @@ exports.execute = function(session, name, args, callback) {
     }
     args = args || {};
     var links = exports.links();
-    if (links.length === 0) {
+    var phoneCalendar = plugins.hasSource('calendar', 'event');
+    if (links.length === 0 && !phoneCalendar) {
         callback({
             status: 'needs_setup',
-            summary: "No calendar is connected. In Billy's settings in the Pebble app, paste your calendar's iCal link (Google Calendar: Settings > your calendar > Secret address in iCal format)."
+            summary: "No calendar is connected. In Billy's settings in the Pebble app, paste your calendar's iCal link (Google Calendar: Settings > your calendar > Secret address in iCal format). With Pebble plugins turned on, Billy can also read the phone's own calendar."
         });
         return true;
     }
@@ -63,29 +65,100 @@ exports.execute = function(session, name, args, callback) {
     }
     var max = Math.max(1, Math.min(30, parseInt(args.max_results, 10) || 10));
     session.handleMessage({data: 'fChecking your calendar'});
-    loadAll(links, function(events, failures) {
-        var items = ical.occurrences(events, start.getTime(), end.getTime()).filter(function(o) {
-            return !search || (o.title + ' ' + o.location).toLowerCase().indexOf(search) !== -1;
+    var pending = 2;
+    var linkItems = [];
+    var linkFailures = [];
+    var phoneItems = [];
+    var phoneError = null;
+    function matches(o) {
+        return o.end >= start.getTime() && o.start < end.getTime() &&
+            (!search || (o.title + ' ' + (o.location || '')).toLowerCase().indexOf(search) !== -1);
+    }
+    function finished() {
+        if (--pending > 0) {
+            return;
+        }
+        // The same event can come from both: keep one.
+        var seen = {};
+        var items = phoneItems.concat(linkItems).filter(function(o) {
+            var key = o.title.toLowerCase() + '|' + Math.round(o.start / 60000);
+            if (seen[key]) {
+                return false;
+            }
+            seen[key] = true;
+            return true;
+        }).sort(function(a, b) {
+            return a.start - b.start;
         }).slice(0, max);
-        var list = items.map(function(o) {
-            return {
-                title: o.title,
-                start: new Date(o.start).toString(),
-                end: new Date(o.end).toString(),
-                all_day: o.allDay,
-                location: o.location,
-                repeating: o.repeating
-            };
-        });
+        var warnings = [];
+        if (linkFailures.length > 0) {
+            warnings.push(linkFailures.length + ' of ' + links.length + ' calendar links could not be read');
+        }
+        if (phoneError) {
+            warnings.push("the phone's calendar could not be read (" + phoneError + ')');
+        }
+        if (phoneCalendar && !phoneError && end.getTime() - Date.now() > 7 * 86400000) {
+            warnings.push("the phone's calendar only shows the next 10 events within a week");
+        }
+        var nothingRead = (links.length === 0 || linkFailures.length === links.length) && (!phoneCalendar || phoneError);
         callback({
-            status: failures.length === links.length ? 'error' : 'ok',
+            status: nothingRead ? 'error' : 'ok',
             summary: (items.length === 0 ? 'Nothing on the calendar in that window.' : items.length + ' events.') +
-                (failures.length > 0 ? ' WARNING: ' + failures.length + ' of ' + links.length + ' calendar links could not be read, so this list may be incomplete.' : ''),
-            events: list,
-            unreadable_links: failures.length,
-            tell_user: failures.length > 0 ? 'Say plainly that some calendar links could not be read and the list may be incomplete.' : undefined
+                (warnings.length > 0 ? ' WARNING: ' + warnings.join('; ') + ', so this list may be incomplete.' : ''),
+            events: items.map(function(o) {
+                return {
+                    title: o.title,
+                    start: new Date(o.start).toString(),
+                    end: new Date(o.end).toString(),
+                    all_day: o.allDay,
+                    location: o.location,
+                    calendar: o.calendar,
+                    repeating: o.repeating
+                };
+            }),
+            tell_user: warnings.length > 0 ? 'Say plainly that ' + warnings.join(' and ') + '.' : undefined
         });
-    });
+    }
+    if (links.length > 0) {
+        loadAll(links, function(events, failures) {
+            linkFailures = failures;
+            linkItems = ical.occurrences(events, start.getTime(), end.getTime()).filter(matches);
+            finished();
+        });
+    } else {
+        finished();
+    }
+    if (phoneCalendar) {
+        plugins.read('calendar', 'event', null, function(err, envelope) {
+            if (err) {
+                phoneError = plugins.explainError(err, "the phone's calendar");
+            } else {
+                phoneItems = ((envelope && envelope.instances) || []).map(function(instance) {
+                    var p = instance.properties || {};
+                    var text = function(prop) {
+                        return p[prop] ? ((p[prop].longText && p[prop].longText.text) || (p[prop].shortText && p[prop].shortText.text) || '') : '';
+                    };
+                    var time = function(prop) {
+                        return p[prop] && p[prop].timestamp ? p[prop].timestamp.value * 1000 : NaN;
+                    };
+                    return {
+                        title: text('name'),
+                        start: time('starts_at'),
+                        end: isNaN(time('ends_at')) ? time('starts_at') : time('ends_at'),
+                        allDay: !!(p.all_day && p.all_day.boolean && p.all_day.boolean.value),
+                        location: text('location'),
+                        calendar: text('calendar'),
+                        repeating: false
+                    };
+                }).filter(function(o) {
+                    return !isNaN(o.start) && matches(o);
+                });
+            }
+            finished();
+        });
+    } else {
+        finished();
+    }
     return true;
 };
 

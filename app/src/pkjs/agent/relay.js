@@ -18,6 +18,7 @@
 var messageQueue = require('../lib/message_queue').Queue;
 var watchTools = require('./watch_tools');
 var uiTools = require('./ui_tools');
+var pluginTools = require('./plugin_tools');
 
 var MAX_RESULT_CHARS = 900;
 var handled = {};
@@ -42,9 +43,15 @@ function compact(result) {
     }
     // Shrink lists (e.g. many reminders) rather than cutting JSON in half.
     var copy = JSON.parse(text);
-    ['reminders', 'alarms', 'timers'].forEach(function(key) {
+    ['reminders', 'alarms', 'timers', 'items', 'sources', 'actions', 'events'].forEach(function(key) {
         if (Array.isArray(copy[key])) {
             copy[key] = copy[key].map(function(item) {
+                if (typeof item === 'string') {
+                    return item.substring(0, 90);
+                }
+                if (!item || typeof item !== 'object') {
+                    return item;
+                }
                 var small = {};
                 Object.keys(item).forEach(function(k) {
                     var v = item[k];
@@ -97,6 +104,8 @@ exports.handleRequest = function(raw) {
     };
     if (watchTools.handles(name)) {
         watchTools.execute(relaySession(request.request_id), name, request.args || {}, done);
+    } else if (pluginTools.handles(name)) {
+        pluginTools.execute(relaySession(request.request_id), name, request.args || {}, done);
     } else if (name === 'show_number') {
         uiTools.execute(relaySession(request.request_id), name, request.args || {}, done);
     } else {

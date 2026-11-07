@@ -17,6 +17,7 @@
 var config = require('../config');
 var location = require('../location');
 var calendarTool = require('./calendar_tool');
+var plugins = require('./plugins');
 
 function pad(n) {
     return (n < 10 ? '0' : '') + n;
@@ -80,16 +81,22 @@ exports.buildSystemInstruction = function() {
     }
     if (units) {
         parts.push('- Preferred units: ' + units + '.');
+    } else if (plugins.unitsSentence()) {
+        parts.push('- Units set in the Pebble app: ' + plugins.unitsSentence() + '.');
     }
     if (language && language !== 'automatic') {
         parts.push('- Always reply in language ' + language + '.');
     } else {
         parts.push('- Reply in the language the user speaks.');
     }
-    parts.push(calendarTool.links().length > 0 ?
+    var pluginsOn = plugins.available();
+    parts.push(calendarTool.links().length > 0 || plugins.hasSource('calendar', 'event') ?
         '- Calendar: get_calendar_events reads the user\'s calendar (read-only here). To add something, offer set_reminder instead.' :
         '- No calendar is connected. If asked about the calendar, say they can paste a calendar iCal link in Billy\'s settings in the Pebble app.');
-    parts.push('- This is the phone runtime (works on iPhone and Android). Gmail, Drive, Tasks, texting, calls, and notifications need the Billy Companion Android app; say so briefly if asked.');
+    parts.push('- This is the phone runtime (works on iPhone and Android). Gmail, Drive, Tasks, texting and calls need the Billy Companion Android app; say so briefly if asked.');
+    if (pluginsOn) {
+        parts.push('- Pebble plugins are on: read_phone_data and use_phone_plugin reach the phone\'s calendar, battery, music, notifications (Android), find-my-phone, watch apps and settings, and any installed plugins. Use them instead of saying Billy can\'t.');
+    }
     var profile = config.getUserProfileContext();
     if (profile) {
         parts.push('- What Billy remembers about the user (use when relevant, do not recite): ' + profile);

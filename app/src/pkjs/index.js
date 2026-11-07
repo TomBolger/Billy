@@ -26,6 +26,7 @@ var feedback = require('./lib/feedback');
 var package_json = require('package.json');
 var runtimeRouter = require('./agent/runtime_router');
 var relay = require('./agent/relay');
+var plugins = require('./agent/plugins');
 
 
 // Keep setup's version label in sync with the PBW metadata.
@@ -179,6 +180,12 @@ Pebble.addEventListener("ready",
         }
         // Ordinary AI and the tool relay must work even when Timeline is unavailable.
         main();
+        try {
+            plugins.init();
+            console.log('Pebble plugins: ' + plugins.catalog().length + ' available.');
+        } catch (err) {
+            console.log('Pebble plugins unavailable: ' + err);
+        }
         Pebble.getTimelineToken(function(token) {
             console.log("Entering real mode.");
             session.userToken = token;

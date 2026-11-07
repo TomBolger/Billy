@@ -16,6 +16,7 @@ import com.tombo.billyassistant.companion.agent.tools.UserProfileCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
 import com.tombo.billyassistant.companion.agent.tools.WatchMediaSpec
 import com.tombo.billyassistant.companion.agent.tools.WatchToolsCompanionTool
+import com.tombo.billyassistant.companion.agent.tools.PluginsCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WeatherCompanionTool
 import com.tombo.billyassistant.companion.agent.tools.WebImageCompanionTool
@@ -60,6 +61,12 @@ class CompanionAgent(
         listOf(
             ClarificationCompanionTool(optionLabelMaxChars = watchMediaSpec.pickerOptionChars) { "" },
             WatchToolsCompanionTool(
+                watchToolRelay ?: { name: String, _: JSONObject ->
+                    JSONObject().put("status", "error").put("summary", "$name needs the watch connected with Billy open.")
+                },
+            ),
+            PluginsCompanionTool(
+                context,
                 watchToolRelay ?: { name: String, _: JSONObject ->
                     JSONObject().put("status", "error").put("summary", "$name needs the watch connected with Billy open.")
                 },

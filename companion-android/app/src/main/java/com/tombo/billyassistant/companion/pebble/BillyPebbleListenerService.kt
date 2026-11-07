@@ -4,6 +4,7 @@ import android.util.Log
 import com.tombo.billyassistant.companion.agent.CompanionAgent
 import com.tombo.billyassistant.companion.agent.CompanionAgentResult
 import com.tombo.billyassistant.companion.agent.GeminiClient
+import com.tombo.billyassistant.companion.agent.tools.PluginCatalog
 import com.tombo.billyassistant.companion.agent.tools.ClarificationCard
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
@@ -210,6 +211,13 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
             // Record the turn and, if it failed or was slow, offer a one-tap bug report.
             runCatching {
                 DiagnosticsLog.endTurn(turnId, outcome, failure)?.let { report -> ProblemReporter.maybeReport(this, report) }
+            }
+            // Learn which Pebble plugins are installed, for the next turns' tools.
+            if (outcome == "ok" && PluginCatalog.isStale(this)) {
+                agentScope.launch(Dispatchers.IO) {
+                    val refreshRelay = WatchToolRelay(this@BillyPebbleListenerService, watch, null)
+                    PluginCatalog.refresh(this@BillyPebbleListenerService) { name, args -> refreshRelay.call(name, args) }
+                }
             }
         }
     }
