@@ -62,6 +62,9 @@ jobs:
           fi
           echo "sdk.dir=$ANDROID_HOME" > companion-android/local.properties
           cd companion-android && chmod +x gradlew && ./gradlew --no-daemon testDebugUnitTest assembleDebug
+          if [ -n "${BILLY_KEYSTORE:-}" ]; then
+            cd .. && tools/sign-with-rotation.sh companion-android/app/build/outputs/apk/debug/*.apk "$BILLY_KEYSTORE"
+          fi
       - name: Name files
         run: |
           V=${{ steps.version.outputs.v }}

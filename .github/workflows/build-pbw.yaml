@@ -6,6 +6,7 @@ on:
       - 'app/**'
       - 'companion-android/**'
       - 'tools/pkjs-tests/**'
+      - 'tools/sign-with-rotation.sh'
       - '.github/workflows/build-pbw.yaml'
   workflow_dispatch:
 
@@ -64,6 +65,9 @@ jobs:
           fi
           echo "sdk.dir=$ANDROID_HOME" > companion-android/local.properties
           cd companion-android && chmod +x gradlew && ./gradlew --no-daemon testDebugUnitTest assembleDebug
+          if [ -n "${BILLY_KEYSTORE:-}" ]; then
+            cd .. && tools/sign-with-rotation.sh companion-android/app/build/outputs/apk/debug/*.apk "$BILLY_KEYSTORE"
+          fi
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
