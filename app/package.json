@@ -40,6 +40,35 @@
         ]
       }
     },
+    "usesPermissions": [
+      {
+        "name": "Internet",
+        "parameters": {
+          "domains": [
+            "googleapis.com",
+            "open-meteo.com",
+            "openstreetmap.org",
+            "openstreetmap.de",
+            "wikipedia.org",
+            "wikimedia.org",
+            "rebble.io",
+            "google.com",
+            "icloud.com",
+            "office365.com",
+            "outlook.com",
+            "live.com"
+          ]
+        }
+      },
+      "Location",
+      "Timeline",
+      "Calendar",
+      "Notifications",
+      "ReadMusic",
+      "ControlMusic",
+      "LaunchApps",
+      "FindMyPhone"
+    ],
     "messageKeys": [
       "CHAT",
       "FUNCTION",
