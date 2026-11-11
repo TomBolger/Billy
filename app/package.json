@@ -1,7 +1,7 @@
 {
   "name": "Billy",
   "author": "Thomas Bolger",
-  "version": "0.6",
+  "version": "0.7",
   "keywords": [
     "pebble-app"
   ],
@@ -634,6 +634,11 @@
         {
           "file": "text/changelog/1.6.txt",
           "name": "CHANGELOG_1_6",
+          "type": "raw"
+        },
+        {
+          "file": "text/changelog/1.7.txt",
+          "name": "CHANGELOG_1_7",
           "type": "raw"
         },
         {

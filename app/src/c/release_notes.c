@@ -62,7 +62,7 @@ void release_notes_maybe_push() {
 }
 
 static char* prv_create_release_notes() {
-  ResHandle handle = resource_get_handle(RESOURCE_ID_CHANGELOG_1_6);
+  ResHandle handle = resource_get_handle(RESOURCE_ID_CHANGELOG_1_7);
   size_t size = resource_size(handle) + 1;
   char* text = bmalloc(size);
   text[size - 1] = '\0';
