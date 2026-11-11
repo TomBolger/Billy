@@ -51,6 +51,7 @@ exports.getGeminiApiKey = function() {
 exports.DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 var LEGACY_DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 var MODEL_MIGRATION_KEY = 'billyModelDefaultMigratedV2';
+var RETIRED_MODELS = {'gemini-3.7-flash': 'gemini-3.8-flash', 'gemini-3.5-flash': 'gemini-3.8-flash'};
 
 exports.getGeminiModel = function() {
     var model = String(exports.getSetting('GEMINI_MODEL', '') || '').replace(/\s+/g, '');
@@ -64,6 +65,11 @@ exports.getGeminiModel = function() {
     }
     if (!localStorage.getItem(MODEL_MIGRATION_KEY)) {
         localStorage.setItem(MODEL_MIGRATION_KEY, '1');
+    }
+    // Google retired these: 3.7 Flash now runs as 3.8 Flash and 3.5 Flash is gone.
+    if (RETIRED_MODELS[model]) {
+        model = RETIRED_MODELS[model];
+        exports.setSetting('GEMINI_MODEL', model);
     }
     return model || exports.DEFAULT_GEMINI_MODEL;
 }

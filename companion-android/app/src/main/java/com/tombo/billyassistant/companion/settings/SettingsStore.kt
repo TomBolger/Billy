@@ -31,7 +31,11 @@ class SettingsStore(context: Context) {
         if (!watchModel.isNullOrBlank() && watchModel != settings.lastWatchModel) {
             save(settings.copy(lastWatchModel = watchModel))
         }
-        return settings.modelOverride.ifBlank { watchModel }
+        // The watch app's choice (watch Settings menu or the Pebble app's settings page)
+        // is the only one, so changing it there always takes effect. A model Google
+        // retired is replaced by its successor.
+        val model = watchModel?.takeIf { it.isNotBlank() } ?: return null
+        return RETIRED_MODELS[model] ?: model
     }
 
     companion object {
@@ -45,11 +49,16 @@ class SettingsStore(context: Context) {
         /** Models offered in the picker: id to label. Keep in sync with app/src/pkjs/config.json. */
         val MODELS = listOf(
             "gemini-3.8-flash" to "Gemini 3.8 Flash (recommended)",
-            "gemini-3.7-flash" to "Gemini 3.7 Flash",
-            "gemini-3.5-flash" to "Gemini 3.5 Flash",
-            "gemini-3.5-flash-lite" to "Gemini 3.5 Flash-Lite (cheaper)",
+            "gemini-3.6-flash" to "Gemini 3.6 Flash",
+            "gemini-3.5-flash-lite" to "Gemini 3.5 Flash-Lite (bigger free allowance)",
             "gemini-3.1-flash-lite" to "Gemini 3.1 Flash-Lite (cheapest)",
-            "gemini-3.1-pro-preview" to "Gemini 3.1 Pro preview (slow)",
+            "gemini-3.1-pro-preview" to "Gemini 3.1 Pro (needs billing, slow)",
+        )
+
+        /** Models Google retired: 3.7 Flash now runs as 3.8 Flash, and 3.5 Flash no longer exists. */
+        val RETIRED_MODELS = mapOf(
+            "gemini-3.7-flash" to "gemini-3.8-flash",
+            "gemini-3.5-flash" to "gemini-3.8-flash",
         )
     }
 }

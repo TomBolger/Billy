@@ -15,11 +15,10 @@ typedef struct {
 
 static const Choice s_models[] = {
   {"gemini-3.8-flash", "3.8 Flash", "Recommended"},
-  {"gemini-3.7-flash", "3.7 Flash", NULL},
-  {"gemini-3.5-flash", "3.5 Flash", NULL},
-  {"gemini-3.5-flash-lite", "3.5 Flash-Lite", "Cheaper"},
+  {"gemini-3.6-flash", "3.6 Flash", NULL},
+  {"gemini-3.5-flash-lite", "3.5 Flash-Lite", "Bigger free allowance"},
   {"gemini-3.1-flash-lite", "3.1 Flash-Lite", "Cheapest"},
-  {"gemini-3.1-pro-preview", "3.1 Pro", "Smartest, slow"},
+  {"gemini-3.1-pro-preview", "3.1 Pro", "Needs billing, slow"},
 };
 #define MODEL_COUNT (sizeof(s_models) / sizeof(s_models[0]))
 #define DEFAULT_MODEL_INDEX 0

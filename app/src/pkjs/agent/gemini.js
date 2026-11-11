@@ -63,7 +63,8 @@ function buildBody(model, contents, options) {
         };
     });
     var tools = [];
-    // Search, Maps, URL reading and code always ride along. Combining them with
+    // Search, Maps and URL reading always ride along (Google refuses Maps
+    // together with code execution, so that one is left out). Combining them with
     // functions needs Gemini 3; an older model answers with Google's own error,
     // which the user sees.
     var useSearch = !!options.search;
@@ -74,7 +75,6 @@ function buildBody(model, contents, options) {
     if (extras) {
         tools.push({googleMaps: {}});
         tools.push({urlContext: {}});
-        tools.push({codeExecution: {}});
     }
     if (declarations.length > 0) {
         tools.push({functionDeclarations: declarations});
@@ -247,6 +247,21 @@ exports.generate = function(contents, options, callback) {
     run();
 };
 
+/** Plain words for Gemini's 429s: a model not on the free tier, the daily or the per-minute limit. */
+function quotaMessage(body, model) {
+    if (/limit:\s*0\b/.test(body)) {
+        return model + ' isn\'t included with a free Gemini key. Pick another model in Billy\'s settings (on the watch: Settings, Model), or turn on billing in Google AI Studio.';
+    }
+    if (/PerDay/i.test(body) || /per day/i.test(body)) {
+        return 'You\'ve used today\'s free Gemini requests for ' + model + '. Switch to 3.5 Flash-Lite (bigger free allowance) in Settings, wait until tomorrow, or turn on billing in Google AI Studio.';
+    }
+    if (/PerMinute/i.test(body) || /per minute/i.test(body)) {
+        return 'Too many Gemini requests this minute for a free key. Wait a minute and ask again.';
+    }
+    return 'Gemini says this key is over its quota (429). Check your limits in Google AI Studio.';
+}
+exports._quotaMessage = quotaMessage;
+
 function parseError(status, responseText, model) {
     var message = responseText;
     var code = '';
@@ -269,7 +284,10 @@ function parseError(status, responseText, model) {
         (lower.indexOf('api key not valid') !== -1 || lower.indexOf('invalid authentication') !== -1)) {
         friendly = 'Gemini did not accept the API key. Use a key from Google AI Studio.';
     } else if (status === 429) {
-        friendly = 'Your free Gemini quota is used up for now (429).';
+        friendly = quotaMessage(String(responseText || message), model);
+    } else if ((status === 400 || status === 403) && /grounding|google_?search|google_?maps/.test(lower) &&
+        /free|billing|not available|not supported|not enabled/.test(lower)) {
+        friendly = 'Your Gemini key can\'t use Google Search or Maps with ' + model + '. Free keys may not include them; turn on billing in Google AI Studio. Google said: ' + shortMessage;
     } else if (status === 503) {
         friendly = 'Gemini is overloaded right now (503).';
     } else if (status === 404) {

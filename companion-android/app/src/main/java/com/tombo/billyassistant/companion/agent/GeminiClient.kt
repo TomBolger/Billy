@@ -322,8 +322,8 @@ class GeminiClient(
         }
         if (extras) {
             tools.put(JSONObject().put("googleMaps", JSONObject()))
+            // Google refuses Maps together with code execution, so code execution is left out.
             tools.put(JSONObject().put("urlContext", JSONObject()))
-            tools.put(JSONObject().put("codeExecution", JSONObject()))
         }
         if (declarations.length() > 0) {
             tools.put(JSONObject().put("functionDeclarations", declarations))
@@ -521,6 +521,17 @@ class GeminiClient(
             (if (turnContext.isNotBlank()) "\n- " + turnContext.replace("\n", "\n- ") else "")
     }
 
+    /** Plain words for Gemini's 429s: a model not on the free tier, the daily or the per-minute limit. */
+    private fun quotaMessage(raw: String, model: String): String = when {
+        Regex("""limit:\s*0\b""").containsMatchIn(raw) ->
+            "$model isn't included with a free Gemini key. Pick another model on the watch (Billy, Settings, Model), or turn on billing in Google AI Studio."
+        Regex("PerDay|per day", RegexOption.IGNORE_CASE).containsMatchIn(raw) ->
+            "You've used today's free Gemini requests for $model. Switch to 3.5 Flash-Lite (bigger free allowance) on the watch under Settings, wait until tomorrow, or turn on billing in Google AI Studio."
+        Regex("PerMinute|per minute", RegexOption.IGNORE_CASE).containsMatchIn(raw) ->
+            "Too many Gemini requests this minute for a free key. Wait a minute and ask again."
+        else -> "Gemini says this key is over its quota (429). Check your limits in Google AI Studio."
+    }
+
     private fun friendlyError(code: Int, raw: String, model: String): String {
         val message = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }.getOrNull()
             ?.takeIf { it.isNotBlank() } ?: raw.ifBlank { "HTTP $code" }
@@ -530,7 +541,10 @@ class GeminiClient(
                 "Gemini API key is blocked. Allow the Generative Language API (and this app, if the key is restricted)."
             "api key not valid" in lower || "invalid authentication" in lower ->
                 "Gemini did not accept the API key. Use a key from Google AI Studio."
-            code == 429 -> "Your free Gemini quota is used up for now (429)."
+            code == 429 -> quotaMessage(raw, model)
+            (code == 400 || code == 403) && Regex("grounding|google_?search|google_?maps").containsMatchIn(lower) &&
+                Regex("free|billing|not available|not supported|not enabled").containsMatchIn(lower) ->
+                "Your Gemini key can't use Google Search or Maps with $model. Free keys may not include them; turn on billing in Google AI Studio. Google said: ${message.take(MAX_ERROR_LENGTH)}"
             code == 503 -> "Gemini is overloaded right now (503)."
             code == 404 -> "Gemini doesn't know the model $model (404): ${message.take(MAX_ERROR_LENGTH)}"
             code == 400 -> "Google rejected Billy's request to $model (400): ${message.take(MAX_ERROR_LENGTH)}"

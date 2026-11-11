@@ -380,14 +380,32 @@ test('clarification picker ends the turn; the answer comes back as a sentence', 
         'My answer to your question "Which alarm?": 8:00');
 });
 
-test('built-in tools: Search, Maps, URL reading and code ride along with functions', async function() {
+test('built-in tools: Search, Maps and URL reading ride along with functions, never Maps with code execution', async function() {
     gemini.script.push(text('ok'));
     newSession('hello').run();
     await waitFor(done);
     var keys = gemini.requests[0].body.tools.map(function(t) { return Object.keys(t)[0]; });
-    ['googleSearch', 'googleMaps', 'urlContext', 'codeExecution', 'functionDeclarations'].forEach(function(k) {
+    ['googleSearch', 'googleMaps', 'urlContext', 'functionDeclarations'].forEach(function(k) {
         assert(keys.indexOf(k) !== -1, 'missing ' + k + ' in ' + keys);
     });
+    // Google rejects googleMaps + codeExecution in one request (400).
+    assert(keys.indexOf('codeExecution') === -1, 'codeExecution must not be sent with googleMaps');
+});
+
+test('quota errors say which limit was hit', function() {
+    var g = require(path.join(PKJS, 'agent/gemini'));
+    assert(/isn't included with a free Gemini key/.test(g._quotaMessage('Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: gemini-3.1-pro-preview', 'gemini-3.1-pro-preview')));
+    assert(/today's free Gemini requests/.test(g._quotaMessage('limit: 20 ... "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"', 'gemini-3.8-flash')));
+    assert(/this minute/.test(g._quotaMessage('limit: 5 ... "quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"', 'gemini-3.8-flash')));
+});
+
+test('retired models move to their successor', function() {
+    var config = require(path.join(PKJS, 'config'));
+    config.setSetting('GEMINI_MODEL', 'gemini-3.5-flash');
+    assert.strictEqual(config.getGeminiModel(), 'gemini-3.8-flash');
+    config.setSetting('GEMINI_MODEL', 'gemini-3.6-flash');
+    assert.strictEqual(config.getGeminiModel(), 'gemini-3.6-flash');
+    config.setSetting('GEMINI_MODEL', '');
 });
 
 function warningText() {
@@ -457,12 +475,13 @@ test('a timeout is not retried and says how long it waited', async function() {
     assert(/^Gemini \(gemini-3\.8-flash\) didn't respond within 25 seconds\. You can report this from the menu\.$/.test(warningText()), warningText());
 });
 
-test('429 says the free quota is used up and is not retried', async function() {
-    gemini.script.push({status: 429, json: {error: {message: 'quota'}}});
+test('429 names the daily limit and is not retried', async function() {
+    gemini.script.push({status: 429, json: {error: {message: 'Quota exceeded for metric: generate_content_free_tier_requests, limit: 20',
+        details: [{violations: [{quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}]}]}}});
     newSession('hello').run();
     await waitFor(done);
     assert.strictEqual(gemini.requests.length, 1);
-    assert(/^Your free Gemini quota is used up for now \(429\)\./.test(warningText()), warningText());
+    assert(/^You've used today's free Gemini requests for gemini-3\.8-flash\./.test(warningText()), warningText());
 });
 
 test('an empty answer is re-asked once, then reported instead of faked', async function() {

@@ -3,8 +3,7 @@ var STORAGE_KEY = 'billy-gemini-usage-v1';
 // USD per million tokens (paid tier, text). Unknown models use the 3.8 Flash rate.
 var PRICES = {
     'gemini-3.8-flash': [0.75, 3.75],
-    'gemini-3.7-flash': [0.75, 3.75],
-    'gemini-3.5-flash': [1.50, 9.00],
+    'gemini-3.6-flash': [0.75, 3.75],
     'gemini-3.5-flash-lite': [0.30, 2.50],
     'gemini-3.1-flash-lite': [0.25, 1.50],
     'gemini-3.1-pro-preview': [2.00, 12.00]
