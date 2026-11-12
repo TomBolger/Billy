@@ -1,728 +1,442 @@
 package com.tombo.billyassistant.companion.agent.tools
 
-import com.tombo.billyassistant.companion.calendar.AndroidCalendarTools
-import com.tombo.billyassistant.companion.calendar.CalendarEventsResult
-import com.tombo.billyassistant.companion.calendar.CreateCalendarEventRequest
-import com.tombo.billyassistant.companion.calendar.CreateCalendarEventResult
-import com.tombo.billyassistant.companion.calendar.DeleteCalendarEventsResult
-import com.tombo.billyassistant.companion.calendar.WritableCalendarsResult
-import com.tombo.billyassistant.companion.google.GoogleCalendarApiTools
-import com.tombo.billyassistant.companion.google.GoogleCalendarGhostDeleteResult
-import com.tombo.billyassistant.companion.google.GoogleCalendarResult
+import com.tombo.billyassistant.companion.auth.GoogleAccessTokenProvider
+import com.tombo.billyassistant.companion.auth.GoogleApiScopes
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
-import java.time.LocalDate
-import java.time.LocalTime
-import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
-import java.util.Locale
-import java.util.TimeZone
+import java.util.UUID
 
-class CalendarCompanionTool(
-    private val calendarTools: AndroidCalendarTools,
-    private val googleCalendarApiTools: GoogleCalendarApiTools? = null,
-) : CompanionTool {
+/**
+ * Google Calendar: read, search, create, change, and delete events.
+ *
+ * Every event the model sees carries event_id + calendar_id, so follow-ups
+ * ("move it to 4", "delete that") act on the exact event. Deletes always ask
+ * on the watch first.
+ */
+class CalendarCompanionTool(tokenProvider: GoogleAccessTokenProvider) : CompanionTool {
+    private val google = GoogleAccess(tokenProvider, "Google Calendar", GoogleApiScopes.calendar)
+
     override val declarations: List<JSONObject> = listOf(
-        JSONObject()
-            .put("name", "list_calendar_events")
-            .put("description", "List calendar events. If no valid time window is provided, defaults to today's events. Use max_results=1 for the next event.")
-            .put(
-                "parameters",
-                objectSchema(
-                    required = emptyList(),
-                    properties = mapOf(
-                        "start_millis" to integerSchema("Optional start of the query window as Unix epoch milliseconds. Defaults to now."),
-                        "end_millis" to integerSchema("Optional end of the query window as Unix epoch milliseconds. Defaults to 90 days from now."),
-                        "max_results" to integerSchema("Maximum number of events to return. Use 1 for the next event. Defaults to 10."),
-                    ),
-                ),
+        decl(
+            "get_calendar_events",
+            "Read the user's Google Calendar across all their calendars. Use for \"what's on my calendar\", \"when is my next meeting\", \"am I free Friday\", or to find an event by name before changing or deleting it. Returns event_id and calendar_id for each event.",
+            emptyList(),
+            mapOf(
+                "start" to stringSchema("Window start. ${TimeArgs.ISO_HELP} Defaults to now."),
+                "end" to stringSchema("Window end. Defaults to end of the start day, or 60 days ahead when searching by text."),
+                "search" to stringSchema("Optional text to match in the title, description, location, or attendees (e.g. \"dentist\")."),
+                "max_results" to integerSchema("Maximum events, default 10."),
             ),
-        JSONObject()
-            .put("name", "create_calendar_event")
-            .put("description", "Create a Google Calendar event through the Google Calendar API. Do not create local Android provider fallback events.")
-            .put(
-                "parameters",
-                objectSchema(
-                    required = listOf("title", "start_millis", "end_millis"),
-                    properties = mapOf(
-                        "title" to stringSchema("Event title."),
-                        "start_millis" to integerSchema("Event start time as Unix epoch milliseconds."),
-                        "end_millis" to integerSchema("Event end time as Unix epoch milliseconds."),
-                        "description" to stringSchema("Optional event description."),
-                        "calendar_id" to stringSchema("Optional Google Calendar ID, exactly as returned by list_writable_calendars. If omitted and multiple writable calendars are available, Billy should ask the user."),
-                        "calendar_hint" to stringSchema("Optional natural-language calendar name or intent from the user, such as primary, personal, work, family, or an account email. Use this instead of listing calendars when creating an event."),
-                        "create_meet_link" to booleanSchema("Whether to add a Google Meet link. Use true when the user asks for a video meeting, Google Meet, call, or conference link."),
-                    ),
-                ),
+        ),
+        decl(
+            "create_calendar_event",
+            "Add an event to Google Calendar. If the user gives a start but no end, use a 1 hour duration (all-day events: pass dates). Pass calendar only if the user names one; otherwise the primary calendar is used.",
+            listOf("title", "start"),
+            mapOf(
+                "title" to stringSchema("Event title."),
+                "start" to stringSchema("Start. ${TimeArgs.ISO_HELP}"),
+                "end" to stringSchema("End, same format as start."),
+                "location" to stringSchema("Optional location."),
+                "description" to stringSchema("Optional notes."),
+                "calendar" to stringSchema("Optional calendar name the user mentioned (e.g. \"Work\", \"Family\")."),
+                "attendee_emails" to JSONObject().put("type", "array").put("items", JSONObject().put("type", "string"))
+                    .put("description", "Optional guest email addresses."),
+                "add_meet_link" to booleanSchema("True when the user wants a Google Meet / video call link."),
+                "reminder_minutes" to integerSchema("Optional popup reminder this many minutes before."),
             ),
-        JSONObject()
-            .put("name", "query_calendar_freebusy")
-            .put("description", "Query Google Calendar free/busy blocks for scheduling. Use when the user asks whether they are free or busy in a time window.")
-            .put(
-                "parameters",
-                objectSchema(
-                    required = listOf("start_millis", "end_millis"),
-                    properties = mapOf(
-                        "start_millis" to integerSchema("Start of the query window as Unix epoch milliseconds."),
-                        "end_millis" to integerSchema("End of the query window as Unix epoch milliseconds."),
-                        "calendar_ids" to stringSchema("Optional comma-separated Google Calendar IDs. Leave blank to check visible calendars."),
-                    ),
-                ),
+        ),
+        decl(
+            "update_calendar_event",
+            "Change an existing event: move it, rename it, change length, location, or notes. Get event_id and calendar_id from get_calendar_events first. Only pass fields that change.",
+            listOf("event_id", "calendar_id"),
+            mapOf(
+                "event_id" to stringSchema("event_id from get_calendar_events."),
+                "calendar_id" to stringSchema("calendar_id from get_calendar_events."),
+                "title" to stringSchema("New title."),
+                "start" to stringSchema("New start. ${TimeArgs.ISO_HELP}"),
+                "end" to stringSchema("New end. If only start moves, omit this and the duration is kept."),
+                "location" to stringSchema("New location."),
+                "description" to stringSchema("New notes."),
             ),
-        JSONObject()
-            .put("name", "find_calendar_availability")
-            .put("description", "Find open calendar slots of a requested duration. Use before proposing meeting times or scheduling when the user asks for availability.")
-            .put(
-                "parameters",
-                objectSchema(
-                    required = listOf("start_millis", "end_millis", "duration_minutes"),
-                    properties = mapOf(
-                        "start_millis" to integerSchema("Start of the search window as Unix epoch milliseconds."),
-                        "end_millis" to integerSchema("End of the search window as Unix epoch milliseconds."),
-                        "duration_minutes" to integerSchema("Required open duration in minutes."),
-                        "max_results" to integerSchema("Maximum number of slots to return. Defaults to 5."),
-                        "calendar_ids" to stringSchema("Optional comma-separated Google Calendar IDs. Leave blank to check visible calendars."),
-                    ),
-                ),
+        ),
+        decl(
+            "delete_calendar_event",
+            "Delete (cancel/remove) a calendar event. Pass event_id + calendar_id from get_calendar_events; or pass search + date and Billy finds it. The watch asks the user to confirm before anything is deleted.",
+            emptyList(),
+            mapOf(
+                "event_id" to stringSchema("event_id from get_calendar_events."),
+                "calendar_id" to stringSchema("calendar_id from get_calendar_events."),
+                "search" to stringSchema("Event title words, when no event_id is known."),
+                "date" to stringSchema("Day to search, e.g. 2026-10-03. Optional."),
+                "all_occurrences" to booleanSchema("For a repeating event: true deletes the whole series, false (default) only this occurrence."),
             ),
-        JSONObject()
-            .put("name", "list_writable_calendars")
-            .put("description", "List writable calendars available on this Android phone.")
-            .put("parameters", objectSchema(required = emptyList(), properties = emptyMap())),
-        JSONObject()
-            .put("name", "delete_billy_local_calendar_ghosts")
-            .put("description", "Delete local Android Calendar Provider events that Billy/Bobby created as fallback ghost events. Prefer delete_billy_calendar_ghosts for normal cleanup requests.")
-            .put("parameters", objectSchema(required = emptyList(), properties = emptyMap())),
-        JSONObject()
-            .put("name", "delete_billy_calendar_ghosts")
-            .put("description", "Delete Billy/Bobby ghost calendar events from both local Android Calendar Provider and Google Calendar API.")
-            .put("parameters", objectSchema(required = emptyList(), properties = emptyMap())),
+        ),
+        decl(
+            "find_free_time",
+            "Find open time slots across the user's calendars, e.g. \"when am I free tomorrow afternoon for an hour\".",
+            listOf("start", "end"),
+            mapOf(
+                "start" to stringSchema("Search window start. ${TimeArgs.ISO_HELP}"),
+                "end" to stringSchema("Search window end."),
+                "duration_minutes" to integerSchema("Length of slot needed, default 30."),
+            ),
+        ),
     )
 
     override fun execute(name: String, args: JSONObject): CompanionToolExecution? {
-        return when (name) {
-            "list_calendar_events" -> {
-                val maxResults = args.optionalInt("max_results") ?: DEFAULT_CALENDAR_RESULTS
-                val window = calendarQueryWindow(args, maxResults)
-                val googleResult = googleCalendarApiTools?.listEvents(
-                    startMillis = window.startMillis,
-                    endMillis = window.endMillis,
-                    maxResults = maxResults,
-                )
-                if (googleResult is GoogleCalendarResult.Success) {
-                    val response = googleResult.toJson()
-                    return CompanionToolExecution(
-                        response = response.put("source", "google_calendar_api"),
-                        finalText = calendarEventsWatchSummary(response, window),
-                    )
-                }
-                if (googleResult != null) {
-                    val response = googleResult.toJson().put("source", "google_calendar_api")
-                    return CompanionToolExecution(
-                        response = response,
-                        finalText = response.optString("summary").ifBlank {
-                            "Google Calendar lookup failed. I did not use Android local calendar ghosts."
-                        },
-                    )
-                }
-                val localResponse = calendarTools.listEvents(
-                    startMillis = window.startMillis,
-                    endMillis = window.endMillis,
-                ).toJson()
-                if (localResponse.optString("status") == "ok") {
-                    return CompanionToolExecution(
-                        response = localResponse.put("source", "android_calendar_provider_visible_fallback"),
-                        finalText = calendarEventsWatchSummary(localResponse, window),
-                    )
-                }
-                CompanionToolExecution(
-                    response = googleResult?.toJson() ?: localResponse,
-                    finalText = (googleResult?.toJson() ?: localResponse).optString("summary").ifBlank { "Calendar lookup failed." },
-                )
-            }
-            "create_calendar_event" -> {
-                validateCalendarCreateTiming(args)?.let { message ->
-                    return CompanionToolExecution(
-                        response = JSONObject()
-                            .put("status", "needs_clarification")
-                            .put("summary", message),
-                        finalText = message,
-                    )
-                }
-                val googleTools = googleCalendarApiTools
-                    ?: return CompanionToolExecution(
-                        response = JSONObject()
-                            .put("status", "error")
-                            .put("summary", "Google Calendar API tool is unavailable; not creating a local Android calendar fallback."),
-                        finalText = "Google Calendar API is unavailable. I did not create a local ghost event.",
-                    )
-                val calendarId = args.optionalString("calendar_id")
-                if (calendarId.isNullOrBlank()) {
-                    val calendarsResult = googleTools.listCalendars()
-                    val calendarsResponse = calendarsResult.toJson()
-                    if (calendarsResponse.optString("status") != "ok") {
-                        return CompanionToolExecution(
-                            response = calendarsResponse,
-                            finalText = calendarsResponse.optString("summary").ifBlank { "Google Calendar lookup failed." },
-                        )
-                    }
-                    val writableCalendars = preferredWritableCalendars(calendarsResponse.optJSONArray("writable_calendars") ?: JSONArray())
-                    if (writableCalendars.length() == 0) {
-                        return CompanionToolExecution(
-                            response = calendarsResponse,
-                            finalText = "Billy can read Google Calendar, but no writable calendars are available.",
-                        )
-                    }
-                    val calendarHint = args.optionalString("calendar_hint")
-                    val hintedCalendar = resolveCalendarHint(calendarHint, writableCalendars)
-                    if (hintedCalendar != null) {
-                        args.put("calendar_id", hintedCalendar.optString("id"))
-                    }
-                    if (args.optionalString("calendar_id").isNullOrBlank() && writableCalendars.length() > 1) {
-                        return CompanionToolExecution(
-                            response = JSONObject()
-                                .put("status", "needs_clarification")
-                                .put("summary", "Multiple writable Google calendars are available."),
-                            clarificationCard = calendarChoiceCard(args, writableCalendars),
-                        )
-                    }
-                    if (args.optionalString("calendar_id").isNullOrBlank()) {
-                        args.put("calendar_id", writableCalendars.optJSONObject(0)?.optString("id").orEmpty())
-                    }
-                }
-                googleTools.createEvent(
-                    title = args.optString("title"),
-                    startMillis = args.optLong("start_millis"),
-                    endMillis = args.optLong("end_millis"),
-                    description = args.optString("description").ifBlank { null },
-                    timeZoneId = TimeZone.getDefault().id,
-                    calendarId = args.optionalString("calendar_id"),
-                    createMeetLink = args.optBoolean("create_meet_link", false),
-                ).toExecution(finalOnSuccess = true)
-            }
-            "query_calendar_freebusy" -> {
-                val googleTools = googleCalendarApiTools
-                    ?: return CompanionToolExecution(
-                        response = JSONObject()
-                            .put("status", "error")
-                            .put("summary", "Google Calendar API tool is unavailable."),
-                        finalText = "Google Calendar API is unavailable.",
-                    )
-                googleTools.queryFreeBusy(
-                    startMillis = args.optLong("start_millis"),
-                    endMillis = args.optLong("end_millis"),
-                    calendarIds = args.optionalStringList("calendar_ids"),
-                ).toExecution(finalOnSuccess = true)
-            }
-            "find_calendar_availability" -> {
-                val googleTools = googleCalendarApiTools
-                    ?: return CompanionToolExecution(
-                        response = JSONObject()
-                            .put("status", "error")
-                            .put("summary", "Google Calendar API tool is unavailable."),
-                        finalText = "Google Calendar API is unavailable.",
-                    )
-                googleTools.findAvailability(
-                    startMillis = args.optLong("start_millis"),
-                    endMillis = args.optLong("end_millis"),
-                    durationMinutes = args.optionalInt("duration_minutes") ?: 30,
-                    maxResults = args.optionalInt("max_results") ?: 5,
-                    calendarIds = args.optionalStringList("calendar_ids"),
-                ).toExecution(finalOnSuccess = true)
-            }
-            "list_writable_calendars" -> {
-                val googleResult = googleCalendarApiTools?.listCalendars()
-                if (googleResult != null) {
-                    val response = googleResult.toJson().put("source", "google_calendar_api")
-                    return CompanionToolExecution(
-                        response = response,
-                    )
-                }
-                val response = calendarTools.listWritableCalendars().toJson()
-                CompanionToolExecution(
-                    response = response,
-                )
-            }
-            "delete_billy_local_calendar_ghosts" -> {
-                val response = calendarTools.deleteBillyLocalGhostEvents().toJson()
-                CompanionToolExecution(
-                    response = response,
-                    finalText = response.optString("summary").takeIf { it.isNotBlank() },
-                )
-            }
-            "delete_billy_calendar_ghosts" -> {
-                val localResponse = calendarTools.deleteBillyLocalGhostEvents().toJson()
-                val googleResult = googleCalendarApiTools?.deleteBillyGhostEvents()
-                val response = JSONObject()
-                    .put("status", if (localResponse.optString("status") == "ok" && googleResult !is GoogleCalendarGhostDeleteResult.Failed) "ok" else "partial")
-                    .put("summary", ghostCleanupWatchSummary(localResponse, googleResult))
-                    .put("local", localResponse)
-                    .put("google", googleResult?.toJson() ?: JSONObject().put("status", "unavailable"))
-                CompanionToolExecution(
-                    response = response,
-                    finalText = response.optString("summary").takeIf { it.isNotBlank() },
-                )
-            }
+        val result = when (name) {
+            "get_calendar_events" -> getEvents(args)
+            "create_calendar_event" -> create(args)
+            "update_calendar_event" -> update(args)
+            "delete_calendar_event" -> return delete(args)
+            "find_free_time" -> freeTime(args)
             else -> return null
         }
+        return CompanionToolExecution(result)
     }
-}
 
-private fun validateCalendarCreateTiming(args: JSONObject): String? {
-    val start = args.optionalLong("start_millis")?.takeIf { it > 0L }
-        ?: return "I need the event date and start time."
-    val end = args.optionalLong("end_millis")?.takeIf { it > 0L }
-        ?: return "I need the event end time or duration."
-    if (end <= start) {
-        return "I need an end time after the start time."
-    }
-    return null
-}
+    // ---- read -------------------------------------------------------------
 
-private fun calendarChoiceCard(args: JSONObject, writableCalendars: JSONArray): ClarificationCard {
-    val title = args.optString("title").ifBlank { "event" }
-    val start = args.optLong("start_millis")
-    val end = args.optLong("end_millis")
-    val pendingOptions = mutableListOf<PendingCalendarOption>()
-    for (i in 0 until minOf(writableCalendars.length(), 4)) {
-        val calendar = writableCalendars.optJSONObject(i) ?: continue
-        val name = calendar.optString("summary").ifBlank { calendar.optString("id") }
-        val display = "${i + 1}. ${name.take(44)}"
-        pendingOptions += PendingCalendarOption(
-            index = i + 1,
-            display = display,
-            label = name.take(48),
-            calendarId = calendar.optString("id"),
-            calendarName = name,
-        )
-    }
-    val token = PendingCalendarClarifications.putCreate(
-        PendingCalendarCreate(
-            title = title,
-            startMillis = start,
-            endMillis = end,
-            description = args.optString("description").takeIf { it.isNotBlank() },
-            createMeetLink = args.optBoolean("create_meet_link", false),
-            options = pendingOptions,
-        ),
-    )
-    return ClarificationCard(
-        question = "Which calendar?",
-        context = "calendar_create_token=$token",
-        options = pendingOptions.map { it.display }.ifEmpty { listOf("Primary calendar", "Cancel") },
-    )
-}
-
-private fun preferredWritableCalendars(writableCalendars: JSONArray): JSONArray {
-    val visible = JSONArray()
-    val fallback = JSONArray()
-    for (i in 0 until writableCalendars.length()) {
-        val calendar = writableCalendars.optJSONObject(i) ?: continue
-        if (calendar.optBoolean("selected", true) && !calendar.optBoolean("hidden")) {
-            visible.put(calendar)
-        }
-        fallback.put(calendar)
-    }
-    return if (visible.length() > 0) visible else fallback
-}
-
-private fun resolveCalendarHint(hint: String?, writableCalendars: JSONArray): JSONObject? {
-    val normalizedHint = hint.normalizedCalendarHint()
-    if (normalizedHint.isBlank()) {
-        return null
-    }
-    val calendars = buildList {
-        for (i in 0 until writableCalendars.length()) {
-            writableCalendars.optJSONObject(i)?.let { add(it) }
+    private fun getEvents(args: JSONObject): JSONObject {
+        val search = args.optString("search").trim()
+        val start = TimeArgs.parse(args.optString("start"))?.time ?: ZonedDateTime.now(TimeArgs.zone())
+        val end = TimeArgs.parse(args.optString("end"))?.time
+            ?: if (search.isNotEmpty()) start.plusDays(60) else start.toLocalDate().plusDays(1).atStartOfDay(TimeArgs.zone())
+        if (!end.isAfter(start)) return GoogleAccess.error("The end must be after the start.")
+        val max = args.optInt("max_results", 10).coerceIn(1, 30)
+        return google.run { token ->
+            val events = fetchEvents(token, start, end, search, max)
+            val list = JSONArray().also { array -> events.forEach { array.put(it.toJson()) } }
+            val summary = when (events.size) {
+                0 -> if (search.isEmpty()) "Nothing on the calendar in that window." else "No events matching \"$search\"."
+                else -> events.take(6).joinToString("\n") { "- ${it.spokenLine()}" }
+            }
+            GoogleAccess.ok(summary).put("events", list).put("count", events.size)
         }
     }
-    if (calendars.isEmpty()) {
-        return null
-    }
-    val primaryWords = setOf("primary", "personal", "main", "default", "my calendar", "own calendar")
-    if (normalizedHint in primaryWords || primaryWords.any { normalizedHint.contains(it) }) {
-        calendars.firstOrNull { it.optBoolean("primary") }?.let { return it }
-    }
-    val exact = calendars.filter { calendar ->
-        val summary = calendar.optString("summary").normalizedCalendarHint()
-        val id = calendar.optString("id").normalizedCalendarHint()
-        normalizedHint == summary || normalizedHint == id
-    }
-    if (exact.size == 1) {
-        return exact.first()
-    }
-    val contains = calendars.filter { calendar ->
-        val summary = calendar.optString("summary").normalizedCalendarHint()
-        val id = calendar.optString("id").normalizedCalendarHint()
-        summary.contains(normalizedHint) || id.contains(normalizedHint)
-    }
-    return contains.singleOrNull()
-}
 
-private fun String?.normalizedCalendarHint(): String {
-    return this
-        ?.trim()
-        ?.lowercase(Locale.US)
-        ?.replace(Regex("\\s+"), " ")
-        ?.removePrefix("my ")
-        ?.removeSuffix(" calendar")
-        .orEmpty()
-}
-
-private data class CalendarQueryWindow(
-    val startMillis: Long,
-    val endMillis: Long,
-)
-
-private fun calendarQueryWindow(args: JSONObject, maxResults: Int): CalendarQueryWindow {
-    val now = System.currentTimeMillis()
-    val zone = ZoneId.systemDefault()
-    val requestedStart = args.optionalLong("start_millis")
-    val requestedEnd = args.optionalLong("end_millis")
-    val noExplicitWindow = requestedStart == null && requestedEnd == null
-    val start = requestedStart?.takeIf { it > 0L }
-        ?: if (noExplicitWindow && maxResults != 1) startOfTodayMillis(zone) else now
-    val defaultEnd = if (noExplicitWindow && maxResults == 1) {
-        start + DEFAULT_CALENDAR_LOOKAHEAD_MS
-    } else {
-        endOfDayMillis(start, zone).takeIf { it > start } ?: (start + ONE_DAY_MS)
+    private fun fetchEvents(token: String, start: ZonedDateTime, end: ZonedDateTime, search: String, max: Int): List<Event> {
+        val calendars = calendars(token).filter { it.visible }
+        val events = mutableListOf<Event>()
+        calendars.forEach { calendar ->
+            val url = buildString {
+                append("$API/calendars/${GoogleAccess.encode(calendar.id)}/events?singleEvents=true&orderBy=startTime")
+                append("&maxResults=$max")
+                append("&timeMin=${GoogleAccess.encode(start.toInstant().toString())}")
+                append("&timeMax=${GoogleAccess.encode(end.toInstant().toString())}")
+                if (search.isNotEmpty()) append("&q=${GoogleAccess.encode(search)}")
+            }
+            val items = runCatching { google.get(url, token).optJSONArray("items") }.getOrNull() ?: JSONArray()
+            for (i in 0 until items.length()) {
+                val item = items.optJSONObject(i) ?: continue
+                if (item.optString("status") == "cancelled") continue
+                Event.from(item, calendar)?.let { events += it }
+            }
+        }
+        return events.sortedBy { it.start }.take(max)
     }
-    val end = requestedEnd?.takeIf { it > start } ?: defaultEnd
-    return CalendarQueryWindow(start, end)
-}
 
-private fun startOfTodayMillis(zone: ZoneId): Long {
-    return LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli()
-}
+    // ---- create / update --------------------------------------------------
 
-private fun endOfDayMillis(millis: Long, zone: ZoneId): Long {
-    return Instant.ofEpochMilli(millis)
-        .atZone(zone)
-        .toLocalDate()
-        .atTime(LocalTime.MAX)
-        .atZone(zone)
-        .toInstant()
-        .toEpochMilli()
-}
-
-private fun calendarEventsWatchSummary(response: JSONObject, window: CalendarQueryWindow): String {
-    if (response.optString("status") != "ok") {
-        return response.optString("summary").ifBlank { "Calendar lookup failed." }
-    }
-    val events = response.optJSONArray("events") ?: JSONArray()
-    val label = if (isSingleDayWindow(window)) "Today" else "Calendar"
-    if (events.length() == 0) {
-        return response.optString("summary").ifBlank {
-            "No calendar events ${if (label == "Today") "today" else "found"}."
+    private fun create(args: JSONObject): JSONObject {
+        val title = args.optString("title").trim()
+        val start = TimeArgs.parse(args.optString("start")) ?: return GoogleAccess.error("I need a start time, e.g. ${TimeArgs.ISO_HELP}")
+        val end = TimeArgs.parse(args.optString("end"))
+            ?: if (start.dateOnly) ParsedTime(start.time.plusDays(1), true) else ParsedTime(start.time.plusHours(1), false)
+        if (title.isEmpty()) return GoogleAccess.error("I need an event title.")
+        if (!end.time.isAfter(start.time)) return GoogleAccess.error("The end must be after the start.")
+        return google.run { token ->
+            val calendar = pickCalendar(token, args.optString("calendar"))
+                ?: return@run GoogleAccess.error("I couldn't find a calendar I can add events to.")
+            val body = JSONObject()
+                .put("summary", title)
+                .put("start", timeJson(start))
+                .put("end", timeJson(end))
+            args.optString("location").trim().takeIf { it.isNotEmpty() }?.let { body.put("location", it) }
+            args.optString("description").trim().takeIf { it.isNotEmpty() }?.let { body.put("description", it) }
+            args.optJSONArray("attendee_emails")?.let { emails ->
+                val attendees = JSONArray()
+                for (i in 0 until emails.length()) {
+                    emails.optString(i).trim().takeIf { "@" in it }?.let { attendees.put(JSONObject().put("email", it)) }
+                }
+                if (attendees.length() > 0) body.put("attendees", attendees)
+            }
+            if (args.has("reminder_minutes")) {
+                body.put(
+                    "reminders",
+                    JSONObject().put("useDefault", false).put(
+                        "overrides",
+                        JSONArray().put(JSONObject().put("method", "popup").put("minutes", args.optInt("reminder_minutes").coerceIn(0, 40320))),
+                    ),
+                )
+            }
+            val meet = args.optBoolean("add_meet_link", false)
+            if (meet) {
+                body.put(
+                    "conferenceData",
+                    JSONObject().put(
+                        "createRequest",
+                        JSONObject().put("requestId", UUID.randomUUID().toString())
+                            .put("conferenceSolutionKey", JSONObject().put("type", "hangoutsMeet")),
+                    ),
+                )
+            }
+            val url = "$API/calendars/${GoogleAccess.encode(calendar.id)}/events" +
+                (if (meet) "?conferenceDataVersion=1" else "") +
+                (if (body.has("attendees")) (if (meet) "&" else "?") + "sendUpdates=all" else "")
+            val created = Event.from(google.post(url, token, body), calendar)
+                ?: return@run GoogleAccess.error("Google Calendar did not confirm the new event.")
+            GoogleAccess.ok("Added \"${created.title}\" ${created.spokenWhen()} to ${calendar.name}.")
+                .put("event", created.toJson())
         }
     }
-    val limit = minOf(events.length(), 5)
-    val lines = mutableListOf("$label:")
-    for (i in 0 until limit) {
-        val event = events.optJSONObject(i) ?: continue
-        lines += "- ${calendarEventTime(event)} ${calendarEventTitle(event)}".trimEnd()
-    }
-    if (events.length() > limit) {
-        lines += "- +${events.length() - limit} more"
-    }
-    return lines.joinToString("\n")
-}
 
-private fun calendarEventTitle(event: JSONObject): String {
-    return event.optString("summary")
-        .ifBlank { event.optString("title") }
-        .ifBlank { "(untitled)" }
-}
-
-private fun calendarEventTime(event: JSONObject): String {
-    if (event.optBoolean("all_day")) {
-        return "All day"
-    }
-    val localMillis = event.optionalLong("start_millis")
-    if (localMillis != null && localMillis > 0L) {
-        return TIME_FORMAT.format(Instant.ofEpochMilli(localMillis).atZone(ZoneId.systemDefault()))
-    }
-    val start = event.optJSONObject("start") ?: return ""
-    if (start.optString("date").isNotBlank() && start.optString("dateTime").isBlank()) {
-        return "All day"
-    }
-    val dateTime = start.optString("dateTime")
-    return runCatching { TIME_FORMAT.format(ZonedDateTime.parse(dateTime)) }.getOrDefault("")
-}
-
-private fun isSingleDayWindow(window: CalendarQueryWindow): Boolean {
-    return window.endMillis - window.startMillis <= ONE_DAY_MS + 60_000L
-}
-
-private fun googleCalendarsWatchSummary(response: JSONObject): String {
-    if (response.optString("status") != "ok") {
-        return response.optString("summary").ifBlank { "Google Calendar lookup failed." }
-    }
-    val writable = response.optJSONArray("writable_calendars") ?: JSONArray()
-    if (writable.length() == 0) {
-        return response.optString("summary").ifBlank { "No writable Google calendars." }
-    }
-    val lines = mutableListOf("Writable calendars:")
-    for (i in 0 until minOf(writable.length(), 5)) {
-        val calendar = writable.optJSONObject(i) ?: continue
-        val marker = when {
-            calendar.optBoolean("primary") -> " primary"
-            calendar.optBoolean("hidden") -> " hidden"
-            !calendar.optBoolean("selected", true) -> " unselected"
-            else -> ""
+    private fun update(args: JSONObject): JSONObject {
+        val eventId = args.optString("event_id").trim()
+        val calendarId = args.optString("calendar_id").trim()
+        if (eventId.isEmpty() || calendarId.isEmpty()) {
+            return GoogleAccess.error("I need event_id and calendar_id. Call get_calendar_events first.")
         }
-        lines += "- ${calendar.optString("summary").ifBlank { calendar.optString("id") }}$marker"
-    }
-    if (writable.length() > 5) {
-        lines += "- +${writable.length() - 5} more"
-    }
-    return lines.joinToString("\n")
-}
-
-private fun ghostCleanupWatchSummary(localResponse: JSONObject, googleResult: GoogleCalendarGhostDeleteResult?): String {
-    val localText = localResponse.optString("summary").ifBlank { "Local ghost cleanup finished." }
-    val googleText = googleResult?.summary ?: "Google Calendar cleanup unavailable."
-    return "$localText\n$googleText"
-}
-
-private fun GoogleCalendarResult.toExecution(finalOnSuccess: Boolean = false): CompanionToolExecution {
-    val response = toJson()
-    return CompanionToolExecution(
-        response = response,
-        finalText = if (finalOnSuccess || response.optString("status") != "ok") calendarResultWatchSummary(response, summary) else null,
-    )
-}
-
-private fun calendarResultWatchSummary(response: JSONObject, fallback: String): String {
-    if (response.optString("status") != "ok") {
-        return response.optString("summary").ifBlank { fallback }
-    }
-    response.optJSONArray("available_slots")?.let { slots ->
-        if (slots.length() == 0) {
-            return response.optString("summary").ifBlank { fallback }
+        return google.run { token ->
+            val url = "$API/calendars/${GoogleAccess.encode(calendarId)}/events/${GoogleAccess.encode(eventId)}"
+            val current = google.get(url, token)
+            val calendar = Calendar(calendarId, calendarId, "owner", primary = false, visible = true)
+            val existing = Event.from(current, calendar) ?: return@run GoogleAccess.error("I couldn't read that event.")
+            val patch = JSONObject()
+            args.optString("title").trim().takeIf { it.isNotEmpty() }?.let { patch.put("summary", it) }
+            args.optString("location").trim().takeIf { it.isNotEmpty() }?.let { patch.put("location", it) }
+            args.optString("description").trim().takeIf { it.isNotEmpty() }?.let { patch.put("description", it) }
+            val newStart = TimeArgs.parse(args.optString("start"))
+            val newEnd = TimeArgs.parse(args.optString("end"))
+            if (newStart != null || newEnd != null) {
+                val duration = existing.end - existing.start
+                val startTime = newStart ?: ParsedTime(Instant.ofEpochMilli(existing.start).atZone(TimeArgs.zone()), existing.allDay)
+                val endTime = newEnd ?: ParsedTime(startTime.time.plusNanos(duration * 1_000_000), startTime.dateOnly)
+                if (!endTime.time.isAfter(startTime.time)) return@run GoogleAccess.error("The end must be after the start.")
+                patch.put("start", timeJson(startTime)).put("end", timeJson(endTime))
+            }
+            if (patch.length() == 0) return@run GoogleAccess.error("Tell me what to change about the event.")
+            val updated = Event.from(google.patch(url, token, patch), calendar) ?: existing
+            GoogleAccess.ok("Updated \"${updated.title}\": now ${updated.spokenWhen()}.").put("event", updated.toJson())
         }
-        val lines = mutableListOf("Open slots:")
-        for (i in 0 until minOf(slots.length(), 5)) {
-            val slot = slots.optJSONObject(i) ?: continue
-            lines += "- ${slotTime(slot.optLong("start_millis"))}-${slotTime(slot.optLong("end_millis"))}"
-        }
-        return lines.joinToString("\n")
     }
-    response.optJSONArray("busy_slots")?.let { slots ->
-        if (slots.length() == 0) {
-            return "Free in that window."
-        }
-        val lines = mutableListOf("Busy:")
-        for (i in 0 until minOf(slots.length(), 5)) {
-            val slot = slots.optJSONObject(i) ?: continue
-            lines += "- ${slotTime(slot.optLong("start_millis"))}-${slotTime(slot.optLong("end_millis"))} ${slot.optString("calendar_name").take(28)}".trimEnd()
-        }
-        if (slots.length() > 5) {
-            lines += "- +${slots.length() - 5} more"
-        }
-        return lines.joinToString("\n")
-    }
-    return response.optString("summary").ifBlank { fallback }
-}
 
-private fun slotTime(millis: Long): String {
-    return if (millis > 0L) {
-        TIME_FORMAT.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
-    } else {
-        "?"
-    }
-}
+    // ---- delete -----------------------------------------------------------
 
-private fun GoogleCalendarResult.toJson(): JSONObject {
-    return when (this) {
-        is GoogleCalendarResult.Success -> payload
-        is GoogleCalendarResult.NeedsScope -> JSONObject()
-            .put("status", "needs_scope")
-            .put("summary", summary)
-            .put("missing_scopes", JSONArray(scopes))
-        is GoogleCalendarResult.Rejected -> JSONObject()
-            .put("status", "rejected")
-            .put("summary", reason)
-            .put("reason", reason)
-        is GoogleCalendarResult.Failed -> JSONObject()
-            .put("status", "error")
-            .put("summary", reason)
-            .put("reason", reason)
+    private fun delete(args: JSONObject): CompanionToolExecution {
+        val allOccurrences = args.optBoolean("all_occurrences", false)
+        var picker: ClarificationCard? = null
+        val result = google.run { token ->
+            val eventId = args.optString("event_id").trim()
+            val calendarId = args.optString("calendar_id").trim()
+            val search = args.optString("search").trim()
+            val candidates: List<Event> = if (eventId.isNotEmpty() && calendarId.isNotEmpty()) {
+                val raw = google.get("$API/calendars/${GoogleAccess.encode(calendarId)}/events/${GoogleAccess.encode(eventId)}", token)
+                listOfNotNull(Event.from(raw, Calendar(calendarId, calendarId, "owner", primary = false, visible = true)))
+            } else if (search.isNotEmpty()) {
+                val day = TimeArgs.parse(args.optString("date"))?.time
+                val from = day?.toLocalDate()?.atStartOfDay(TimeArgs.zone()) ?: ZonedDateTime.now(TimeArgs.zone()).minusDays(1)
+                val to = day?.toLocalDate()?.plusDays(1)?.atStartOfDay(TimeArgs.zone()) ?: from.plusDays(90)
+                fetchEvents(token, from, to, search, 6).filter { it.writable }
+            } else {
+                return@run GoogleAccess.error("Which event? Give event_id + calendar_id, or a search.")
+            }
+            when {
+                candidates.isEmpty() -> GoogleAccess.error("I couldn't find a matching event I can delete.")
+                candidates.size == 1 -> {
+                    val event = candidates.first()
+                    val series = allOccurrences && event.recurringId != null
+                    picker = PendingActions.confirm(
+                        "Delete ${if (series) "every \"${event.title}\"" else "\"${event.title}\" ${event.spokenWhen()}"}?",
+                        "Delete",
+                    ) { PendingOutcome(performDelete(event, series)) }
+                    GoogleAccess.ok("Asking the user to confirm on the watch.")
+                }
+                else -> {
+                    picker = PendingActions.offer(
+                        "Delete which event?",
+                        candidates.take(3).map { event ->
+                            PendingActions.Choice("${event.title} ${event.spokenWhenShort()}") {
+                                PendingOutcome(performDelete(event, allOccurrences && event.recurringId != null))
+                            }
+                        },
+                        cancelLabel = null,
+                    )
+                    GoogleAccess.ok("Several events match; asking the user to pick one.")
+                }
+            }
+        }
+        return CompanionToolExecution(result, clarificationCard = picker)
     }
-}
 
-private fun GoogleCalendarGhostDeleteResult.toJson(): JSONObject {
-    return when (this) {
-        is GoogleCalendarGhostDeleteResult.Deleted -> JSONObject()
-            .put("status", if (failures.isEmpty()) "ok" else "partial")
-            .put("summary", summary)
-            .put("deleted_count", deletedCount)
-            .put("matched_count", matchedCount)
-            .put("checked_calendar_count", checkedCalendarCount)
-            .put("failures", JSONArray(failures))
-        is GoogleCalendarGhostDeleteResult.NeedsScope -> JSONObject()
-            .put("status", "needs_scope")
-            .put("summary", summary)
-            .put("missing_scopes", JSONArray(scopes))
-        is GoogleCalendarGhostDeleteResult.Failed -> JSONObject()
-            .put("status", "error")
-            .put("summary", summary)
-            .put("reason", reason)
+    private fun performDelete(event: Event, series: Boolean): String {
+        val result = google.run { token ->
+            val id = if (series) event.recurringId ?: event.id else event.id
+            try {
+                google.delete("$API/calendars/${GoogleAccess.encode(event.calendarId)}/events/${GoogleAccess.encode(id)}?sendUpdates=all", token)
+            } catch (e: GoogleCallException) {
+                if (e.message?.contains("already") != true) throw e
+            }
+            GoogleAccess.ok(if (series) "Deleted every \"${event.title}\"." else "Deleted \"${event.title}\" ${event.spokenWhen()}.")
+        }
+        return result.optString("summary")
     }
-}
 
-private fun CalendarEventsResult.toJson(): JSONObject {
-    val base = JSONObject().put("summary", summary)
-    return when (this) {
-        is CalendarEventsResult.Success -> base
-            .put("status", "ok")
-            .put(
-                "events",
-                JSONArray().also { array ->
-                    events.forEach { event ->
-                        array.put(
-                            JSONObject()
-                                .put("event_id", event.eventId)
-                                .put("title", event.title)
-                                .put("start_millis", event.startMillis)
-                                .put("end_millis", event.endMillis)
-                                .put("calendar_id", event.calendarId)
-                                .put("calendar_name", event.calendarName)
-                                .put("description", event.description)
-                                .put("location", event.location)
-                                .put("all_day", event.allDay),
-                        )
-                    }
-                },
+    // ---- free time ----------------------------------------------------------
+
+    private fun freeTime(args: JSONObject): JSONObject {
+        val start = TimeArgs.parse(args.optString("start"))?.time ?: return GoogleAccess.error("I need a start.")
+        val end = TimeArgs.parse(args.optString("end"))?.time ?: return GoogleAccess.error("I need an end.")
+        val minutes = args.optInt("duration_minutes", 30).coerceIn(5, 600)
+        return google.run { token ->
+            val calendars = calendars(token).filter { it.visible }
+            val body = JSONObject()
+                .put("timeMin", start.toInstant().toString())
+                .put("timeMax", end.toInstant().toString())
+                .put("items", JSONArray().also { a -> calendars.take(50).forEach { a.put(JSONObject().put("id", it.id)) } })
+            val response = google.post("$API/freeBusy", token, body).optJSONObject("calendars") ?: JSONObject()
+            val busy = mutableListOf<Pair<Long, Long>>()
+            response.keys().forEach { key ->
+                val slots = response.optJSONObject(key)?.optJSONArray("busy") ?: return@forEach
+                for (i in 0 until slots.length()) {
+                    val slot = slots.optJSONObject(i) ?: continue
+                    val s = TimeArgs.parse(slot.optString("start"))?.millis ?: continue
+                    val e = TimeArgs.parse(slot.optString("end"))?.millis ?: continue
+                    busy += s to e
+                }
+            }
+            busy.sortBy { it.first }
+            val free = mutableListOf<Pair<Long, Long>>()
+            var cursor = start.toInstant().toEpochMilli()
+            val stop = end.toInstant().toEpochMilli()
+            busy.forEach { (s, e) ->
+                if (s - cursor >= minutes * 60_000L) free += cursor to s
+                cursor = maxOf(cursor, e)
+            }
+            if (stop - cursor >= minutes * 60_000L) free += cursor to stop
+            val lines = free.take(5).map { (s, e) ->
+                val from = Instant.ofEpochMilli(s).atZone(TimeArgs.zone())
+                val to = Instant.ofEpochMilli(e).atZone(TimeArgs.zone())
+                "${TimeArgs.spoken(from)} to ${to.format(DateTimeFormatter.ofPattern("h:mm a"))}"
+            }
+            GoogleAccess.ok(if (lines.isEmpty()) "No free ${minutes}-minute slot in that window." else lines.joinToString("\n") { "- $it" })
+                .put("free_slots", JSONArray(lines))
+        }
+    }
+
+    // ---- helpers ----------------------------------------------------------
+
+    private fun calendars(token: String): List<Calendar> {
+        val items = google.get("$API/users/me/calendarList?maxResults=250", token).optJSONArray("items") ?: JSONArray()
+        return (0 until items.length()).mapNotNull { i ->
+            val item = items.optJSONObject(i) ?: return@mapNotNull null
+            Calendar(
+                id = item.optString("id"),
+                name = item.optString("summaryOverride").ifBlank { item.optString("summary") },
+                accessRole = item.optString("accessRole"),
+                primary = item.optBoolean("primary"),
+                visible = item.optBoolean("selected", true) && !item.optBoolean("hidden"),
             )
-        is CalendarEventsResult.NotAuthorized -> base
-            .put("status", "not_authorized")
-            .put("reason", reason)
-            .put("missing_permissions", JSONArray(missingPermissions))
-        is CalendarEventsResult.Rejected -> base
-            .put("status", "rejected")
-            .put("reason", reason)
-        is CalendarEventsResult.Failed -> base
-            .put("status", "error")
-            .put("reason", reason)
+        }.filter { it.id.isNotEmpty() }
+    }
+
+    private fun pickCalendar(token: String, hint: String): Calendar? {
+        val writable = calendars(token).filter { it.writable }
+        val wanted = hint.trim().lowercase()
+        if (wanted.isNotEmpty()) {
+            writable.firstOrNull { it.name.lowercase() == wanted }?.let { return it }
+            writable.firstOrNull { it.name.lowercase().contains(wanted) || wanted.contains(it.name.lowercase()) }?.let { return it }
+        }
+        return writable.firstOrNull { it.primary } ?: writable.firstOrNull { it.visible } ?: writable.firstOrNull()
+    }
+
+    private fun timeJson(time: ParsedTime): JSONObject {
+        return if (time.dateOnly) {
+            JSONObject().put("date", time.time.toLocalDate().toString())
+        } else {
+            JSONObject()
+                .put("dateTime", time.time.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
+                .put("timeZone", TimeArgs.zone().id)
+        }
+    }
+
+    private fun decl(name: String, description: String, required: List<String>, properties: Map<String, JSONObject> = emptyMap()): JSONObject {
+        return JSONObject().put("name", name).put("description", description).put("parameters", objectSchema(required, properties))
+    }
+
+    private data class Calendar(val id: String, val name: String, val accessRole: String, val primary: Boolean, val visible: Boolean) {
+        val writable: Boolean get() = accessRole == "owner" || accessRole == "writer"
+    }
+
+    private data class Event(
+        val id: String,
+        val calendarId: String,
+        val calendarName: String,
+        val title: String,
+        val start: Long,
+        val end: Long,
+        val allDay: Boolean,
+        val location: String,
+        val recurringId: String?,
+        val meetLink: String,
+        val writable: Boolean,
+    ) {
+        fun spokenWhen(): String = TimeArgs.spoken(Instant.ofEpochMilli(start).atZone(TimeArgs.zone()), allDay)
+
+        fun spokenWhenShort(): String {
+            val time = Instant.ofEpochMilli(start).atZone(TimeArgs.zone())
+            return if (allDay) time.format(DateTimeFormatter.ofPattern("M/d")) else time.format(DateTimeFormatter.ofPattern("M/d h:mma"))
+        }
+
+        fun spokenLine(): String = buildString {
+            append(spokenWhen())
+            append(" ")
+            append(title)
+            if (location.isNotBlank()) append(" @ ").append(location.substringBefore(',').take(30))
+        }
+
+        fun toJson(): JSONObject = JSONObject()
+            .put("event_id", id)
+            .put("calendar_id", calendarId)
+            .put("calendar", calendarName)
+            .put("title", title)
+            .put("start", Instant.ofEpochMilli(start).atZone(TimeArgs.zone()).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
+            .put("end", Instant.ofEpochMilli(end).atZone(TimeArgs.zone()).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
+            .put("all_day", allDay)
+            .put("location", location)
+            .put("repeating", recurringId != null)
+            .put("meet_link", meetLink)
+
+        companion object {
+            fun from(json: JSONObject, calendar: Calendar): Event? {
+                val id = json.optString("id").ifBlank { return null }
+                val startJson = json.optJSONObject("start") ?: return null
+                val endJson = json.optJSONObject("end") ?: startJson
+                val allDay = startJson.optString("dateTime").isBlank()
+                val start = TimeArgs.parse(startJson.optString("dateTime").ifBlank { startJson.optString("date") })?.millis ?: return null
+                val end = TimeArgs.parse(endJson.optString("dateTime").ifBlank { endJson.optString("date") })?.millis ?: start
+                val organizerSelf = json.optJSONObject("organizer")?.optBoolean("self", false) ?: true
+                return Event(
+                    id = id,
+                    calendarId = calendar.id,
+                    calendarName = calendar.name,
+                    title = json.optString("summary").ifBlank { "(busy)" },
+                    start = start,
+                    end = end,
+                    allDay = allDay,
+                    location = json.optString("location"),
+                    recurringId = json.optString("recurringEventId").takeIf { it.isNotBlank() },
+                    meetLink = json.optString("hangoutLink"),
+                    writable = calendar.writable || organizerSelf,
+                )
+            }
+        }
+    }
+
+    private companion object {
+        const val API = "https://www.googleapis.com/calendar/v3"
     }
 }
-
-private fun CreateCalendarEventResult.toJson(): JSONObject {
-    val base = JSONObject().put("summary", summary)
-    return when (this) {
-        is CreateCalendarEventResult.Created -> base
-            .put("status", "ok")
-            .put("event_id", eventId)
-            .put("calendar_id", calendar.id)
-            .put("calendar_name", calendar.name)
-            .put("account_name", calendar.accountName)
-            .put("account_type", calendar.accountType)
-            .put("visible", calendar.visible)
-            .put("sync_events", calendar.syncEvents)
-            .put("verified", verified)
-        is CreateCalendarEventResult.NotAuthorized -> base
-            .put("status", "not_authorized")
-            .put("reason", reason)
-            .put("missing_permissions", JSONArray(missingPermissions))
-        is CreateCalendarEventResult.Rejected -> base
-            .put("status", "rejected")
-            .put("reason", reason)
-        is CreateCalendarEventResult.Failed -> base
-            .put("status", "error")
-            .put("reason", reason)
-    }
-}
-
-private fun WritableCalendarsResult.toJson(): JSONObject {
-    val base = JSONObject().put("summary", summary)
-    return when (this) {
-        is WritableCalendarsResult.Success -> base
-            .put("status", "ok")
-            .put(
-                "calendars",
-                JSONArray().also { array ->
-                    calendars.forEach { calendar ->
-                        array.put(
-                            JSONObject()
-                                .put("id", calendar.id)
-                                .put("name", calendar.name)
-                                .put("account_name", calendar.accountName)
-                                .put("account_type", calendar.accountType)
-                                .put("owner_account", calendar.ownerAccount)
-                                .put("access_level", calendar.accessLevel)
-                                .put("visible", calendar.visible)
-                                .put("sync_events", calendar.syncEvents)
-                                .put("is_primary", calendar.isPrimary),
-                        )
-                    }
-                },
-            )
-        is WritableCalendarsResult.NotAuthorized -> base
-            .put("status", "not_authorized")
-            .put("reason", reason)
-            .put("missing_permissions", JSONArray(missingPermissions))
-        is WritableCalendarsResult.Failed -> base
-            .put("status", "error")
-            .put("reason", reason)
-    }
-}
-
-private fun DeleteCalendarEventsResult.toJson(): JSONObject {
-    val base = JSONObject().put("summary", summary)
-    return when (this) {
-        is DeleteCalendarEventsResult.Deleted -> base
-            .put("status", "ok")
-            .put("deleted_count", deletedCount)
-            .put("matched_count", matchedCount)
-            .put(
-                "events",
-                JSONArray().also { array ->
-                    events.forEach { event ->
-                        array.put(
-                            JSONObject()
-                                .put("event_id", event.eventId)
-                                .put("title", event.title)
-                                .put("calendar_id", event.calendarId)
-                                .put("calendar_name", event.calendarName)
-                                .put("start_millis", event.startMillis),
-                        )
-                    }
-                },
-            )
-        is DeleteCalendarEventsResult.NotAuthorized -> base
-            .put("status", "not_authorized")
-            .put("reason", reason)
-            .put("missing_permissions", JSONArray(missingPermissions))
-        is DeleteCalendarEventsResult.Failed -> base
-            .put("status", "error")
-            .put("reason", reason)
-    }
-}
-
-private fun JSONObject.optionalLong(name: String): Long? {
-    return if (has(name) && !isNull(name)) optLong(name) else null
-}
-
-private fun JSONObject.optionalInt(name: String): Int? {
-    return if (has(name) && !isNull(name)) optInt(name) else null
-}
-
-private fun JSONObject.optionalString(name: String): String? {
-    return if (has(name) && !isNull(name)) optString(name).trim().takeIf { it.isNotBlank() } else null
-}
-
-private fun JSONObject.optionalStringList(name: String): List<String> {
-    return optionalString(name)
-        ?.split(',', ';', '|')
-        ?.map { it.trim() }
-        ?.filter { it.isNotBlank() }
-        .orEmpty()
-}
-
-private const val DEFAULT_CALENDAR_RESULTS = 10
-private const val DEFAULT_CALENDAR_LOOKAHEAD_MS = 90L * 24L * 60L * 60L * 1000L
-private const val ONE_DAY_MS = 24L * 60L * 60L * 1000L
-private val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm a", Locale.US)

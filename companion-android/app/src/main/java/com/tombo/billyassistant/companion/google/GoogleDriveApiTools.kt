@@ -595,7 +595,7 @@ sealed interface GoogleDriveResult {
     ) : GoogleDriveResult
 
     data class NeedsScope(val scopes: List<String>) : GoogleDriveResult {
-        override val summary: String = "Grant Google Drive access in the companion app."
+        override val summary: String = "Google Drive needs Google set up: open Billy Companion and tap Set up Google."
     }
 
     data class Rejected(val reason: String) : GoogleDriveResult {

@@ -305,27 +305,23 @@ class GoogleWorkspaceCompanionTool(
                 finalText = response.optString("summary").ifBlank { result.summary },
             )
         }
-        val pending = PendingGmailSend(
-            to = response.optString("to"),
-            subject = response.optString("subject"),
-            body = response.optString("body"),
-        )
-        val token = PendingGmailSends.put(pending)
-        val question = buildString {
-            append("Send email?\n")
-            append("To: ${pending.to}\n")
-            append("Subject: ${pending.subject.ifBlank { "(no subject)" }}\n")
-            append("Body: ${pending.body.ifBlank { "(blank)" }}")
-        }.take(220)
+        val to = response.optString("to")
+        val subject = response.optString("subject")
+        val body = response.optString("body")
+        val question = "Email $to\nSubject: ${subject.ifBlank { "(none)" }}\n${body}"
+        val card = PendingActions.confirm(question, "Send") {
+            PendingOutcome(
+                when (val sent = gmailApiTools.sendMessage(to = to, subject = subject, body = body)) {
+                    is GoogleGmailResult.Success -> sent.summary
+                    is GoogleGmailResult.NeedsScope -> sent.summary
+                    is GoogleGmailResult.Rejected -> sent.reason
+                    is GoogleGmailResult.Failed -> sent.reason
+                },
+            )
+        }
         return CompanionToolExecution(
-            response = response
-                .put("confirmation", "required")
-                .put("gmail_send_token", token),
-            clarificationCard = ClarificationCard(
-                question = question,
-                context = "gmail_send_token=$token",
-                options = listOf("Send", "Cancel"),
-            ),
+            response = response.put("confirmation", "asking the user on the watch"),
+            clarificationCard = card,
         )
     }
 
@@ -348,12 +344,12 @@ class GoogleWorkspaceCompanionTool(
                     )
                     "needs_clarification" -> {
                         val contacts = response.optJSONArray("contacts") ?: JSONArray()
-                        val options = mutableListOf<PendingGmailRecipientOption>()
+                        val options = mutableListOf<RecipientOption>()
                         for (i in 0 until minOf(contacts.length(), 4)) {
                             val contact = contacts.optJSONObject(i) ?: continue
                             val email = contact.optString("email")
                             if (email.containsValidEmail()) {
-                                options += PendingGmailRecipientOption(
+                                options += RecipientOption(
                                     label = contact.optString("label").ifBlank { "${contact.optString("display_name")} | $email" },
                                     displayName = contact.optString("display_name"),
                                     email = email,
@@ -368,23 +364,22 @@ class GoogleWorkspaceCompanionTool(
                                 ),
                             )
                         }
-                        val token = PendingGmailRecipientChoices.put(
-                            PendingGmailRecipientChoice(
-                                originalQuery = to,
-                                subject = args.optString("subject"),
-                                body = args.optString("body"),
-                                options = options,
-                            ),
+                        val subject = args.optString("subject")
+                        val body = args.optString("body")
+                        val picker = PendingActions.offer(
+                            "Email which contact?",
+                            options.take(3).map { option ->
+                                PendingActions.Choice(option.label) {
+                                    val next = prepareGmailSend(
+                                        JSONObject().put("to", option.email).put("subject", subject).put("body", body),
+                                    )
+                                    PendingOutcome(next.finalText ?: next.response.optString("summary"), next.clarificationCard)
+                                }
+                            },
+                            cancelLabel = null,
                         )
                         GmailRecipientToolResolution.Execution(
-                            CompanionToolExecution(
-                                response = response.put("gmail_recipient_token", token),
-                                clarificationCard = ClarificationCard(
-                                    question = "Which contact?",
-                                    context = "gmail_recipient_token=$token",
-                                    options = options.map { it.label },
-                                ),
-                            ),
+                            CompanionToolExecution(response = response, clarificationCard = picker),
                         )
                     }
                     else -> GmailRecipientToolResolution.Execution(
@@ -416,6 +411,8 @@ class GoogleWorkspaceCompanionTool(
         }
     }
 }
+
+private data class RecipientOption(val label: String, val displayName: String, val email: String)
 
 private sealed interface GmailRecipientToolResolution {
     data class Resolved(val email: String) : GmailRecipientToolResolution

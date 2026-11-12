@@ -19,6 +19,10 @@ var location = require('../location');
 var reminders = require('./reminders');
 var package_json = require('package.json');
 var session = require('../session');
+var diagnostics = require('../agent/diagnostics');
+
+var REPORT_TURNS = 5;
+var MAX_ENCODED_BODY = 6000;
 
 function constructFeedbackMetadata(request) {
     var appVersion = 'unknown'
@@ -73,7 +77,8 @@ function constructFeedbackMetadata(request) {
         'watchPlatform': watchPlatform,
         'timelineToken': session.userToken,
         'assistantRuntime': config.getAssistantRuntime(),
-        'geminiModel': config.getGeminiModel()
+        'geminiModel': config.getGeminiModel(),
+        'lastTurnRuntimePath': diagnostics.lastPath()
     };
 }
 
@@ -90,12 +95,25 @@ function encodeQuery(params) {
 function metadataMarkdown(request) {
     var lines = ['## Device metadata'];
     Object.keys(request).sort().forEach(function(key) {
-        if (key === 'text' || key === 'thread_uuid') {
+        if (key === 'text' || key === 'thread_uuid' || key === 'diagnostics') {
             return;
         }
         lines.push('- ' + key + ': ' + request[key]);
     });
     return lines.join('\n');
+}
+
+// The issue body with the newest diagnostics that still fit the URL limit.
+function bodyWithDiagnostics(head, turns) {
+    var body = head;
+    for (var count = turns.length; count >= 0; count--) {
+        var lines = turns.slice(turns.length - count).map(diagnostics.formatTurn).join('\n');
+        body = head + (count > 0 ? '\n\n## Recent turns (newest last, no message text)\n' + lines : '');
+        if (encodeURIComponent(body).length <= MAX_ENCODED_BODY) {
+            return body;
+        }
+    }
+    return body.substring(0, 1500);
 }
 
 function githubIssueUrl(request, kind) {
@@ -108,6 +126,7 @@ function githubIssueUrl(request, kind) {
         body += 'Thread ID: `' + request.thread_uuid + '`\n\n';
     }
     body += metadataMarkdown(request);
+    body = bodyWithDiagnostics(body, request.diagnostics || []);
     return base + separator + encodeQuery({
         title: title,
         body: body,
@@ -152,6 +171,7 @@ function sendPostRequest(request, url, callback) {
 
 function sendRequest(request, kind, callback) {
     request.kind = kind;
+    request.diagnostics = diagnostics.recent(REPORT_TURNS);
     var postUrl = config.getFeedbackPostUrl();
     if (postUrl) {
         sendPostRequest(request, postUrl, callback);

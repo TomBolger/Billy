@@ -59,10 +59,10 @@ static void prv_window_load(Window* window) {
  scroll_layer_set_shadow_hidden(data->scroll_layer, true);
  scroll_layer_set_click_config_onto_window(data->scroll_layer, window);
  layer_add_child(root_layer, scroll_layer_get_layer(data->scroll_layer));
- data->text_layer = formatted_text_layer_create(GRect(5, 0, window_bounds.size.w - 10, 10000));
+ data->text_layer = formatted_text_layer_create(GRect(5 + ROUND_SIDE_INSET, ROUND_END_PAD, window_bounds.size.w - 10 - ROUND_SIDE_INSET * 2, 10000));
  formatted_text_layer_set_text(data->text_layer, data->legal_text);
  GSize text_size = formatted_text_layer_get_content_size(data->text_layer);
- scroll_layer_set_content_size(data->scroll_layer, GSize(window_bounds.size.w, text_size.h + 10));
+ scroll_layer_set_content_size(data->scroll_layer, GSize(window_bounds.size.w, text_size.h + 10 + ROUND_END_PAD * 2));
  scroll_layer_add_child(data->scroll_layer, formatted_text_layer_get_layer(data->text_layer));
 }
 

@@ -18,35 +18,38 @@
 var API_URL_ROOT = 'https://timeline-api.rebble.io/';
 
 function timelineRequest(pin, type, topics, apiKey, callback) {
-    // User or shared?
-    var url = API_URL_ROOT + 'v1/' + ((topics != null) ? 'shared/' : 'user/') + 'pins/' + pin.id;
-
-    // Create XHR
+    var finished = false;
     var xhr = new XMLHttpRequest();
-    xhr.onload = function () {
-        console.log('timeline: response received: ' + this.responseText);
-        if (callback) {
-            callback(this.responseText);
-        }
-    };
-    xhr.open(type, url);
-
-    // Set headers
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    if(topics != null) {
-        xhr.setRequestHeader('X-Pin-Topics', '' + topics.join(','));
-        xhr.setRequestHeader('X-API-Key', '' + apiKey);
+    var timer = setTimeout(function() {
+        finish(new Error('Timeline did not confirm the request. Check before retrying.'));
+        if (xhr.abort) { xhr.abort(); }
+    }, 8000);
+    function finish(error) {
+        if (finished) { return; }
+        finished = true;
+        clearTimeout(timer);
+        if (callback) { callback(error || null); }
     }
-
-    // Get token
+    xhr.onload = function() {
+        finish(xhr.status >= 200 && xhr.status < 300 ? null :
+            new Error('Timeline returned HTTP ' + xhr.status + '.'));
+    };
+    xhr.onerror = function() { finish(new Error('Could not reach Timeline.')); };
+    xhr.ontimeout = function() { finish(new Error('Timeline did not confirm the request.')); };
+    xhr.open(type, API_URL_ROOT + 'v1/' + (topics != null ? 'shared/' : 'user/') + 'pins/' + pin.id, true);
+    xhr.timeout = 8000;
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    if (topics != null) {
+        xhr.setRequestHeader('X-Pin-Topics', topics.join(','));
+        xhr.setRequestHeader('X-API-Key', apiKey);
+    }
     Pebble.getTimelineToken(function(token) {
-        // Add headers
-        xhr.setRequestHeader('X-User-Token', '' + token);
-
-        // Send
-        xhr.send(JSON.stringify(pin));
-        console.log('timeline: request sent.');
-    }, function(error) { console.log('timeline: error getting timeline token: ' + error); });
+        if (finished) { return; }
+        try {
+            xhr.setRequestHeader('X-User-Token', token);
+            xhr.send(JSON.stringify(pin));
+        } catch (e) { finish(e); }
+    }, function() { finish(new Error('Timeline authorization is unavailable.')); });
 }
 
 // Insert a pin into the timeline

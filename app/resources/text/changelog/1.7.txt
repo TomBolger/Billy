@@ -1,0 +1,9 @@
+# Billy 0.7
+## Model and thinking on the watch
+Pick the Gemini model and how hard it thinks under Settings, right on the watch. The model list matches what Google offers today.
+## Clearer problems
+When something goes wrong, Billy says what happened instead of quietly answering with fewer features, and you can report it from the menu.
+## Fewer pictures
+Pictures show up when you ask to see something, not on every answer.
+## Update Billy Companion
+On Android? Install Billy Companion 0.7 from github.com/TomBolger/Billy/releases. It installs over the old one and keeps your setup. From now on it tells you when there's a new version.

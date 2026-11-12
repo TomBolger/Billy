@@ -1,17 +1,55 @@
 package com.tombo.billyassistant.companion.agent
 
-import com.tombo.billyassistant.companion.agent.tools.ClarificationCard
+import android.os.SystemClock
 import com.tombo.billyassistant.companion.agent.tools.CompanionToolExecution
-import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
+import com.tombo.billyassistant.companion.agent.tools.WatchToolsCompanionTool
+import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
+import com.tombo.billyassistant.companion.diagnostics.DiagnosticsLog
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
-class GeminiClient {
+/**
+ * Gemini generateContent client and tool loop for Billy Companion.
+ *
+ * Rules that keep tool use reliable (mirrors app/src/pkjs/agent/gemini.js):
+ * - One API surface (generateContent). No fallback that flattens tool results into text.
+ * - Google Search + function declarations are sent together with
+ *   toolConfig.includeServerSideToolInvocations, which Gemini 3 requires.
+ * - One model per turn: the user's chosen one (or DEFAULT_MODEL). There is no
+ *   fallback model and no dropping of built-in tools: if Gemini rejects or fails
+ *   a request, the turn fails with a plain message (and a problem report), so a
+ *   bug gets reported instead of quietly getting a weaker answer.
+ * - Only these are retried: one re-ask on a completely empty answer, and one
+ *   retry of the same model after a connection-level failure or HTTP 503. Every
+ *   retry is written to DiagnosticsLog.
+ * - Model content is replayed untouched, all function responses of one step go
+ *   back in one user turn with their call ids.
+ * - A tool's finalText is a suggested reply, not an early exit, so the model can
+ *   chain further tools or recover from an error.
+ */
+class GeminiClient(
+    preferredModel: String? = null,
+    private val checkActive: () -> Unit = {},
+    thinkingLevel: String? = null,
+) {
+    /** How hard Gemini 3 thinks; chosen in the watch app (Settings, or Billy's settings page). */
+    private val thinkingLevel: String = thinkingLevel?.takeIf { it in THINKING_LEVELS } ?: DEFAULT_THINKING_LEVEL
+
+    val primaryModel: String = preferredModel?.trim()?.takeIf { it.startsWith("gemini-") } ?: DEFAULT_MODEL
+
+    // Per-turn context; a GeminiClient serves one watch request at a time.
+    private var turnContext: String = ""
+    private var turnLatLng: Pair<Double, Double>? = null
+
     fun describeConfiguration(apiKey: String): String {
         return if (apiKey.isBlank()) {
             "Gemini API key is not configured."
@@ -20,74 +58,17 @@ class GeminiClient {
         }
     }
 
-    fun createRequest(prompt: String, apiKey: String): GeminiRequestPlan {
-        if (prompt.isBlank()) {
-            return GeminiRequestPlan.Invalid("Prompt is blank.")
-        }
-        if (normalizeApiKey(apiKey).isBlank()) {
-            return GeminiRequestPlan.Invalid("Gemini API key is missing.")
-        }
-
-        return GeminiRequestPlan.Ready(
-            model = DEFAULT_MODEL,
-            prompt = prompt.trim(),
-        )
-    }
-
     fun testKey(apiKey: String): GeminiKeyTestResult {
-        val normalizedKey = normalizeApiKey(apiKey)
-        if (normalizedKey.isBlank()) {
+        val key = normalizeApiKey(apiKey)
+        if (key.isBlank()) {
             return GeminiKeyTestResult.Failed("Gemini API key is missing.")
         }
-
-        return try {
-            val connection = (URL(generateContentUrl(DEFAULT_MODEL)).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                doOutput = true
-                connectTimeout = 15_000
-                readTimeout = 30_000
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("x-goog-api-key", normalizedKey)
-            }
-            val body = JSONObject()
-                .put("contents", JSONArray().put(userTextContent("Reply with OK.")))
-                .put("generationConfig", JSONObject().put("candidateCount", 1).put("maxOutputTokens", 8))
-                .toString()
-            connection.outputStream.use { output ->
-                output.write(body.toByteArray(Charsets.UTF_8))
-            }
-
-            val responseCode = connection.responseCode
-            val responseText = (if (responseCode in 200..299) {
-                connection.inputStream
-            } else {
-                connection.errorStream
-            })?.bufferedReader()?.use { it.readText() }.orEmpty()
-
-            if (responseCode in 200..299) {
-                GeminiKeyTestResult.Passed("Gemini key works with $DEFAULT_MODEL.")
-            } else {
-                GeminiKeyTestResult.Failed(
-                    "Gemini returned HTTP $responseCode: ${extractErrorMessage(responseText)}",
-                )
-            }
-        } catch (e: Exception) {
-            GeminiKeyTestResult.Failed("Gemini key verification failed: ${e.message ?: e.javaClass.simpleName}")
-        }
-    }
-
-    fun generateText(prompt: String, apiKey: String): GeminiTextResult {
-        val result = generateWithTools(
-            prompt = prompt,
-            apiKey = apiKey,
-            toolDeclarations = JSONArray(),
-            toolExecutor = { name, _ ->
-                CompanionToolExecution(JSONObject().put("error", "Tool not available: $name"))
-            },
-        )
-        return when (result) {
-            is CompanionAgentResult.Passed -> GeminiTextResult.Passed(result.text)
-            is CompanionAgentResult.Failed -> GeminiTextResult.Failed(result.reason)
+        val body = JSONObject()
+            .put("contents", JSONArray().put(userText("Reply with OK.")))
+            .put("generationConfig", JSONObject().put("maxOutputTokens", 16))
+        return when (val result = post(key, primaryModel, body)) {
+            is HttpResult.Ok -> GeminiKeyTestResult.Passed("Gemini key works with $primaryModel.")
+            is HttpResult.Error -> GeminiKeyTestResult.Failed(result.message)
         }
     }
 
@@ -96,56 +77,52 @@ class GeminiClient {
         apiKey: String,
         candidates: List<GeminiImageCandidate>,
     ): GeminiImageChoice? {
-        val normalizedKey = normalizeApiKey(apiKey)
-        if (normalizedKey.isBlank() || candidates.isEmpty()) {
+        val key = normalizeApiKey(apiKey)
+        if (key.isBlank() || candidates.isEmpty()) {
             return null
         }
-        val parts = JSONArray()
-            .put(
-                JSONObject().put(
-                    "text",
-                    "Choose the single candidate photo that best matches this watch request: \"$prompt\". " +
-                        "Judge visible content first, then filename/folder/date only as weak hints. " +
-                        "If the request asks for a dog, choose a real dog, not a toy, doll, drawing, or person. " +
-                        "If the request asks for family, children, or a named person, choose real people, not toys or dolls. " +
-                        "If no candidate visibly matches, return confidence 0 instead of guessing. " +
-                        "Reply only as JSON like {\"index\":0,\"confidence\":85,\"reason\":\"short reason\"}.",
-                ),
-            )
+        val parts = JSONArray().put(
+            JSONObject().put(
+                "text",
+                "Choose the single candidate photo that best matches this watch request: \"$prompt\". " +
+                    "Judge visible content first, then filename/folder/date only as weak hints. " +
+                    "If the request asks for a dog, choose a real dog, not a toy, doll, drawing, or person. " +
+                    "If the request asks for family, children, or a named person, choose real people, not toys or dolls. " +
+                    "If no candidate visibly matches, return confidence 0 instead of guessing. " +
+                    "Reply only as JSON like {\"index\":0,\"confidence\":85,\"reason\":\"short reason\"}.",
+            ),
+        )
         candidates.forEach { candidate ->
             parts.put(JSONObject().put("text", "Candidate ${candidate.index}: ${candidate.label}"))
             parts.put(
                 JSONObject().put(
                     "inlineData",
-                    JSONObject()
-                        .put("mimeType", candidate.mimeType)
-                        .put("data", candidate.base64Data),
+                    JSONObject().put("mimeType", candidate.mimeType).put("data", candidate.base64Data),
                 ),
             )
         }
-        val response = generateContentWithContents(
-            apiKey = normalizedKey,
-            model = DEFAULT_MODEL,
-            contents = JSONArray().put(userContent(parts)),
-            toolDeclarations = JSONArray(),
-        )
-        if (response !is GeminiContentResult.Passed) {
-            return null
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
+            .put("generationConfig", generationConfig(primaryModel, forceJson = true))
+        val result = when (val http = post(key, primaryModel, body)) {
+            is HttpResult.Ok -> http
+            is HttpResult.Error -> {
+                // Not "no match": ranking itself failed, so make sure it shows up in the problem report.
+                DiagnosticsLog.problem("Gemini photo ranking failed: ${http.message}")
+                return null
+            }
         }
-        val text = extractResponseText(response.raw)
-        val json = runCatching { JSONObject(text) }.getOrNull()
-        val jsonIndex = json?.optInt("index", -1) ?: -1
-        if (jsonIndex >= 0 && candidates.any { it.index == jsonIndex }) {
+        val text = parseResponse(primaryModel, result.json).text
+        val json = runCatching { JSONObject(text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1)) }.getOrNull()
+        val index = json?.optInt("index", -1) ?: -1
+        if (index >= 0 && candidates.any { it.index == index }) {
             return GeminiImageChoice(
-                index = jsonIndex,
+                index = index,
                 confidence = json?.optInt("confidence", 50)?.coerceIn(0, 100) ?: 50,
                 reason = json?.optString("reason").orEmpty(),
             )
         }
-        val regexIndex = Regex("""\b(\d{1,2})\b""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
-        return regexIndex
-            ?.takeIf { index -> candidates.any { it.index == index } }
-            ?.let { index -> GeminiImageChoice(index = index, confidence = 45, reason = text.take(80)) }
+        return null
     }
 
     fun generateWithTools(
@@ -153,707 +130,536 @@ class GeminiClient {
         apiKey: String,
         toolDeclarations: JSONArray,
         toolExecutor: (String, JSONObject) -> CompanionToolExecution,
+        history: JSONArray = JSONArray(),
+        extraContext: String = "",
+        latitude: Double? = null,
+        longitude: Double? = null,
     ): CompanionAgentResult {
-        val normalizedKey = normalizeApiKey(apiKey)
-        if (normalizedKey.isBlank()) {
-            return CompanionAgentResult.Failed("Gemini API key is missing in the companion app.")
+        turnContext = extraContext
+        turnLatLng = if (latitude != null && longitude != null) latitude to longitude else null
+        val key = normalizeApiKey(apiKey)
+        if (key.isBlank()) {
+            return CompanionAgentResult.Failed("Gemini API key is missing in Billy Companion.")
         }
         if (prompt.isBlank()) {
             return CompanionAgentResult.Failed("Prompt is blank.")
         }
+        val contents = JSONArray()
+        for (i in 0 until history.length()) {
+            contents.put(history.get(i))
+        }
+        contents.put(userText(prompt.trim()))
 
-        val contents = JSONArray().put(
-            userTextContent(
-                localTimeInstruction() +
-                    " If this request uses relative dates or times, use that current date/time. User request: " +
-                    prompt.trim(),
-            ),
-        )
-        var pendingWatchImage: WatchImage? = null
-        var pendingWatchWeather: WatchWeatherCurrent? = null
-        repeat(MAX_TOOL_ITERATIONS) {
-            val response = generateStructuredBestEffort(normalizedKey, contents, toolDeclarations)
-            if (response is GeminiContentResult.Failed) {
-                return CompanionAgentResult.Failed(response.reason)
+        var watchImage: WatchImage? = null
+        var watchWeather: WatchWeatherCurrent? = null
+        var suggestedReply: String? = null
+        var nudgedLeak = false
+        val toolNames = (0 until toolDeclarations.length()).mapNotNull { toolDeclarations.optJSONObject(it)?.optString("name") }.toSet()
+        var lastOkSummary: String? = null
+        val executed = mutableMapOf<String, JSONObject>()
+
+        for (step in 0 until MAX_STEPS) {
+            checkActive()
+            val forceText = step == MAX_STEPS - 1
+            val parsed = when (val response = generateStep(key, primaryModel, contents, toolDeclarations, forceText)) {
+                is StepResult.Failed -> return CompanionAgentResult.Failed(response.reason)
+                is StepResult.Ok -> response.parsed
             }
-            response as GeminiContentResult.Passed
+            contents.put(parsed.modelContent)
 
-            val functionCalls = extractFunctionCalls(response.raw)
-            if (functionCalls.isEmpty()) {
-                val text = extractResponseText(response.raw).ifBlank {
-                    "I did not receive a usable answer."
+            val leaked = parsed.calls.isEmpty() && looksLikeLeakedToolCall(parsed.text, toolNames)
+            if (leaked && !nudgedLeak && !forceText) {
+                // The model wrote a tool request as text instead of calling it. Ask once more.
+                nudgedLeak = true
+                debugSink?.invoke("leaked tool call caught, retrying: ${parsed.text.take(300)}")
+                contents.put(userText("(Billy system note: your last reply came out as a raw tool request in text. Call the tool properly, or answer the user's question in plain words.)"))
+                continue
+            }
+            if (parsed.calls.isEmpty() || forceText) {
+                val clean = if (leaked) "" else parsed.text
+                val text = clean.ifBlank { suggestedReply ?: lastOkSummary.orEmpty() }
+                if (text.isBlank() && watchImage == null && watchWeather == null) {
+                    DiagnosticsLog.event("no usable text at step ${step + 1} (leakedToolCall=$leaked)")
+                    return CompanionAgentResult.Failed("Gemini ($primaryModel) finished without giving Billy any words to show.")
                 }
-                clarificationCardFromLeakedToolText(text)?.let { card ->
-                    return CompanionAgentResult.Passed(
-                        text = "",
-                        watchImage = pendingWatchImage,
-                        watchWeatherCurrent = pendingWatchWeather,
-                        clarificationCard = card,
-                    )
-                }
-                maybeClarificationCardFromText(text, prompt)?.let { card ->
-                    return CompanionAgentResult.Passed(
-                        text = "",
-                        watchImage = pendingWatchImage,
-                        watchWeatherCurrent = pendingWatchWeather,
-                        clarificationCard = card,
-                    )
-                }
-                return CompanionAgentResult.Passed(
-                    text = text,
-                    watchImage = pendingWatchImage,
-                    watchWeatherCurrent = pendingWatchWeather,
-                )
-            }
-            extractFirstCandidateContent(response.raw)?.let { modelContent ->
-                contents.put(modelContent.withRole("model"))
-            }
-            functionCalls.forEach { call ->
-                val result = toolExecutor(call.name, call.args)
-                result.watchImage?.let { pendingWatchImage = it }
-                result.watchWeatherCurrent?.let { pendingWatchWeather = it }
-                result.clarificationCard?.let {
-                    return CompanionAgentResult.Passed(
-                        text = "",
-                        watchImage = pendingWatchImage,
-                        watchWeatherCurrent = pendingWatchWeather,
-                        clarificationCard = it,
-                    )
-                }
-                contents.put(functionResponseContent(call.name, result.response))
-                if (result.followUpParts.length() > 0) {
-                    contents.put(
-                        userContent(
-                            JSONArray()
-                                .put(JSONObject().put("text", "Use the tool result and attached data to answer the user's watch request. Be concrete and do not answer with only a count."))
-                                .appendAll(result.followUpParts),
-                        ),
-                    )
-                }
-                result.finalText?.let {
-                    return CompanionAgentResult.Passed(
-                        text = it,
-                        watchImage = pendingWatchImage,
-                        watchWeatherCurrent = pendingWatchWeather,
-                    )
-                }
-            }
-        }
-
-        return CompanionAgentResult.Failed("I used too many tool steps and stopped before finishing.")
-    }
-
-    private fun clarificationCardFromLeakedToolText(text: String): ClarificationCard? {
-        val compact = text.lowercase().replace(Regex("[^a-z0-9]"), "")
-        if (!compact.contains("askclarifyingquestion")) {
-            return null
-        }
-        val question = Regex("""question\s*=\s*["']([^"']{1,160})["']""", RegexOption.IGNORE_CASE)
-            .find(text)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.trim()
-            ?: return null
-        val optionsText = Regex("""options\s*=\s*\[([\s\S]{1,400}?)]""", RegexOption.IGNORE_CASE)
-            .find(text)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?: return null
-        val options = Regex("""["']([^"']{1,64})["']""")
-            .findAll(optionsText)
-            .map { it.groupValues[1].trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .take(3)
-            .toList()
-        if (options.isEmpty()) {
-            return null
-        }
-        return ClarificationCard(
-            question = question.take(120),
-            context = "",
-            options = options,
-        )
-    }
-
-    private fun maybeClarificationCardFromText(text: String, prompt: String): ClarificationCard? {
-        val normalized = text.trim()
-        if (normalized.isBlank()) {
-            return null
-        }
-        val question = extractUserFacingQuestion(normalized) ?: return null
-        val optionLines = normalized
-            .lineSequence()
-            .map { it.trim() }
-            .mapNotNull { line ->
-                Regex("""^(?:[-*+•‣◦]|\d+[.)]|[A-Da-d][.)])\s+(.+)$""").find(line)?.groupValues?.getOrNull(1)?.trim()
-            }
-            .map { it.trim().trimEnd('.') }
-            .filter { it.isNotBlank() }
-            .map { it.take(64) }
-            .distinct()
-            .take(3)
-            .toList()
-        val options = when {
-            optionLines.size >= 2 -> optionLines
-            question.lowercase().contains("direction") ||
-                question.lowercase().contains("navigate") ||
-                question.lowercase().contains("map") -> listOf("Directions", "Not now")
-            question.lowercase().startsWith("do ") ||
-                question.lowercase().startsWith("would ") ||
-                question.lowercase().startsWith("should ") ||
-                question.lowercase().startsWith("can ") -> listOf("Yes", "No")
-            else -> optionLines
-        }
-        return ClarificationCard(
-            question = question,
-            context = prompt.trim().take(180),
-            options = options,
-        )
-    }
-
-    private fun extractUserFacingQuestion(text: String): String? {
-        val lines = text.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
-        val questionLine = lines.filter { it.contains("?") }.lastOrNull()
-            ?: lines.lastOrNull { line ->
-                Regex("""\b(do you want|would you like|want me to|should i|can i|need directions|ask for directions)\b""", RegexOption.IGNORE_CASE)
-                    .containsMatchIn(line)
-            }
-            ?: return null
-        val question = if (questionLine.contains("?")) {
-            questionLine.substringBeforeLast("?").trim().plus("?")
-        } else {
-            questionLine.trim().trimEnd('.', ':').plus("?")
-        }.take(120)
-        val lower = question.lowercase()
-        val directQuestion = listOf(
-            "which ",
-            "what ",
-            "when ",
-            "where ",
-            "who ",
-            "how ",
-            "do you ",
-            "would you ",
-            "should i ",
-            "could you ",
-            "can you ",
-            "please clarify",
-            "clarify",
-            "choose ",
-            "select ",
-            "want ",
-            "need ",
-        ).any { it in lower }
-        return if (directQuestion || text.trimEnd().endsWith("?")) question else null
-    }
-
-    private fun generateStructuredBestEffort(
-        apiKey: String,
-        contents: JSONArray,
-        toolDeclarations: JSONArray,
-    ): GeminiContentResult {
-        var lastFailure: GeminiContentResult.Failed? = null
-        MODEL_CANDIDATES.forEach { model ->
-            val content = generateContentWithContents(apiKey, model, contents, toolDeclarations)
-            if (content is GeminiContentResult.Passed && content.isUsable()) {
-                return content
-            }
-            if (content is GeminiContentResult.Failed) {
-                lastFailure = content
-                if (!shouldTryNextModel(content.reason)) {
-                    return content
-                }
-            } else {
-                lastFailure = GeminiContentResult.Failed("Gemini returned an empty answer.")
-            }
-        }
-        return lastFailure ?: GeminiContentResult.Failed("Gemini returned an empty answer.")
-    }
-
-    private fun generateBestEffort(
-        apiKey: String,
-        input: String,
-        toolDeclarations: JSONArray,
-    ): GeminiContentResult {
-        return generateBestEffort(apiKey, JSONArray().put(JSONObject().put("text", input)), input, toolDeclarations)
-    }
-
-    private fun generateBestEffort(
-        apiKey: String,
-        inputParts: JSONArray,
-        textFallback: String,
-        toolDeclarations: JSONArray,
-    ): GeminiContentResult {
-        var lastFailure: GeminiContentResult.Failed? = null
-        val canUseInteractionFallback = !inputParts.hasInlineData()
-        MODEL_CANDIDATES.forEach { model ->
-            val content = generateContent(apiKey, model, inputParts, toolDeclarations)
-            if (content is GeminiContentResult.Passed && content.isUsable()) {
-                return content
-            }
-            if (content is GeminiContentResult.Failed) {
-                lastFailure = content
-                if (canUseInteractionFallback && shouldTryInteractionFallback(content.reason)) {
-                    val interaction = generateInteraction(apiKey, model, textFallback, toolDeclarations)
-                    if (interaction is GeminiContentResult.Passed && interaction.isUsable()) {
-                        return interaction
-                    }
-                    if (interaction is GeminiContentResult.Failed) {
-                        lastFailure = interaction
-                    }
-                }
-                if (!shouldTryNextModel(content.reason) && !shouldTryInteractionFallback(content.reason)) {
-                    return content
-                }
-            } else {
-                lastFailure = GeminiContentResult.Failed("Gemini returned an empty answer.")
-            }
-        }
-        return lastFailure ?: GeminiContentResult.Failed("Gemini returned an empty answer.")
-    }
-
-    private fun generateInteraction(
-        apiKey: String,
-        model: String,
-        input: String,
-        toolDeclarations: JSONArray,
-    ): GeminiContentResult {
-        val first = postInteraction(apiKey, model, input, toolDeclarations)
-        return if (first is GeminiContentResult.Failed && shouldRetryInteractionWithContentList(first.reason)) {
-            postInteraction(apiKey, model, interactionInput(input), toolDeclarations)
-        } else {
-            first
-        }
-    }
-
-    private fun postInteraction(
-        apiKey: String,
-        model: String,
-        input: Any,
-        toolDeclarations: JSONArray,
-    ): GeminiContentResult {
-        return try {
-            val connection = (URL(INTERACTIONS_URL).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                doOutput = true
-                connectTimeout = REQUEST_TIMEOUT_MS
-                readTimeout = REQUEST_TIMEOUT_MS
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("x-goog-api-key", apiKey)
-            }
-            val body = JSONObject()
-                .put("model", model)
-                .put("input", input)
-                .put("system_instruction", SYSTEM_INSTRUCTION + " " + localTimeInstruction())
-            val tools = interactionTools(toolDeclarations)
-            if (toolDeclarations.length() > 0) {
-                body.put("tools", tools)
-            }
-            connection.outputStream.use { output ->
-                output.write(body.toString().toByteArray(Charsets.UTF_8))
+                return CompanionAgentResult.Passed(text = text, watchImage = watchImage, watchWeatherCurrent = watchWeather)
             }
 
-            val responseCode = connection.responseCode
-            val responseText = (if (responseCode in 200..299) {
-                connection.inputStream
-            } else {
-                connection.errorStream
-            })?.bufferedReader()?.use { it.readText() }.orEmpty()
-
-            if (responseCode in 200..299) {
-                GeminiContentResult.Passed(responseText)
-            } else {
-                GeminiContentResult.Failed(
-                    "Gemini returned HTTP $responseCode: ${extractErrorMessage(responseText)}",
-                )
-            }
-        } catch (e: Exception) {
-            GeminiContentResult.Failed("Gemini request failed: ${e.message ?: e.javaClass.simpleName}")
-        }
-    }
-
-    private fun generateContent(
-        apiKey: String,
-        model: String,
-        inputParts: JSONArray,
-        toolDeclarations: JSONArray,
-    ): GeminiContentResult {
-        return generateContentWithContents(
-            apiKey = apiKey,
-            model = model,
-            contents = JSONArray().put(userContent(inputParts)),
-            toolDeclarations = toolDeclarations,
-        )
-    }
-
-    private fun generateContentWithContents(
-        apiKey: String,
-        model: String,
-        contents: JSONArray,
-        toolDeclarations: JSONArray,
-    ): GeminiContentResult {
-        return try {
-            val connection = (URL(generateContentUrl(model)).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                doOutput = true
-                connectTimeout = REQUEST_TIMEOUT_MS
-                readTimeout = REQUEST_TIMEOUT_MS
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("x-goog-api-key", apiKey)
-            }
-            val body = JSONObject()
-                .put("systemInstruction", systemInstruction())
-                .put("contents", contents)
-                .put(
-                    "generationConfig",
-                    JSONObject()
-                        .put("candidateCount", 1)
-                        .put("maxOutputTokens", MAX_OUTPUT_TOKENS),
-                )
-            if (toolDeclarations.length() > 0) {
-                body.put(
-                    "tools",
-                    JSONArray().put(JSONObject().put("function_declarations", toolDeclarations)),
-                )
-            }
-            connection.outputStream.use { output ->
-                output.write(body.toString().toByteArray(Charsets.UTF_8))
-            }
-
-            val responseCode = connection.responseCode
-            val responseText = (if (responseCode in 200..299) {
-                connection.inputStream
-            } else {
-                connection.errorStream
-            })?.bufferedReader()?.use { it.readText() }.orEmpty()
-
-            if (responseCode in 200..299) {
-                GeminiContentResult.Passed(responseText)
-            } else {
-                GeminiContentResult.Failed(
-                    "Gemini returned HTTP $responseCode: ${extractErrorMessage(responseText)}",
-                )
-            }
-        } catch (e: Exception) {
-            GeminiContentResult.Failed("Gemini request failed: ${e.message ?: e.javaClass.simpleName}")
-        }
-    }
-
-    private fun interactionTools(toolDeclarations: JSONArray): JSONArray {
-        val tools = JSONArray()
-        for (i in 0 until toolDeclarations.length()) {
-            val declaration = toolDeclarations.optJSONObject(i) ?: continue
-            tools.put(JSONObject(declaration.toString()).put("type", "function"))
-        }
-        return tools
-    }
-
-    private fun interactionInput(text: String): JSONArray {
-        return JSONArray().put(
-            JSONObject()
-                .put("type", "text")
-                .put("text", text),
-        )
-    }
-
-    private fun extractErrorMessage(responseText: String): String {
-        if (responseText.isBlank()) {
-            return "empty error response"
-        }
-        val message = try {
-            val message = JSONObject(responseText)
-                .optJSONObject("error")
-                ?.optString("message")
-                .orEmpty()
-            message.ifBlank { responseText }
-        } catch (_: Exception) {
-            responseText
-        }
-        if (
-            message.contains("generativelanguage.googleapis.com", ignoreCase = true) &&
-            message.contains("blocked", ignoreCase = true)
-        ) {
-            return "Gemini API key is blocked. Enable the Gemini API and allow generativelanguage.googleapis.com. If restricted to Android apps, use Billy Companion package/SHA."
-                .take(MAX_ERROR_LENGTH)
-        }
-        if (message.contains("invalid authentication credentials", ignoreCase = true)) {
-            return "Gemini did not accept this value as an API key. Use a Gemini API key from Google AI Studio, not an OAuth client ID, client secret, or access token."
-                .take(MAX_ERROR_LENGTH)
-        }
-        return message.take(MAX_ERROR_LENGTH)
-    }
-
-    private fun extractResponseText(responseText: String): String {
-        return try {
-            val root = JSONObject(responseText)
-            root.optString("output_text").takeIf { it.isNotBlank() }?.let { return it }
-            val output = root.optJSONArray("output")
-            if (output != null) {
-                buildString {
-                    for (i in 0 until output.length()) {
-                        append(output.optJSONObject(i)?.optString("text").orEmpty())
-                    }
-                }.takeIf { it.isNotBlank() }?.let { return it }
-            }
-            val steps = root.optJSONArray("steps")
-            if (steps != null) {
-                buildString {
-                    for (i in 0 until steps.length()) {
-                        val step = steps.optJSONObject(i) ?: continue
-                        val modelOutput = step.optJSONObject("model_output")
-                            ?: step.optJSONObject("modelOutput")
-                            ?: if (step.optString("type") == "model_output") step else null
-                        val content = modelOutput?.optJSONArray("content") ?: continue
-                        for (j in 0 until content.length()) {
-                            append(content.optJSONObject(j)?.optString("text").orEmpty())
-                        }
-                    }
-                }.takeIf { it.isNotBlank() }?.let { return it }
-            }
-            val candidates = root.optJSONArray("candidates")
-            val parts = candidates
-                ?.optJSONObject(0)
-                ?.optJSONObject("content")
-                ?.optJSONArray("parts")
-            buildString {
-                if (parts != null) {
-                    for (i in 0 until parts.length()) {
-                        append(parts.optJSONObject(i)?.optString("text").orEmpty())
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            ""
-        }
-    }
-
-    private fun extractFunctionCalls(responseText: String): List<GeminiFunctionCall> {
-        return try {
-            val root = JSONObject(responseText)
-            val stepCalls = extractStepFunctionCalls(root)
-            if (stepCalls.isNotEmpty()) {
-                return stepCalls
-            }
-            val parts = root
-                .optJSONArray("candidates")
-                ?.optJSONObject(0)
-                ?.optJSONObject("content")
-                ?.optJSONArray("parts")
-                ?: return emptyList()
-            buildList {
-                for (i in 0 until parts.length()) {
-                    val functionCall = parts.optJSONObject(i)?.optJSONObject("functionCall") ?: continue
-                    add(
-                        GeminiFunctionCall(
-                            name = functionCall.optString("name"),
-                            args = functionCall.optJSONObject("args") ?: JSONObject(),
-                        ),
-                    )
-                }
-            }
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
-    private fun extractStepFunctionCalls(root: JSONObject): List<GeminiFunctionCall> {
-        val steps = root.optJSONArray("steps") ?: return emptyList()
-        return buildList {
-            for (i in 0 until steps.length()) {
-                val step = steps.optJSONObject(i) ?: continue
-                val functionCall = step.optJSONObject("function_call")
-                    ?: step.optJSONObject("functionCall")
-                    ?: step.takeIf { it.optString("type") == "function_call" }
-                    ?: continue
-                val name = functionCall.optString("name")
-                if (name.isBlank()) {
-                    continue
-                }
-                add(
-                    GeminiFunctionCall(
-                        name = name,
-                        args = functionCall.optJSONObject("arguments")
-                            ?: functionCall.optJSONObject("args")
-                            ?: JSONObject(),
-                    ),
-                )
-            }
-        }
-    }
-
-    private fun extractFirstCandidateContent(responseText: String): JSONObject? {
-        return try {
-            JSONObject(responseText)
-                .optJSONArray("candidates")
-                ?.optJSONObject(0)
-                ?.optJSONObject("content")
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun systemInstruction(): JSONObject {
-        return JSONObject().put(
-            "parts",
-            JSONArray().put(JSONObject().put("text", SYSTEM_INSTRUCTION + " " + localTimeInstruction())),
-        )
-    }
-
-    private fun localTimeInstruction(): String {
-        val now = ZonedDateTime.now()
-        return "The Android phone local time is ${DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(now)}. " +
-            "The Android timezone is ${now.zone.id}. Interpret relative dates using this timezone unless the user explicitly names another timezone."
-    }
-
-    private fun userTextContent(text: String): JSONObject {
-        return userContent(JSONArray().put(JSONObject().put("text", text)))
-    }
-
-    private fun userContent(parts: JSONArray): JSONObject {
-        return JSONObject()
-            .put("role", "user")
-            .put("parts", parts)
-    }
-
-    private fun functionResponseContent(name: String, result: JSONObject): JSONObject {
-        return JSONObject()
-            .put("role", "user")
-            .put(
-                "parts",
-                JSONArray().put(
-                    JSONObject().put(
-                        "functionResponse",
+            val responseParts = JSONArray()
+            val extraParts = JSONArray()
+            for (call in parsed.calls) {
+                checkActive()
+                val dedupeKey = call.name + ":" + call.args.toString()
+                val previous = executed[dedupeKey]
+                val execution = if (previous != null && call.name in MUTATING_TOOLS) {
+                    CompanionToolExecution(
                         JSONObject()
-                            .put("name", name)
-                            .put("response", result),
-                    ),
-                ),
-            )
-    }
-
-    private fun JSONObject.withRole(role: String): JSONObject {
-        val copy = JSONObject(toString())
-        if (copy.optString("role").isBlank()) {
-            copy.put("role", role)
+                            .put("status", previous.optString("status", "ok"))
+                            .put("summary", "Already done earlier in this turn; not repeated."),
+                    )
+                } else {
+                    val toolStartedAt = System.currentTimeMillis()
+                    val ran = runCatching { toolExecutor(call.name, call.args) }
+                    val toolMs = System.currentTimeMillis() - toolStartedAt
+                    debugSink?.invoke("TIMING tool ${call.name}: $toolMs ms")
+                    DiagnosticsLog.addTool(call.name, toolMs, ran.getOrNull()?.response?.optString("status", "ok") ?: "crashed")
+                    ran.getOrElse { e ->
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        CompanionToolExecution(
+                            JSONObject().put("status", "error").put("summary", "Tool ${call.name} crashed: ${e.message ?: e.javaClass.simpleName}"),
+                        )
+                    }
+                }
+                if (call.name in MUTATING_TOOLS) {
+                    executed[dedupeKey] = execution.response
+                }
+                execution.watchImage?.let { watchImage = it }
+                execution.watchWeatherCurrent?.let { watchWeather = it }
+                execution.clarificationCard?.let { card ->
+                    return CompanionAgentResult.Passed(
+                        text = "",
+                        watchImage = watchImage,
+                        watchWeatherCurrent = watchWeather,
+                        clarificationCard = card,
+                    )
+                }
+                val toolResponse = JSONObject(execution.response.toString())
+                val ok = toolResponse.optString("status", "ok").equals("ok", ignoreCase = true)
+                execution.finalText?.takeIf { it.isNotBlank() }?.let { finalText ->
+                    toolResponse.put("suggested_watch_reply", finalText)
+                    if (ok) suggestedReply = finalText
+                }
+                if (ok) {
+                    toolResponse.optString("summary").takeIf { it.isNotBlank() }?.let { lastOkSummary = it }
+                }
+                if (execution.watchImage != null || execution.watchWeatherCurrent != null) {
+                    toolResponse.put("watch_card", "A card is already shown on the watch; add context, do not repeat it.")
+                }
+                val functionResponse = JSONObject()
+                    .put("name", call.name)
+                    .put("response", toolResponse)
+                call.id?.let { functionResponse.put("id", it) }
+                responseParts.put(JSONObject().put("functionResponse", functionResponse))
+                for (i in 0 until execution.followUpParts.length()) {
+                    extraParts.put(execution.followUpParts.get(i))
+                }
+            }
+            if (extraParts.length() > 0) {
+                responseParts.put(JSONObject().put("text", "Attached data for the tool results above. Use it to answer concretely."))
+                for (i in 0 until extraParts.length()) {
+                    responseParts.put(extraParts.get(i))
+                }
+            }
+            contents.put(JSONObject().put("role", "user").put("parts", responseParts))
         }
-        return copy
+        return CompanionAgentResult.Failed("Billy ran out of steps. Please try a simpler request.")
     }
 
-    private fun JSONArray.appendAll(items: JSONArray): JSONArray {
-        for (i in 0 until items.length()) {
-            put(items.get(i))
-        }
-        return this
-    }
-
-    private fun JSONArray.hasInlineData(): Boolean {
-        for (i in 0 until length()) {
-            val item = optJSONObject(i) ?: continue
-            if (item.has("inlineData") || item.has("inline_data")) {
-                return true
+    /**
+     * One generateContent call on [model] with the full tool set. Retries only:
+     * a completely empty answer (once), and a connection-level failure or HTTP 503
+     * (once, same model). Everything else fails with a plain message.
+     */
+    private fun generateStep(
+        apiKey: String,
+        model: String,
+        contents: JSONArray,
+        declarations: JSONArray,
+        forceText: Boolean,
+    ): StepResult {
+        var emptyRetried = false
+        var connectionRetried = false
+        var isRetry = false
+        while (true) {
+            checkActive()
+            val body = buildBody(model, contents, declarations, forceText)
+            when (val http = post(apiKey, model, body, isRetry)) {
+                is HttpResult.Ok -> {
+                    val parsed = parseResponse(model, http.json)
+                    if (parsed.calls.isEmpty() && parsed.text.isBlank()) {
+                        val why = http.emptyReason
+                        if (!emptyRetried) {
+                            emptyRetried = true
+                            isRetry = true
+                            DiagnosticsLog.event("empty answer from $model ($why); asking once more")
+                            continue
+                        }
+                        return StepResult.Failed("Gemini ($model) sent an empty answer twice ($why).")
+                    }
+                    return StepResult.Ok(parsed)
+                }
+                is HttpResult.Error -> {
+                    if (http.retryable && !connectionRetried) {
+                        connectionRetried = true
+                        isRetry = true
+                        DiagnosticsLog.event("retrying $model once after ${http.detail}")
+                        Thread.sleep(RETRY_DELAY_MS)
+                        continue
+                    }
+                    return StepResult.Failed(http.message)
+                }
             }
         }
-        return false
     }
 
-    private fun normalizeApiKey(apiKey: String): String {
-        return apiKey.filterNot { it.isWhitespace() }
+    private fun buildBody(
+        model: String,
+        contents: JSONArray,
+        declarations: JSONArray,
+        forceText: Boolean,
+    ): JSONObject {
+        val body = JSONObject()
+            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction()))))
+            .put("contents", contents)
+            .put("generationConfig", generationConfig(model, forceJson = false))
+        val tools = JSONArray()
+        // Search + function calling together needs Gemini 3. The built-in tools are always sent in full.
+        val builtIns = declarations.length() == 0 || isGemini3(model)
+        val search = builtIns
+        val extras = builtIns && declarations.length() > 0
+        if (search) {
+            tools.put(JSONObject().put("googleSearch", JSONObject()))
+        }
+        if (extras) {
+            tools.put(JSONObject().put("googleMaps", JSONObject()))
+            // Google refuses Maps together with code execution, so code execution is left out.
+            tools.put(JSONObject().put("urlContext", JSONObject()))
+        }
+        if (declarations.length() > 0) {
+            tools.put(JSONObject().put("functionDeclarations", declarations))
+        }
+        if (tools.length() > 0) {
+            body.put("tools", tools)
+        }
+        val toolConfig = JSONObject()
+        if (search && declarations.length() > 0) {
+            toolConfig.put("includeServerSideToolInvocations", true)
+        }
+        val latLng = turnLatLng
+        if (extras && latLng != null) {
+            toolConfig.put(
+                "retrievalConfig",
+                JSONObject().put("latLng", JSONObject().put("latitude", latLng.first).put("longitude", latLng.second)),
+            )
+        }
+        if (forceText && declarations.length() > 0) {
+            toolConfig.put("functionCallingConfig", JSONObject().put("mode", "NONE"))
+        }
+        if (toolConfig.length() > 0) {
+            body.put("toolConfig", toolConfig)
+        }
+        return body
     }
 
-    private fun GeminiContentResult.Passed.isUsable(): Boolean {
-        return extractResponseText(raw).isNotBlank() || extractFunctionCalls(raw).isNotEmpty()
+    private fun generationConfig(model: String, forceJson: Boolean): JSONObject {
+        val config = JSONObject()
+            .put("candidateCount", 1)
+            .put("maxOutputTokens", MAX_OUTPUT_TOKENS)
+        if (isGemini3(model)) {
+            config.put("thinkingConfig", JSONObject().put("thinkingLevel", thinkingLevel))
+        }
+        if (forceJson) {
+            config.put("responseMimeType", "application/json")
+        }
+        return config
     }
 
-    private fun shouldRetryInteractionWithContentList(reason: String): Boolean {
-        val text = reason.lowercase()
-        return "400" in text &&
-            ("input" in text || "top-level" in text || "top level" in text || "list" in text)
+    /** One timed, diagnosed HTTP call. Written to the TIMING debug line and to DiagnosticsLog. */
+    private fun post(apiKey: String, model: String, body: JSONObject, isRetry: Boolean = false): HttpResult {
+        val startedAt = SystemClock.elapsedRealtime()
+        val call = JSONObject()
+            .put("model", model)
+            .put("retry", isRetry)
+            .put("start", DiagnosticsLog.deviceState())
+        val result = postTimed(apiKey, model, body, call)
+        call.put("totalMs", SystemClock.elapsedRealtime() - startedAt)
+        call.put("end", DiagnosticsLog.deviceState())
+        DiagnosticsLog.addCall(call)
+        val outcome = when (result) {
+            is HttpResult.Ok -> "ok"
+            is HttpResult.Error -> "error ${result.code} ${result.detail.take(40)}"
+        }
+        debugSink?.invoke(
+            "TIMING model call $model: ${call.optLong("totalMs")} ms ($outcome) " +
+                "[connect ${call.optLong("connectMs", -1)} ms, ttfb ${call.optLong("ttfbMs", -1)} ms, body ${call.optLong("bodyMs", -1)} ms]",
+        )
+        return result
     }
 
-    private fun shouldTryInteractionFallback(reason: String): Boolean {
-        val text = reason.lowercase()
-        return "400" in text &&
-            ("tool" in text || "function" in text || "input" in text || "top-level" in text || "top level" in text || "list" in text || "unsupported" in text)
+    /**
+     * The request, split into connect / send / wait-for-headers / read-body so a stall
+     * can be pinned on a phase. Fills [call] with the numbers as it goes.
+     */
+    private fun postTimed(apiKey: String, model: String, body: JSONObject, call: JSONObject): HttpResult {
+        val bytes = body.toString().toByteArray(Charsets.UTF_8)
+        call.put("reqBytes", bytes.size)
+        var phase = "connect"
+        var connection: HttpURLConnection? = null
+        try {
+            val conn = URL("$BASE_URL$model:generateContent").openConnection() as HttpURLConnection
+            connection = conn
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.connectTimeout = CONNECT_TIMEOUT_MS
+            conn.readTimeout = READ_TIMEOUT_MS
+            // Streaming mode makes the body go out on write, so "send" and "wait" are separate.
+            conn.setFixedLengthStreamingMode(bytes.size)
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("x-goog-api-key", apiKey)
+
+            val t0 = SystemClock.elapsedRealtime()
+            conn.connect()
+            val t1 = SystemClock.elapsedRealtime()
+            call.put("connectMs", t1 - t0)
+            phase = "send"
+            conn.outputStream.use { it.write(bytes) }
+            val t2 = SystemClock.elapsedRealtime()
+            call.put("sendMs", t2 - t1)
+            phase = "wait"
+            val code = conn.responseCode
+            val t3 = SystemClock.elapsedRealtime()
+            call.put("ttfbMs", t3 - t2)
+            call.put("code", code)
+            phase = "read"
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()?.use { it.readText() }.orEmpty()
+            call.put("bodyMs", SystemClock.elapsedRealtime() - t3)
+            call.put("respBytes", text.toByteArray(Charsets.UTF_8).size)
+            if (code !in 200..299) {
+                val message = friendlyError(code, text, model)
+                call.put("error", message.take(200))
+                return HttpResult.Error(code, message, "HTTP $code", retryable = code == 503)
+            }
+            debugSink?.invoke("model $model reply: ${text.take(6000)}")
+            val root = try {
+                JSONObject(text)
+            } catch (e: Exception) {
+                val message = "Gemini ($model) sent a reply Billy couldn't read."
+                call.put("error", message)
+                return HttpResult.Error(code, message, "unreadable reply", retryable = false)
+            }
+            val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
+            val finishReason = candidate?.optString("finishReason").orEmpty()
+            val blockReason = root.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()
+            call.put("finishReason", finishReason)
+            if (blockReason.isNotBlank()) call.put("blockReason", blockReason)
+            root.optJSONObject("usageMetadata")?.let { usage ->
+                call.put("promptTokens", usage.optInt("promptTokenCount", -1))
+                call.put("thoughtsTokens", usage.optInt("thoughtsTokenCount", 0))
+                call.put("candidatesTokens", usage.optInt("candidatesTokenCount", 0))
+                call.put("totalTokens", usage.optInt("totalTokenCount", -1))
+            }
+            val emptyReason = when {
+                blockReason.isNotBlank() -> "blocked: $blockReason"
+                finishReason.isNotBlank() -> "finishReason $finishReason"
+                else -> "no reason given"
+            }
+            return HttpResult.Ok(root, emptyReason)
+        } catch (e: SocketTimeoutException) {
+            val message = when (phase) {
+                "connect" -> "Phone couldn't connect to Gemini within ${CONNECT_TIMEOUT_MS / 1000} seconds."
+                "read" -> "Gemini ($model) stopped sending its answer partway through (${READ_TIMEOUT_MS / 1000} seconds with no data)."
+                else -> "Gemini ($model) didn't respond within ${READ_TIMEOUT_MS / 1000} seconds."
+            }
+            call.put("error", "timeout in $phase phase")
+            return HttpResult.Error(0, message, "timeout in $phase phase", retryable = false)
+        } catch (e: Exception) {
+            val detail = "${e.javaClass.simpleName}: ${e.message.orEmpty()}".take(120)
+            call.put("error", "$detail ($phase phase)")
+            val connectionLevel = e is UnknownHostException || e is ConnectException || e is SocketException ||
+                listOf("reset", "refused", "broken pipe").any { it in e.message.orEmpty().lowercase() }
+            val message = when {
+                DiagnosticsLog.isOffline() -> "Phone has no internet connection."
+                e is UnknownHostException -> "Phone couldn't look up Gemini's address. Its internet connection may be down."
+                connectionLevel -> "The connection to Gemini dropped (${e.message.orEmpty().take(60).ifBlank { e.javaClass.simpleName }})."
+                else -> "Billy couldn't reach Gemini (${e.message.orEmpty().take(60).ifBlank { e.javaClass.simpleName }})."
+            }
+            return HttpResult.Error(0, message, detail, retryable = connectionLevel)
+        } finally {
+            runCatching { connection?.disconnect() }
+        }
     }
 
-    private fun shouldTryNextModel(reason: String): Boolean {
-        val text = reason.lowercase()
-        return "429" in text ||
-            "500" in text ||
-            "502" in text ||
-            "503" in text ||
-            "empty answer" in text ||
-            "api_error" in text ||
-            "high demand" in text ||
-            "overloaded" in text ||
-            "unavailable" in text ||
-            "timed out" in text ||
-            "timeout" in text
+    private fun parseResponse(model: String, root: JSONObject): ParsedResponse {
+        val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
+        val content = candidate?.optJSONObject("content") ?: JSONObject().put("parts", JSONArray())
+        if (content.optString("role").isBlank()) {
+            content.put("role", "model")
+        }
+        val parts = content.optJSONArray("parts") ?: JSONArray()
+        val text = StringBuilder()
+        val calls = mutableListOf<GeminiFunctionCall>()
+        for (i in 0 until parts.length()) {
+            val part = parts.optJSONObject(i) ?: continue
+            if (part.optBoolean("thought", false)) continue
+            val functionCall = part.optJSONObject("functionCall")
+            if (functionCall != null) {
+                val args = functionCall.optJSONObject("args")
+                    ?: functionCall.optString("args").takeIf { it.isNotBlank() }?.let { runCatching { JSONObject(it) }.getOrNull() }
+                    ?: JSONObject()
+                calls.add(
+                    GeminiFunctionCall(
+                        id = functionCall.optString("id").takeIf { it.isNotBlank() },
+                        name = functionCall.optString("name"),
+                        args = args,
+                    ),
+                )
+            } else if (part.has("text")) {
+                text.append(part.optString("text"))
+            }
+        }
+        return ParsedResponse(model, text.toString().trim(), calls, content)
     }
 
-    private fun generateContentUrl(model: String): String {
-        return "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
+    private fun systemInstruction(): String {
+        val now = ZonedDateTime.now()
+        return SYSTEM_INSTRUCTION +
+            "\n\nCONTEXT\n- Now: ${now.dayOfWeek.name.lowercase().replaceFirstChar { it.uppercase() }} " +
+            "${DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(now.withNano(0))} (${now.zone.id}). " +
+            "Use this offset for every time you pass to a tool unless the user names another timezone." +
+            (if (turnLatLng != null) "\n- The phone's current location is known; Google Maps grounding uses it for \"near me\" questions." else "") +
+            (if (turnContext.isNotBlank()) "\n- " + turnContext.replace("\n", "\n- ") else "")
     }
+
+    /** Plain words for Gemini's 429s: a model not on the free tier, the daily or the per-minute limit. */
+    private fun quotaMessage(raw: String, model: String): String = when {
+        Regex("""limit:\s*0\b""").containsMatchIn(raw) ->
+            "$model isn't included with a free Gemini key. Pick another model on the watch (Billy, Settings, Model), or turn on billing in Google AI Studio."
+        Regex("PerDay|per day", RegexOption.IGNORE_CASE).containsMatchIn(raw) ->
+            "You've used today's free Gemini requests for $model. Switch to 3.5 Flash-Lite (bigger free allowance) on the watch under Settings, wait until tomorrow, or turn on billing in Google AI Studio."
+        Regex("PerMinute|per minute", RegexOption.IGNORE_CASE).containsMatchIn(raw) ->
+            "Too many Gemini requests this minute for a free key. Wait a minute and ask again."
+        else -> "Gemini says this key is over its quota (429). Check your limits in Google AI Studio."
+    }
+
+    private fun friendlyError(code: Int, raw: String, model: String): String {
+        val message = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }.getOrNull()
+            ?.takeIf { it.isNotBlank() } ?: raw.ifBlank { "HTTP $code" }
+        val lower = message.lowercase()
+        return when {
+            code == 403 && "blocked" in lower ->
+                "Gemini API key is blocked. Allow the Generative Language API (and this app, if the key is restricted)."
+            "api key not valid" in lower || "invalid authentication" in lower ->
+                "Gemini did not accept the API key. Use a key from Google AI Studio."
+            code == 429 -> quotaMessage(raw, model)
+            (code == 400 || code == 403) && Regex("grounding|google_?search|google_?maps").containsMatchIn(lower) &&
+                Regex("free|billing|not available|not supported|not enabled").containsMatchIn(lower) ->
+                "Your Gemini key can't use Google Search or Maps with $model. Free keys may not include them; turn on billing in Google AI Studio. Google said: ${message.take(MAX_ERROR_LENGTH)}"
+            code == 503 -> "Gemini is overloaded right now (503)."
+            code == 404 -> "Gemini doesn't know the model $model (404): ${message.take(MAX_ERROR_LENGTH)}"
+            code == 400 -> "Google rejected Billy's request to $model (400): ${message.take(MAX_ERROR_LENGTH)}"
+            else -> "Gemini ($model) returned error $code: ${message.take(MAX_ERROR_LENGTH)}"
+        }
+    }
+
+    private fun userText(text: String): JSONObject {
+        return JSONObject()
+            .put("role", "user")
+            .put("parts", JSONArray().put(JSONObject().put("text", text)))
+    }
+
+    /**
+     * Gemini sometimes writes a tool call out as text ("call:default_api:show_image{...}",
+     * "tool_code ...", "request: api_call: ...") instead of making it.
+     */
+    private fun looksLikeLeakedToolCall(text: String, toolNames: Set<String>): Boolean {
+        val t = text.trim()
+        if (t.isEmpty()) return false
+        val lower = t.lowercase()
+        if ("default_api" in lower || lower.startsWith("tool_code") || lower.startsWith("call:") || lower.startsWith("```tool")) return true
+        if (Regex("""^[\w ]{1,24}:\s*[\w ]{0,24}(api|call|tool)\w*\s*:""", RegexOption.IGNORE_CASE).containsMatchIn(t)) return true
+        if (toolNames.any { name -> Regex("""(^|[\s:`])${Regex.escape(name)}\s*[({]""").containsMatchIn(t) }) return true
+        // Mostly symbols and colons, few real words: not something to show the user.
+        val words = Regex("""[A-Za-z]{3,}""").findAll(t).count()
+        return t.length >= 12 && t.count { it == ':' } >= 3 && words < t.count { it == ':' } * 2
+    }
+
+    private fun normalizeApiKey(apiKey: String): String = apiKey.filterNot { it.isWhitespace() }
+
+    private fun isGemini3(model: String): Boolean = model.startsWith("gemini-3")
 
     companion object {
-        const val DEFAULT_MODEL = "gemini-3.1-flash-lite"
-        private val MODEL_CANDIDATES = listOf(DEFAULT_MODEL, "gemini-3.5-flash", "gemini-2.5-flash")
-        private const val INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
-        private const val MAX_ERROR_LENGTH = 220
-        private const val MAX_OUTPUT_TOKENS = 2048
-        private const val MAX_TOOL_ITERATIONS = 4
-        private const val REQUEST_TIMEOUT_MS = 18_000
-        private const val SYSTEM_INSTRUCTION =
-            "You are Billy, a concise assistant answering on a Pebble watch. " +
-                "Only watch-facing final replies should be compact: usually 2-4 short watch lines. Avoid vague one-line answers. Use fragments when they are clear. " +
-                "Use Pebble-safe formatting only for text that will be displayed on the watch: short lines, line breaks, and '- ' bullets. Do not use markdown asterisks, code fences, tables, headings, citations, or long lists in watch-facing final text unless the user asks. " +
-                "Do not apply watch brevity to content that will be written into another app or file. For tool arguments that create or update Google Docs, Gmail messages, Drive files, Sheets, Slides, Forms, drafts, notes, or other off-watch artifacts, write the full requested content in the tool argument: essays should have real paragraphs, emails should have full body text, and documents should not be outlines or summaries unless the user asked for an outline or summary. After the tool completes, summarize the result briefly for the watch. " +
-                "Billy may include a durable user profile and memory block from Billy Companion. Treat it as the user's local Billy memory and use it when relevant. Do not invent profile facts. A Gemini API key does not include consumer Gemini app memories, so use only the provided profile block, conversation context, and tool results for personal knowledge. If the user asks what Billy knows or remembers about them, call get_billy_user_profile. If the user explicitly asks Billy to remember/save a durable personal fact, or clearly corrects a durable profile fact, call remember_billy_user_fact. If the user asks Billy to forget/delete a memory, call forget_billy_user_fact. " +
-                "Never ask the user an open-ended question in final text. If you need any user answer or decision, call ask_clarifying_question and provide 1-3 short likely options; the watch automatically adds Dictate for answers not listed. This includes yes/no questions, missing details, ambiguous choices, and follow-up questions. Ask only one question at a time. Do not end a normal text answer with a question. " +
-                "When the request is ambiguous and a wrong guess could create, change, delete, message, navigate, spend time, or use private data incorrectly, call ask_clarifying_question instead of guessing. Prefer clarification for missing event time, calendar/account, reminder date, contact/person, destination, app/service, or which private result the user means. Do not ask if a safe default is obvious. Do not offer notes as a clarification option unless the user explicitly asks for Keep or notes. " +
-                "For weather, local forecast, umbrella, temperature, wind, or weather-card requests, call get_weather; do not claim Billy lacks local weather data unless the tool says location permission is missing. Translate numbers into plain human guidance. For Calendar and Tasks, list useful names and times, not just counts. For photo analysis, mention concrete visible details. " +
-                "Silently correct likely dictation errors. " +
-                "For open-web image requests, use show_web_image_search; do not search Drive unless the user asks for their Drive files. For nearest, nearby, near me, closest, local, or around me place requests, call find_nearby_google_places first. For requests near home, my house, work, a hotel, an address, or another origin that is not the phone's current location, use find_google_places_near_address with the saved/profile origin text; if no concrete origin is available, ask one picker question for current location or dictated address. For simple place discovery such as 'coffee shop near my house', find places first; do not ask travel mode until the user asks for directions, navigation, route, travel time, or a map preview. Use included_type when clear, such as train_station for train/Amtrak stations, transit_station for transit stops, airport for airports, restaurant for restaurants, cafe for coffee, gas_station for gas, pharmacy for pharmacies, and hotel for hotels. Before any Maps route, directions, or navigation tool call, infer the user's intended travel mode semantically and pass the canonical travel_mode enum: DRIVE, WALK, BICYCLE, TRANSIT, or TWO_WHEELER. Do not omit travel_mode when the user implies a non-driving mode. For navigation to a nearby place, pass the selected nearby result label/name/address and travel_mode to open_maps_directions, then pass the same result name/address, destination_latitude, destination_longitude, and travel_mode to show_map_directions; do not geocode a selected result when coordinates are already available. For a specific destination navigation request, call open_maps_directions with the user's destination text and travel_mode first, then call show_map_directions with the same travel_mode and the destination coordinates if known or destination text if not. For route summaries, travel-time questions, or how-to-get-there reasoning, call get_google_route with the same travel_mode. For map-card-only or preview-map requests, call show_map_directions and do not open phone navigation. `show_map_directions` can create an OpenStreetMap card when no Maps key is configured. Google Maps Platform tools such as nearby search, routes, geocoding, and time-zone lookup require a Maps key; if one of those returns needs_api_key, say that briefly instead of pretending. If a Maps key is configured and a Google Maps Platform call fails, report the failure instead of substituting OpenStreetMap. " +
-                "Use the provided companion tools for private phone or Google-synced data when relevant. " +
-                "Calendar reads should prefer Google Calendar API results when available; Android Calendar Provider is fallback and may contain local ghosts. For calendar creation, call create_calendar_event with title/start/end. If the user names a calendar in words such as personal, primary, work, family, or an account email, pass that phrase as calendar_hint; do not list calendars first. If the destination calendar is unclear, omit calendar_id and calendar_hint so the tool can ask with a picker. Set create_meet_link=true when the user asks for a meeting link, video call, Google Meet, or conference call. For availability, free/busy, or scheduling options, use query_calendar_freebusy or find_calendar_availability before answering. Do not answer a create-event request by merely listing calendars. If the user asks to remove Billy/Bobby ghost calendar events, use delete_billy_calendar_ghosts. Photo tools access local/selected Android photos when permission is granted. For photo requests with dates like yesterday, Tuesday, last week, last month, or this day last year, pass both taken_after_millis and taken_before_millis as a closed local-time range; never represent a day/week/month request with only a lower bound. Use media_type=photo for camera-roll photos and screenshot only when explicitly requested. " +
-                "For explicit Google Photos, Google Photos API, Photos Library, cloud/account photos, or Photos Picker requests, use search_google_photos_library or show_google_photos_picker_selection instead of local camera-roll tools. If using Google Photos Library categories, pass explicit supported category names in content_categories. Be honest: the current Google Photos Library API is generally app-created-only and cannot perform full consumer Google Photos semantic/person/place search; the Picker API only exposes photos the user selected in Google Photos. " +
-                "Google Calendar, Tasks, Gmail, Drive, Contacts, Docs, Sheets, Slides, and Forms tools may use Google OAuth grants from the Android companion. " +
-                "Google Keep personal OAuth is not available here. If the user asks for Keep, state briefly that Google restricts Keep API access for personal OAuth and do not create a Google Doc, Task, email draft, or other substitute unless the user explicitly asks for that substitute. " +
-                "For Google Tasks requests, use create_google_task for new tasks, list_google_tasks for reads, and complete_google_task for complete/mark done/check off requests. Do not satisfy a completion request by listing tasks. " +
-                "For Drive requests, prefer search_google_drive or list_recent_google_drive_files. For Docs, Sheets, Slides, and Forms, use read_google_doc, read_google_sheet, read_google_slides, or read_google_form when the user asks to read, summarize, find inside, or inspect content. Use create_google_doc, create_google_sheet, or create_google_slides only when the user explicitly asks to create those file types. For an existing Google Doc, if the user asks to edit, rewrite, expand, flesh out, continue, fix, replace, or append to the document, use update_google_doc. If current content matters, call read_google_doc first, then call update_google_doc with the complete new body for replace_body or the full appended text for append. If recent/current Google Doc context includes a document id, pass it as file_id. Do not satisfy an edit request by listing Drive files or by only reading the Doc back. " +
-                "For Gmail reads, prefer search_gmail. If the user asks to email/send a message, use prepare_gmail_send so the watch can confirm before sending. Use create_gmail_draft only when the user explicitly asks for a draft. If a recipient is a contact name rather than an email address, try Google Contacts resolution through prepare_gmail_send or resolve_google_contact_email before asking for the address. " +
-                "When a calendar create tool succeeds, include the exact calendar name and account returned by the tool. " +
-                "Some Android app tools can only open a draft or app screen on the phone; describe those as drafts, never as completed silent actions. " +
-                "Use get_google_service_status when the user asks for a Google service that may not be implemented. " +
-                "A Gemini API key does not automatically inherit consumer Gemini Connected Apps access; if Gmail, Drive, Docs, Sheets, Slides, Keep, Tasks, or another service lacks a provided tool, say briefly whether it is draft-only, open-only, or needs OAuth. " +
-                "For watch reminders, alarms, and timers, do not use Calendar; those are handled by the watch app."
+        /** Receives raw model replies for the "Save last answer" debug file. */
+        @Volatile var debugSink: ((String) -> Unit)? = null
+        const val DEFAULT_MODEL = "gemini-3.8-flash"
+        const val DEFAULT_THINKING_LEVEL = "low"
+        val THINKING_LEVELS = setOf("minimal", "low", "medium", "high")
+        private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
+        private const val MAX_STEPS = 6
+        private const val MAX_OUTPUT_TOKENS = 4096
+        private const val CONNECT_TIMEOUT_MS = 15_000
+        private const val READ_TIMEOUT_MS = 25_000
+        private const val RETRY_DELAY_MS = 900L
+        private const val MAX_ERROR_LENGTH = 180
+        private val MUTATING_TOOLS = WatchToolsCompanionTool.MUTATING + setOf(
+            "create_calendar_event", "create_google_task", "complete_google_task", "create_gmail_draft",
+            "create_google_doc", "create_google_sheet", "create_google_slides", "update_google_doc", "show_image",
+            "update_calendar_event", "remember_billy_user_fact", "forget_billy_user_fact", "set_flashlight", "set_phone_volume",
+        )
+
+        private val SYSTEM_INSTRUCTION = listOf(
+            // Core rules: keep in sync with app/src/pkjs/agent/prompt.js (CORE_RULES).
+            "You are Billy, the user's personal assistant on their Pebble smartwatch, running through their Android phone. Be as capable as Gemini on a phone: answer anything, and act on the phone and the user's Google account.",
+            "Input is voice dictation. Silently fix obvious transcription mistakes and never comment on them.",
+            "",
+            "TOOLS",
+            "- You have real tools. When the user asks you to DO something, call the tool. Don't describe what you would do, don't tell the user to do it themselves, and don't claim success unless the tool returned status ok.",
+            "- Chain tools when needed: find the event, then change or delete it; look up the contact, then text them; find the place, then navigate.",
+            "- Follow-ups (\"cancel it\", \"move that to 4\", \"text her back\") refer to earlier turns and their [Actions taken], which include ids. Reuse them.",
+            "- If a tool returns an error, fix the arguments and retry once, or say plainly what went wrong. needs_sign_in / needs_permission results: tell the user exactly what to turn on in Billy Companion.",
+            "- Sending a text/email/reply, calling, and deleting events show a confirmation on the watch automatically; just call the tool.",
+            "- Use ask_clarifying_question only when a wrong guess would send, create, or delete the wrong thing and there's no sensible default.",
+            "- Built in: Google Search for anything current; Google Maps for places, hours, ratings, and travel questions (it knows the phone's location); reading web pages from URLs; and running code for exact math.",
+            "",
+            "WHICH TOOL",
+            "- Timers = durations; alarms = clock times; \"remind me to...\" = set_reminder (watch timeline) unless the user says Google Tasks or Calendar.",
+            "- Calendar: get_calendar_events to read or find; create_calendar_event; update_calendar_event to move/rename; delete_calendar_event to remove; find_free_time for availability.",
+            "- Phone: send_text_message (SMS), reply_to_notification (WhatsApp/Signal/etc.), call_contact, get_notifications, control_media / play_music, set_phone_volume, set_flashlight, get_phone_status, find_my_phone, open_app, start_navigation (+ show_map for the watch). If a result says the phone is locked, tell the user to unlock it to finish.",
+            "- Photos: if you have ask_my_gemini, use it for the user's photos (whole Google Photos library, shown on the watch); use find_photo only for photos from the last day or two, screenshots, or \"my last photo\". Without ask_my_gemini: find_photo searches the phone's camera roll (you'll see the photo, so describe it or answer questions about it); if it isn't found, open_google_photos_search opens the full library on the phone.",
+            "- Google: Gmail (search_gmail, prepare_gmail_send to send, create_gmail_draft only when a draft is asked for), Tasks, Drive/Docs/Sheets/Slides.",
+            "- If you have ask_my_gemini, it reaches the user's own Gemini account: Google Photos library, Gemini's saved info and past chats, Gems, Keep, YouTube. Billy can't control smart-home devices (lights, plugs, thermostats, Google Home): Google doesn't allow it through the Gemini website. If asked, say so plainly and offer to open the Google Home app (open_app); never say a device was switched. If it errors, tell the user plainly that their Gemini account didn't answer and why; don't answer from other sources unless they ask.",
+            "- Without ask_my_gemini, Google Keep isn't available to third-party apps; say so briefly if asked.",
+            "",
+            "INFO CARDS",
+            "- Prefer a card when one fits: get_weather, show_number (one big number), set_timer (countdown), show_map, find_photo, show_image. When a card is shown, add context in text; don't repeat it.",
+            "- Pictures are slow and push the text answer down the screen, so use show_image sparingly: only when the user asks to see something (\"show me\", \"what does X look like\", \"picture of\") or a picture is clearly the best answer. For plain facts, conversation, and general questions, answer in text only, even if the subject has a recognizable look. Skip it for fine detail the small, low-color screen can't show (charts, diagrams, text, close-up specifics).",
+            "",
+            "REPLIES",
+            "- The watch screen is tiny: usually 1-4 short lines. Lead with the answer. Plain text only, no markdown, links, or citations. \"- \" bullets for short lists.",
+            "- Content you write into emails, documents, texts, or events is not limited by the watch; write it fully and naturally.",
+            "- Don't end with an open question. If you truly need an answer, use ask_clarifying_question.",
+        ).joinToString("\n")
     }
 }
 
 private data class GeminiFunctionCall(
+    val id: String?,
     val name: String,
     val args: JSONObject,
 )
 
-private sealed interface GeminiContentResult {
-    data class Passed(val raw: String) : GeminiContentResult
-    data class Failed(val reason: String) : GeminiContentResult
+private data class ParsedResponse(
+    val model: String,
+    val text: String,
+    val calls: List<GeminiFunctionCall>,
+    val modelContent: JSONObject,
+)
+
+private sealed interface StepResult {
+    data class Ok(val parsed: ParsedResponse) : StepResult
+    data class Failed(val reason: String) : StepResult
 }
 
-sealed interface GeminiRequestPlan {
-    data class Ready(val model: String, val prompt: String) : GeminiRequestPlan
-    data class Invalid(val reason: String) : GeminiRequestPlan
+private sealed interface HttpResult {
+    /** [emptyReason] explains an answer with no text and no tool call (finishReason or blockReason). */
+    data class Ok(val json: JSONObject, val emptyReason: String) : HttpResult
+    /** [detail] is a short technical note for the diagnostics; [message] is what the user sees. */
+    data class Error(val code: Int, val message: String, val detail: String, val retryable: Boolean) : HttpResult
 }
 
 sealed interface GeminiKeyTestResult {
     data class Passed(val message: String) : GeminiKeyTestResult
     data class Failed(val reason: String) : GeminiKeyTestResult
-}
-
-sealed interface GeminiTextResult {
-    data class Passed(val text: String) : GeminiTextResult
-    data class Failed(val reason: String) : GeminiTextResult
 }
 
 data class GeminiImageCandidate(

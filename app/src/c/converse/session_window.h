@@ -22,6 +22,8 @@
 typedef struct SessionWindow SessionWindow;
 
 void session_window_push(int timeout, char *starting_prompt);
+// Adds a prompt to the conversation on screen. Returns false if none is open.
+bool session_window_continue(const char *prompt);
 void session_window_destroy(SessionWindow* window);
 
 #endif

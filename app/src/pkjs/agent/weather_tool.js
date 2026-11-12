@@ -6,6 +6,7 @@
  */
 
 var config = require('../config');
+var messageKeys = require('message_keys');
 var location = require('../location');
 
 var WEATHER_CONDITION_LIGHT_RAIN = 1;
@@ -43,11 +44,17 @@ exports.getDeclarations = function() {
     return [{
         type: 'function',
         name: 'get_weather',
-        description: 'Show a Pebble weather card with current conditions and return a short forecast. Use this for weather, temperature, umbrella, wind, or forecast requests. Omit latitude/longitude for local weather.',
+        description: 'Get weather and show a Pebble weather card. Use for any weather, temperature, rain/umbrella, snow, wind, or forecast question, local or for a named place. Returns a 7-day forecast so you can answer about specific days.',
         parameters: schema({
-            latitude: numberSchema('Optional latitude for a named place. Omit for local weather.'),
-            longitude: numberSchema('Optional longitude for a named place. Omit for local weather.'),
-            location_name: stringSchema('Optional place label, city, address, or destination name.')
+            location_name: stringSchema("Place name for non-local weather (city, landmark, address). Omit for the user's current location."),
+            latitude: numberSchema('Optional latitude if already known.'),
+            longitude: numberSchema('Optional longitude if already known.'),
+            card: {
+                type: 'string',
+                'enum': ['now', 'today', 'tomorrow', 'day', 'week'],
+                description: "Which card to show: 'now' current conditions (default), 'today' or 'tomorrow' that day's high/low card, 'day' a high/low card for the date in 'date', 'week' a 3-day forecast card for multi-day or weekend questions."
+            },
+            date: stringSchema("For card='day': the date (YYYY-MM-DD), up to 6 days ahead.")
         }, [])
     }];
 };
@@ -68,27 +75,29 @@ exports.execute = function(session, call, callback) {
                 callback({status: 'error', summary: weatherErr.message || String(weatherErr)});
                 return;
             }
-            session.enqueue({
-                WEATHER_WIDGET: 2,
-                WEATHER_WIDGET_CURRENT_TEMP: report.temperature,
-                WEATHER_WIDGET_FEELS_LIKE: report.feelsLike,
-                WEATHER_WIDGET_LOCATION: report.locationLabel.toUpperCase().substring(0, 28),
-                WEATHER_WIDGET_DAY_SUMMARY: report.description.substring(0, 80),
-                WEATHER_WIDGET_TEMP_UNIT: report.tempUnit,
-                WEATHER_WIDGET_WIND_SPEED: report.windSpeed,
-                WEATHER_WIDGET_WIND_SPEED_UNIT: report.windSpeedUnit,
-                WEATHER_WIDGET_DAY_ICON: report.condition
-            });
+            session.enqueue(buildCard(String(args.card || 'now'), report, args.date));
             callback({
                 status: 'ok',
                 summary: report.summary,
-                watch_card_contains: 'current temperature, feels-like temperature, icon, and condition',
+                watch_card: 'A weather card with the key numbers is already on screen. Add only practical guidance or the specific detail asked; do not restate the card.',
                 location: report.locationLabel,
-                high: report.high,
-                low: report.low,
-                rain_chance: report.rainChance,
-                wind_speed: report.windSpeed,
-                wind_speed_unit: report.windSpeedUnit
+                current: {
+                    temperature: report.temperature,
+                    feels_like: report.feelsLike,
+                    condition: report.description,
+                    wind: report.windSpeed + ' ' + report.windSpeedUnit
+                },
+                unit: report.tempUnit,
+                daily: report.days.map(function(day) {
+                    return {
+                        date: day.date,
+                        day: day.dayName,
+                        condition: day.description,
+                        high: day.high,
+                        low: day.low,
+                        rain_chance: day.rainChance
+                    };
+                })
             });
         });
     });
@@ -173,7 +182,7 @@ function fetchWeather(weatherLocation, callback) {
         '&longitude=' + encodeURIComponent(weatherLocation.longitude) +
         '&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m' +
         '&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max' +
-        '&forecast_days=1&timezone=auto' +
+        '&forecast_days=7&timezone=auto' +
         '&temperature_unit=' + encodeURIComponent(units.temperatureParameter) +
         '&wind_speed_unit=' + encodeURIComponent(units.windParameter);
     fetchJson(url, function(err, json) {
@@ -189,13 +198,30 @@ function fetchWeather(weatherLocation, callback) {
     });
 }
 
+var DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 function buildWeatherReport(weatherLocation, json, units) {
     var current = json.current || {};
     var daily = json.daily || {};
     var code = integer(current.weather_code, arrayFirst(daily.weather_code, 0));
-    var high = optionalRounded(arrayFirst(daily.temperature_2m_max));
-    var low = optionalRounded(arrayFirst(daily.temperature_2m_min));
-    var rainChance = optionalRounded(arrayFirst(daily.precipitation_probability_max));
+    var days = [];
+    var dates = daily.time || [];
+    for (var i = 0; i < dates.length; i++) {
+        var dayCode = integer((daily.weather_code || [])[i], code);
+        // Parse YYYY-MM-DD as a local calendar date, not UTC midnight.
+        var pieces = String(dates[i]).split('-');
+        var localDate = new Date(parseInt(pieces[0], 10), parseInt(pieces[1], 10) - 1, parseInt(pieces[2], 10));
+        days.push({
+            date: dates[i],
+            dayName: isNaN(localDate.getTime()) ? '' : DAY_NAMES[localDate.getDay()],
+            high: optionalRounded((daily.temperature_2m_max || [])[i]),
+            low: optionalRounded((daily.temperature_2m_min || [])[i]),
+            rainChance: optionalRounded((daily.precipitation_probability_max || [])[i]),
+            condition: weatherCondition(dayCode),
+            description: weatherDescription(dayCode)
+        });
+    }
+    var today = days[0] || {high: null, low: null, rainChance: null};
     var temperature = Math.round(number(current.temperature_2m, 0));
     var feelsLike = Math.round(number(current.apparent_temperature, temperature));
     var windSpeed = Math.round(number(current.wind_speed_10m, 0));
@@ -209,10 +235,63 @@ function buildWeatherReport(weatherLocation, json, units) {
         windSpeedUnit: units.windUnit,
         condition: weatherCondition(code),
         description: description,
-        high: high,
-        low: low,
-        rainChance: rainChance,
-        summary: humanWeatherSummary(description, units.temperatureUnit, windSpeed, units.windUnit, high, low, rainChance)
+        high: today.high,
+        low: today.low,
+        rainChance: today.rainChance,
+        days: days,
+        summary: humanWeatherSummary(description, units.temperatureUnit, windSpeed, units.windUnit, today.high, today.low, today.rainChance)
+    };
+}
+
+function orZero(value) {
+    return value === null || value === undefined ? 0 : value;
+}
+
+function buildCard(kind, report, date) {
+    var location = report.locationLabel.toUpperCase().substring(0, 28);
+    var dayIndex = kind === 'tomorrow' ? 1 : 0;
+    if (kind === 'day') {
+        for (var di = 0; di < report.days.length; di++) {
+            if (report.days[di].date === String(date || '')) {
+                dayIndex = di;
+            }
+        }
+    }
+    if ((kind === 'today' || kind === 'tomorrow' || kind === 'day') && report.days.length > dayIndex) {
+        var day = report.days[dayIndex];
+        var rain = day.rainChance !== null ? ', ' + day.rainChance + '% rain' : '';
+        return {
+            WEATHER_WIDGET: 1,
+            WEATHER_WIDGET_DAY_HIGH: orZero(day.high),
+            WEATHER_WIDGET_DAY_LOW: orZero(day.low),
+            WEATHER_WIDGET_DAY_ICON: day.condition,
+            WEATHER_WIDGET_LOCATION: location,
+            WEATHER_WIDGET_DAY_SUMMARY: (day.description + rain).substring(0, 80),
+            WEATHER_WIDGET_TEMP_UNIT: report.tempUnit,
+            WEATHER_WIDGET_DAY_OF_WEEK: dayIndex === 0 ? 'Today' : dayIndex === 1 ? 'Tomorrow' : day.dayName
+        };
+    }
+    if (kind === 'week' && report.days.length >= 3) {
+        var card = {WEATHER_WIDGET: 3, WEATHER_WIDGET_LOCATION: location};
+        for (var i = 0; i < 3; i++) {
+            var d = report.days[i];
+            card[messageKeys.WEATHER_WIDGET_MULTI_DAY + i] = i === 0 ? 'TOD' : d.dayName.substring(0, 3).toUpperCase();
+            card[messageKeys.WEATHER_WIDGET_MULTI_HIGH + i] = orZero(d.high);
+            card[messageKeys.WEATHER_WIDGET_MULTI_LOW + i] = orZero(d.low);
+            card[messageKeys.WEATHER_WIDGET_MULTI_ICON + i] = d.condition;
+        }
+        return card;
+    }
+    return {
+        WEATHER_WIDGET: 2,
+        WEATHER_WIDGET_CURRENT_TEMP: report.temperature,
+        WEATHER_WIDGET_FEELS_LIKE: report.feelsLike,
+        WEATHER_WIDGET_LOCATION: location,
+        WEATHER_WIDGET_DAY_SUMMARY: report.description.substring(0, 80),
+        WEATHER_WIDGET_TEMP_UNIT: report.tempUnit,
+        WEATHER_WIDGET_WIND_SPEED: report.windSpeed,
+        WEATHER_WIDGET_WIND_SPEED_UNIT: report.windSpeedUnit,
+        WEATHER_WIDGET_DAY_ICON: report.condition
     };
 }
 
