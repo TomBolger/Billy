@@ -105,6 +105,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (::content.isInitialized) render()
+        UpdateCheck.checkInBackground(this) { runOnUiThread { if (!isDestroyed && ::content.isInitialized) render() } }
     }
 
     // ---- layout -------------------------------------------------------------
@@ -114,6 +115,18 @@ class MainActivity : ComponentActivity() {
         val missing = missingSteps()
         content.addView(text("Billy Companion", 28f, COLOR_TEXT, bold = true))
         content.addView(text(versionLabel(), 13f, COLOR_MUTED))
+        UpdateCheck.available(this)?.let { release ->
+            card("Update available: ${release.version}") {
+                addView(text(
+                    "A new Billy Companion is out with fixes. Download it, open the file to install it over this one, and your setup is kept.",
+                    14f, COLOR_MUTED,
+                ))
+                addView(row(
+                    button("Download ${release.version}") { open(release.apkUrl.ifBlank { release.pageUrl }) },
+                    button("What's new", primary = false) { open(release.pageUrl) },
+                ))
+            }
+        }
         content.addView(
             text(
                 if (missing.isEmpty()) "✓ Ready. Ask Billy anything from your watch." else "${missing.size} step${if (missing.size == 1) "" else "s"} left: ${missing.joinToString(", ")}",

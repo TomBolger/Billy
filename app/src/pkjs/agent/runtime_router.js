@@ -85,8 +85,33 @@ function pruneClaims() {
     }
 }
 
-exports.recordAndroidCompanionSeen = function(requestId) {
+// The oldest Billy Companion that works with Google's current Gemini API
+// (0.7, version code 81). Older ones get a once-a-day reminder on the watch.
+var MIN_COMPANION_VERSION = 81;
+var UPDATE_NAG_KEY = 'billyCompanionUpdateNagAt';
+var UPDATE_NAG_EVERY_MS = 24 * 60 * 60 * 1000;
+exports.MIN_COMPANION_VERSION = MIN_COMPANION_VERSION;
+
+function remindToUpdate(version) {
+    var last = parseInt(localStorage.getItem(UPDATE_NAG_KEY), 10);
+    if (last && Date.now() - last < UPDATE_NAG_EVERY_MS) {
+        return;
+    }
+    localStorage.setItem(UPDATE_NAG_KEY, Date.now());
+    console.log('Billy Companion version ' + version + ' is out of date.');
+    if (typeof Pebble !== 'undefined' && typeof Pebble.showSimpleNotificationOnPebble === 'function') {
+        Pebble.showSimpleNotificationOnPebble('Update Billy Companion',
+            'Your Billy Companion app is out of date and some answers will fail. On your phone, get the new version from ' +
+            'github.com/TomBolger/Billy/releases and install it over the old one. Your setup is kept.');
+    }
+}
+
+exports.recordAndroidCompanionSeen = function(requestId, version) {
     localStorage.setItem(SEEN_KEY, Date.now());
+    var companionVersion = parseInt(version, 10) || 1;
+    if (companionVersion < MIN_COMPANION_VERSION) {
+        remindToUpdate(companionVersion);
+    }
     var id = normalizeRequestId(requestId);
     if (id) {
         localStorage.setItem(CLAIM_PREFIX + id, Date.now());

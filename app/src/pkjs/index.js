@@ -93,7 +93,7 @@ function handleAppMessage(e) {
     console.log(JSON.stringify(e));
     var data = e.payload;
     if (data.ANDROID_COMPANION_READY) {
-        runtimeRouter.recordAndroidCompanionSeen(data.ANDROID_REQUEST_ID);
+        runtimeRouter.recordAndroidCompanionSeen(data.ANDROID_REQUEST_ID, data.ANDROID_COMPANION_READY);
         return;
     }
     if (data.JS_TOOL_REQUEST) {

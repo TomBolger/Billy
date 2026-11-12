@@ -826,6 +826,19 @@ test('plugins: the companion can list and use plugins through the relay', async 
     });
 });
 
+test('an out-of-date Billy Companion gets a once-a-day reminder on the watch', function() {
+    var router = require(path.join(PKJS, 'agent/runtime_router'));
+    var shown = [];
+    Pebble.showSimpleNotificationOnPebble = function(title, body) { shown.push(title); };
+    localStorage.removeItem('billyCompanionUpdateNagAt');
+    router.recordAndroidCompanionSeen(0, 1);       // a 0.6 companion sends 1
+    router.recordAndroidCompanionSeen(0, 1);       // same day: no repeat
+    router.recordAndroidCompanionSeen(0, router.MIN_COMPANION_VERSION);
+    delete Pebble.showSimpleNotificationOnPebble;
+    assert.deepStrictEqual(shown, ['Update Billy Companion']);
+    localStorage.removeItem('billyCompanionUpdateNagAt');
+});
+
 (async function() {
     var failed = 0;
     for (var i = 0; i < tests.length; i++) {

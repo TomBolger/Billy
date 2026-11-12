@@ -5,6 +5,7 @@ import com.tombo.billyassistant.companion.agent.CompanionAgent
 import com.tombo.billyassistant.companion.agent.CompanionAgentResult
 import com.tombo.billyassistant.companion.agent.GeminiClient
 import com.tombo.billyassistant.companion.agent.tools.PluginCatalog
+import com.tombo.billyassistant.companion.UpdateCheck
 import com.tombo.billyassistant.companion.agent.tools.ClarificationCard
 import com.tombo.billyassistant.companion.agent.tools.WatchWeatherCurrent
 import com.tombo.billyassistant.companion.agent.tools.WatchImage
@@ -43,6 +44,10 @@ class BillyPebbleListenerService : BasePebbleListenerService() {
             return ReceiveResult.Nack
         }
         PebbleWatchStore(this).saveLastWatch(watch)
+        if (BillyPebbleProtocol.companionVersionCode <= 1) {
+            BillyPebbleProtocol.companionVersionCode = UpdateCheck.installedVersionCode(this)
+        }
+        UpdateCheck.checkInBackground(this)
 
         // Watch-tool relay traffic (see WatchToolRelay). Results complete a
         // pending call; our own bounced requests are ignored.
@@ -339,7 +344,8 @@ private suspend fun DefaultPebbleSender.sendPrompt(prompt: String, watch: WatchI
 
 private suspend fun DefaultPebbleSender.sendAndroidCompanionReady(watch: WatchIdentifier, requestId: Int?) {
     val payload = mutableMapOf<UInt, PebbleDictionaryItem>(
-        BillyPebbleProtocol.ANDROID_COMPANION_READY to PebbleDictionaryItem.UInt8(1),
+        // Our version code, so the watch app can tell people with an old companion to update.
+        BillyPebbleProtocol.ANDROID_COMPANION_READY to PebbleDictionaryItem.UInt32(BillyPebbleProtocol.companionVersionCode.toUInt()),
     )
     if (requestId != null && requestId != 0) {
         payload[BillyPebbleProtocol.ANDROID_REQUEST_ID] = PebbleDictionaryItem.UInt32(requestId.toUInt())
@@ -540,6 +546,9 @@ object BillyPebbleProtocol {
     val WATCH_PROMPT: UInt = 10122u
     val WATCH_READY: UInt = 10123u
     val ANDROID_COMPANION_READY: UInt = 10124u
+
+    /** Set once at service start from the installed package. */
+    @Volatile var companionVersionCode: Long = 1
     val ANDROID_REQUEST_ID: UInt = 10125u
     val JS_TOOL_REQUEST: UInt = 10126u
     val JS_TOOL_RESULT: UInt = 10127u

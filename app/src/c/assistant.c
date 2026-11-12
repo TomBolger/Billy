@@ -46,6 +46,8 @@ static EventHandle s_prompt_inbox_handle = NULL;
 static AppTimer *s_android_heartbeat_retry_timer = NULL;
 static int s_android_heartbeat_attempts = 0;
 static uint32_t s_android_heartbeat_request_id = 0;
+// Billy Companion's version code (1 = an old companion that didn't send one).
+static uint32_t s_android_companion_version = 1;
 
 static bool prv_send_android_companion_ready_to_phone(void);
 static void prv_retry_android_companion_ready(void *context);
@@ -140,7 +142,7 @@ static bool prv_send_android_companion_ready_to_phone(void) {
     BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Could not forward Android companion heartbeat: %d.", result);
     return false;
   }
-  dict_write_uint8(out, BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY, 1);
+  dict_write_uint32(out, BILLY_MESSAGE_KEY_ANDROID_COMPANION_READY, s_android_companion_version);
   if (s_android_heartbeat_request_id != 0) {
     dict_write_uint32(out, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID, s_android_heartbeat_request_id);
   }
@@ -173,8 +175,9 @@ static void prv_retry_android_companion_ready(void *context) {
   prv_schedule_android_companion_ready_retry();
 }
 
-static void prv_forward_android_companion_ready(uint32_t request_id) {
+static void prv_forward_android_companion_ready(uint32_t request_id, uint32_t version) {
   s_android_heartbeat_request_id = request_id;
+  s_android_companion_version = version ? version : 1;
   s_android_heartbeat_attempts = 1;
   if (prv_send_android_companion_ready_to_phone()) {
     s_android_heartbeat_attempts = 0;
@@ -199,7 +202,15 @@ static void prv_prompt_inbox_received(DictionaryIterator *iter, void *context) {
   if (android_ready_tuple) {
     Tuple *request_tuple = dict_find(iter, BILLY_MESSAGE_KEY_ANDROID_REQUEST_ID);
     uint32_t request_id = request_tuple ? request_tuple->value->uint32 : 0;
-    prv_forward_android_companion_ready(request_id);
+    uint32_t version = 1;
+    if (android_ready_tuple->length >= 4) {
+      version = android_ready_tuple->value->uint32;
+    } else if (android_ready_tuple->length == 2) {
+      version = android_ready_tuple->value->uint16;
+    } else if (android_ready_tuple->length == 1) {
+      version = android_ready_tuple->value->uint8;
+    }
+    prv_forward_android_companion_ready(request_id, version);
     return;
   }
   Tuple *prompt_tuple = dict_find(iter, BILLY_MESSAGE_KEY_WATCH_PROMPT);
