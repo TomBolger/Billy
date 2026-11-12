@@ -49,8 +49,9 @@ Everything runs on your own accounts; nobody has to invite you.
    tap *Advanced*, then *Go to Billy (unsafe)*.
 5. **Your Gemini account (optional, experimental):** card 5 in Billy
    Companion. Billy can then use what only the Gemini app knows: your Google
-   Photos library, Gemini's saved info and past chats, Gems, Keep, YouTube
-   and Google Home. The sign-in stays on the phone.
+   Photos library, Gemini's saved info and past chats, Gems, Keep and
+   YouTube. It can't control Google Home devices: Google doesn't allow that
+   from the Gemini website. The sign-in stays on the phone.
 
 Personal context can also be imported as a Profile Pack; see
 `docs/BILLY_PROFILE_PACK_TEMPLATE.md`.

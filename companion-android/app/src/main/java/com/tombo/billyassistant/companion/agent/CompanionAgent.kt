@@ -205,7 +205,7 @@ class CompanionAgent(
         if (linked) {
             parts += "The user's own Gemini account is linked (ask_my_gemini). Use it FIRST for: the user's photos, unless taken in the last day or two " +
                 "(it searches the whole Google Photos library and shows the photo on the watch); facts about the user and their life " +
-                "(home or work address, family, birthdays, preferences, anything Gemini has saved); their past Gemini chats, Gems, Keep, YouTube, and Google Home. " +
+                "(home or work address, family, birthdays, preferences, anything Gemini has saved); their past Gemini chats, Gems, Keep, and YouTube. Never for smart-home control: it can't switch devices, even if it says it did. " +
                 "Billy's own notes below are partial: if they don't clearly answer a question about the user, use ask_my_gemini instead of saying you don't know. " +
                 "Never use it for general knowledge, science, news, or how-to questions: answer those yourself in text."
         }

@@ -23,7 +23,7 @@ class MyGeminiCompanionTool(
             "description",
             "Ask the user's own Gemini app account (gemini.google.com, signed in as them). It knows things your other tools can't reach: " +
                 "the user's Google Photos library (\"show me my photos from Paris\"), Gemini's saved info and past Gemini chats, their Gems, " +
-                "and Gemini's connections to Gmail, Drive, YouTube, YouTube Music, Google Home, and Keep. Use it for those, and when the user says \"ask Gemini\". " +
+                "and Gemini's connections to Gmail, Drive, YouTube, YouTube Music, and Keep. Use it for those, but NEVER to control smart-home devices: Google Home control doesn't work through the Gemini website, and it may falsely claim it switched something. Use it for the others, and when the user says \"ask Gemini\". " +
                 "Don't use it for things your own tools already do (timers, alarms, weather, calendar, texts, calls, searches), " +
                 "or for general knowledge, science, news, or how-to questions. " +
                 "It's slower than your tools. If it returns an error, tell the user plainly that their Gemini account didn't answer and why; don't answer from other sources unless they ask.",
@@ -46,6 +46,20 @@ class MyGeminiCompanionTool(
         val question = args.optString("question").trim()
         if (question.isBlank()) {
             return CompanionToolExecution(JSONObject().put("status", "error").put("summary", "No question given. Call ask_my_gemini again with the user's request."))
+        }
+        if (HOME_CONTROL.containsMatchIn(question)) {
+            // Google doesn't offer Google Home control in the Gemini web app, which
+            // is what this link uses; Gemini there may still claim it switched a device.
+            return CompanionToolExecution(
+                JSONObject()
+                    .put("status", "unsupported")
+                    .put(
+                        "summary",
+                        "Tell the user: Billy can't control smart-home devices yet, because Google doesn't allow Google Home control " +
+                            "from the Gemini website that Billy's Gemini account link uses. Offer to open the Google Home app instead " +
+                            "(open_app with \"Google Home\"). Never say the device was switched.",
+                    ),
+            )
         }
         val prompt = "$question\n\n(Brief answer, it's for my smartwatch.)"
         return when (val reply = GeminiAccountBridge.ask(context, prompt)) {
@@ -108,6 +122,13 @@ class MyGeminiCompanionTool(
         /** The request is about a photo or seeing something (not a plain factual question). */
         val PICTURE_REQUEST = Regex(
             """\b(photos?|pictures?|pics?|images?|selfies?|screenshots?|snaps?|show me|look(s|ed)? like|see)\b""",
+            RegexOption.IGNORE_CASE,
+        )
+
+        /** Asking to switch or adjust a smart-home device. */
+        val HOME_CONTROL = Regex(
+            """\b(turn|switch|power|dim|brighten|set|lock|unlock|open|close|start|stop|run|change)\b.{0,40}\b(lights?|lamps?|plugs?|outlets?|switch(es)?|thermostats?|heat(ing|er)?|a/?c|air ?con\w*|fans?|blinds?|shades?|curtains?|doors?|locks?|garage|vacuum|tv|speakers?|google home|nest)\b""" +
+                """|\b(lights?|lamps?|thermostat|fan|tv)\b.{0,20}\b(on|off)\b""",
             RegexOption.IGNORE_CASE,
         )
     }

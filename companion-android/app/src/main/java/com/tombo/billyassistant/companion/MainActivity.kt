@@ -265,7 +265,7 @@ class MainActivity : ComponentActivity() {
 
         card("5  Your Gemini account (optional)") {
             addView(text(
-                "Lets Billy ask your own Gemini for things only it can reach: your Google Photos library, Gemini's saved info and past chats, Gems, Keep, YouTube, and Google Home. " +
+                "Lets Billy ask your own Gemini for things only it can reach: your Google Photos library, Gemini's saved info and past chats, Gems, Keep, and YouTube. It can't control Google Home devices: Google doesn't allow that from the Gemini website. " +
                     "Experimental: it uses the Gemini website the way a browser does, which Google doesn't officially support. If it ever stops working, Billy tells you so and asks you to sign in again here; it won't quietly answer from somewhere else. Your sign-in stays on this phone.",
                 14f,
                 COLOR_MUTED,
