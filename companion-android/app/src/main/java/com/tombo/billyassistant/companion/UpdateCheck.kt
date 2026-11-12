@@ -142,6 +142,9 @@ object UpdateCheck {
                 .setStyle(Notification.BigTextStyle().bigText(text))
                 .setContentIntent(pending)
                 .setAutoCancel(true)
+                // Phone-only: watch notification apps (Pebble, Notification Sync) skip these,
+                // so they never pop up over Billy on the watch.
+                .setLocalOnly(true)
                 .build(),
         )
     }
