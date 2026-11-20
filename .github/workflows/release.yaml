@@ -33,9 +33,17 @@ jobs:
           V=$(node -e "console.log(require('./app/package.json').version)")
           APK_VERSION=$(grep -oP 'versionName = "\K[^"]+' companion-android/app/build.gradle.kts)
           echo "watch=$V companion=$APK_VERSION"
-          test "$V" = "$APK_VERSION"
           test -f "release-notes/v$V.md"
           echo "v=$V" >> "$GITHUB_OUTPUT"
+          # A patch release (X.Y.Z) whose Billy Companion is unchanged ships the watch app
+          # only and doesn't become "latest", so Billy Companion doesn't ask people to update.
+          if [ "$V" = "$APK_VERSION" ]; then
+            echo "companion=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$V" == "$APK_VERSION".* ]]; then
+            echo "companion=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Watch version $V and Billy Companion version $APK_VERSION don't match"; exit 1
+          fi
       - name: Install Pebble tool and SDK
         run: |
           sudo apt-get update -qq
@@ -50,6 +58,7 @@ jobs:
       - name: Build watch app
         run: cd app && yes | pebble build
       - name: Build Billy Companion
+        if: steps.version.outputs.companion == 'true'
         env:
           KEYSTORE_B64: ${{ secrets.BILLY_KEYSTORE_B64 }}
           BILLY_KEYSTORE_PASSWORD: ${{ secrets.BILLY_KEYSTORE_PASSWORD }}
@@ -70,7 +79,9 @@ jobs:
           V=${{ steps.version.outputs.v }}
           mkdir out
           cp app/build/app.pbw "out/Billy-$V.pbw"
-          cp companion-android/app/build/outputs/apk/debug/*.apk "out/BillyCompanion-$V.apk"
+          if [ "${{ steps.version.outputs.companion }}" = "true" ]; then
+            cp companion-android/app/build/outputs/apk/debug/*.apk "out/BillyCompanion-$V.apk"
+          fi
           cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -79,5 +90,5 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Billy ${{ steps.version.outputs.v }}
           body_path: release-notes/v${{ steps.version.outputs.v }}.md
-          make_latest: true
+          make_latest: ${{ steps.version.outputs.companion }}
           files: out/*
