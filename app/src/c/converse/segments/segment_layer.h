@@ -24,6 +24,8 @@
 typedef Layer SegmentLayer;
 
 SegmentLayer* segment_layer_create(GRect rect, ConversationEntry* entry, bool assistant_label);
+// Status bands (thinking, actions) run edge to edge on round screens.
+bool segment_layer_is_full_bleed(ConversationEntry* entry);
 ConversationEntry* segment_layer_get_entry(SegmentLayer* layer);
 void segment_layer_destroy(SegmentLayer* layer);
 void segment_layer_update(SegmentLayer* layer);

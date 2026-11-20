@@ -86,13 +86,16 @@ static void prv_window_load(Window* window) {
 #else
   image_size.h += 52; // add back the space at the top
 #endif
-  data->bitmap_layer = bitmap_layer_create(GRect((window_bounds.size.w - image_size.w) / 2, text_size.h, image_size.w, image_size.h));
+  // The picture sits right under the text and is the last thing on the page, so
+  // scrolling to the end rests it on the bottom edge of the screen.
+  const int16_t image_top = ROUND_END_PAD + text_size.h;
+  data->bitmap_layer = bitmap_layer_create(GRect((window_bounds.size.w - image_size.w) / 2, image_top, image_size.w, image_size.h));
   bitmap_layer_set_bitmap(data->bitmap_layer, data->bobby_image);
   bitmap_layer_set_alignment(data->bitmap_layer, GAlignBottom);
   bitmap_layer_set_background_color(data->bitmap_layer, GColorClear);
   bitmap_layer_set_compositing_mode(data->bitmap_layer, GCompOpSet);
 
-  scroll_layer_set_content_size(data->scroll_layer, GSize(window_bounds.size.w, text_size.h + image_size.h + ROUND_END_PAD * 2));
+  scroll_layer_set_content_size(data->scroll_layer, GSize(window_bounds.size.w, image_top + image_size.h));
   scroll_layer_add_child(data->scroll_layer, formatted_text_layer_get_layer(data->text_layer));
   scroll_layer_add_child(data->scroll_layer, bitmap_layer_get_layer(data->bitmap_layer));
 }
