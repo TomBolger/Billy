@@ -184,7 +184,9 @@ static void prv_window_load(Window *window) {
   sw->content_height = ROUND_PAD_TOP;
   sw->last_prompt_end_offset = 0;
   sw->scroll_indicator_down = blayer_create(GRect(0, window_size.h - STATUS_BAR_LAYER_HEIGHT, window_size.w, STATUS_BAR_LAYER_HEIGHT));
-  sw->scroll_layer = bscroll_layer_create(GRect(ROUND_INSET_X, STATUS_BAR_LAYER_HEIGHT, window_size.w - ROUND_INSET_X * 2, window_size.h - STATUS_BAR_LAYER_HEIGHT));
+  // Full width even on round screens: status bands run edge to edge, and every
+  // other segment is inset by ROUND_INSET_X when it's added.
+  sw->scroll_layer = bscroll_layer_create(GRect(0, STATUS_BAR_LAYER_HEIGHT, window_size.w, window_size.h - STATUS_BAR_LAYER_HEIGHT));
   scroll_layer_set_shadow_hidden(sw->scroll_layer, true);
   ContentIndicator* indicator = scroll_layer_get_content_indicator(sw->scroll_layer);
   const ContentIndicatorConfig up_config = (ContentIndicatorConfig) {
@@ -386,7 +388,8 @@ static void prv_conversation_manager_handler(bool entry_added, void* context) {
     free(sw->segment_layers);
     sw->segment_layers = new_block;
   }
-  SegmentLayer* layer = segment_layer_create(GRect(0, prv_content_height(sw), holder_size.w, 10), entry, conversation_assistant_just_started(conversation));
+  const int16_t inset_x = segment_layer_is_full_bleed(entry) ? 0 : ROUND_INSET_X;
+  SegmentLayer* layer = segment_layer_create(GRect(inset_x, prv_content_height(sw), holder_size.w - inset_x * 2, 10), entry, conversation_assistant_just_started(conversation));
   sw->segment_layers[sw->segment_count++] = layer;
   // It's possible that the content height changed *while the layer was being created*. In case this happened, move the
   // layer back to where it should be. Because segment layers are expected to adjust their own frame during

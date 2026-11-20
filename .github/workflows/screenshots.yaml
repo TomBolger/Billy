@@ -48,6 +48,7 @@ jobs:
         run: |
           sed -i 's/#define ENABLE_FEATURE_STORE_SCREENSHOTS 0/#define ENABLE_FEATURE_STORE_SCREENSHOTS 1/' app/src/c/features.h
           grep -q 'ENABLE_FEATURE_STORE_SCREENSHOTS 1' app/src/c/features.h
+          python3 tools/screenshots/allow_local_network.py app/package.json
           cd app && (yes | pebble build > ../shots/build.log 2>&1); tail -5 ../shots/build.log; test -f build/app.pbw
       - name: Capture
         run: |

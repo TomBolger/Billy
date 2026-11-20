@@ -16,6 +16,7 @@
 
 #include "info_layer.h"
 #include "../../util/fonts.h"
+#include "../../util/style.h"
 #include "../../util/memory/malloc.h"
 #include "../../util/memory/sdk.h"
 #include <pebble.h>
@@ -23,7 +24,10 @@
 #define STRIPE_WIDTH 24
 #define TEXT_PADDING_LEFT 2
 #define TEXT_PADDING_RIGHT 5
-#define UNAVAILABLE_WIDTH (STRIPE_WIDTH + TEXT_PADDING_LEFT + TEXT_PADDING_RIGHT)
+// On round screens the band is full width: the stripe runs to the left edge and
+// the icon and text start ROUND_SIDE_INSET in, inside the circle.
+#define CONTENT_LEFT (ROUND_SIDE_INSET + STRIPE_WIDTH + TEXT_PADDING_LEFT)
+#define UNAVAILABLE_WIDTH (CONTENT_LEFT + TEXT_PADDING_RIGHT + ROUND_SIDE_INSET)
 
 typedef struct {
   ConversationEntry* entry;
@@ -50,7 +54,7 @@ InfoLayer* info_layer_create(GRect rect, ConversationEntry* entry) {
     data->content_text = NULL;
     data->content_height = 24;
     data->content_height = prv_get_content_height(layer);
-    data->content_layer = btext_layer_create(GRect(STRIPE_WIDTH + TEXT_PADDING_LEFT, 1, rect.size.w - UNAVAILABLE_WIDTH, data->content_height));
+    data->content_layer = btext_layer_create(GRect(CONTENT_LEFT, 1, rect.size.w - UNAVAILABLE_WIDTH, data->content_height));
     text_layer_set_text(data->content_layer, prv_get_content_text(layer));
     text_layer_set_font(data->content_layer, fonts->text_font);
     text_layer_set_background_color(data->content_layer, GColorClear);
@@ -132,12 +136,12 @@ static void prv_layer_render(Layer* layer, GContext* ctx) {
   GRect bounds = layer_get_bounds(layer);
   GColor stripe_color = prv_get_stripe_color(data->entry);
   graphics_context_set_fill_color(ctx, stripe_color);
-  graphics_fill_rect(ctx, GRect(0, 0, STRIPE_WIDTH, bounds.size.h), 0, GCornerNone);
+  graphics_fill_rect(ctx, GRect(0, 0, ROUND_SIDE_INSET + STRIPE_WIDTH, bounds.size.h), 0, GCornerNone);
   graphics_context_set_stroke_color(ctx, GColorBlack);
   graphics_draw_line(ctx, GPoint(0, 0), GPoint(bounds.size.w, 0));
   graphics_draw_line(ctx, GPoint(0, bounds.size.h - 1), GPoint(bounds.size.w, bounds.size.h - 1));
   if (data->icon) {
-    gdraw_command_image_draw(ctx, data->icon, GPoint(3, 10));
+    gdraw_command_image_draw(ctx, data->icon, GPoint(ROUND_SIDE_INSET + 3, 10));
   }
 }
 

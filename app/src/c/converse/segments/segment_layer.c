@@ -17,6 +17,7 @@
 #include "segment_layer.h"
 #include "../conversation.h"
 #include "info_layer.h"
+#include "../../util/style.h"
 #include "message_layer.h"
 #include "widgets/weather_single_day.h"
 #include "widgets/weather_current.h"
@@ -73,6 +74,15 @@ typedef struct {
 
 static SegmentType prv_get_segment_type(ConversationEntry* entry);
 
+bool segment_layer_is_full_bleed(ConversationEntry* entry) {
+#if PBL_ROUND
+  return prv_get_segment_type(entry) == SegmentTypeInfo;
+#else
+  (void)entry;
+  return false;
+#endif
+}
+
 SegmentLayer* segment_layer_create(GRect rect, ConversationEntry* entry, bool assistant_label) {
   Layer* layer = blayer_create_with_data(rect, sizeof(SegmentLayerData));
   SegmentLayerData* data = layer_get_data(layer);
@@ -81,7 +91,9 @@ SegmentLayer* segment_layer_create(GRect rect, ConversationEntry* entry, bool as
   data->type = prv_get_segment_type(entry);
   GRect child_frame = GRect(0, 0, rect.size.w, rect.size.h);
   if (assistant_label) {
-    data->assistant_label_layer = btext_layer_create(GRect(5, 0, rect.size.w, fonts->small_font_cap * 2.25));
+    // A full-width band still keeps its "Billy" label inside the circle.
+    const int16_t label_x = 5 + (segment_layer_is_full_bleed(entry) ? ROUND_SIDE_INSET : 0);
+    data->assistant_label_layer = btext_layer_create(GRect(label_x, 0, rect.size.w - label_x, fonts->small_font_cap * 2.25));
     text_layer_set_font(data->assistant_label_layer, fonts->small_font);
     layer_add_child(layer, text_layer_get_layer(data->assistant_label_layer));
     text_layer_set_text(data->assistant_label_layer, "Billy");

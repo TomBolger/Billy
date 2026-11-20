@@ -120,7 +120,7 @@ static void prv_window_appear(Window* window) {
   const int16_t round_top = PBL_DISPLAY_WIDTH >= 260 ? 16 : 6;
   const int16_t round_bottom = PBL_DISPLAY_WIDTH >= 260 ? 26 : 4;
   // The small round screen needs every pixel above the goat for the bubble.
-  const int16_t horse_gap = PBL_DISPLAY_WIDTH >= 260 ? 16 : 4;
+  const int16_t horse_gap = PBL_DISPLAY_WIDTH >= 260 ? 4 : 4;
 #else
   const int16_t round_left = 0;
   const int16_t round_top = 0;
@@ -137,7 +137,14 @@ static void prv_window_appear(Window* window) {
   text_layer_set_text(rw->time_layer, "12:34");
   text_layer_set_background_color(rw->time_layer, GColorClear);
   layer_add_child(window_get_root_layer(rw->window), (Layer *)rw->time_layer);
+#if PBL_ROUND
+  // The goat runs off the bottom-left of the circle, so this layer reaches the
+  // screen edges; the bubble keeps itself inside the circle.
+  rw->talking_horse_layer = talking_horse_layer_create(GRect(0, time_height + horse_gap + round_top, bounds.size.w - ACTION_BAR_WIDTH, bounds.size.h - time_height - horse_gap - round_top));
+  (void)round_bottom;
+#else
   rw->talking_horse_layer = talking_horse_layer_create(GRect(round_left, time_height + horse_gap + round_top, bounds.size.w - ACTION_BAR_WIDTH - round_left, bounds.size.h - time_height - horse_gap - round_top - round_bottom));
+#endif
   layer_add_child(window_get_root_layer(rw->window), (Layer *)rw->talking_horse_layer);
   rw->talking_horse_overridden = false;
 #if ENABLE_FEATURE_STORE_SCREENSHOTS
@@ -153,9 +160,14 @@ static void prv_window_appear(Window* window) {
   VersionInfo version_info = version_get_current();
   snprintf(rw->version_string, sizeof(rw->version_string), "v%d.%d", version_info.major, version_info.minor);
   rw->version_string[sizeof(rw->version_string) - 1] = '\0';
+#if PBL_ROUND
+  // Centered at the bottom so the circle doesn't clip it.
+  rw->version_layer = btext_layer_create(GRect(0, bounds.size.h - 22, bounds.size.w, 18));
+#else
   rw->version_layer = btext_layer_create(GRect(0, bounds.size.h - 18, bounds.size.w - ACTION_BAR_WIDTH - 4, 18));
+#endif
   text_layer_set_font(rw->version_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
-  text_layer_set_text_alignment(rw->version_layer, GTextAlignmentRight);
+  text_layer_set_text_alignment(rw->version_layer, PBL_IF_ROUND_ELSE(GTextAlignmentCenter, GTextAlignmentRight));
   text_layer_set_background_color(rw->version_layer, GColorClear);
   text_layer_set_text(rw->version_layer, rw->version_string);
   layer_add_child(window_get_root_layer(rw->window), (Layer *)rw->version_layer);
