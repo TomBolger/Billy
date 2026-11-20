@@ -61,7 +61,14 @@ class MyGeminiCompanionTool(
                     ),
             )
         }
-        val prompt = "$question\n\n(Brief answer, it's for my smartwatch.)"
+        // Gemini knows the user's labeled Home and Work places through Google Maps, but
+        // often says it doesn't unless asked to look there.
+        val placeHint = if (SAVED_PLACE.containsMatchIn(question)) {
+            " Use my Home and Work places saved (labeled) in Google Maps; look them up in Google Maps before saying you don't know."
+        } else {
+            ""
+        }
+        val prompt = "$question\n\n(Brief answer, it's for my smartwatch.$placeHint)"
         return when (val reply = GeminiAccountBridge.ask(context, prompt)) {
             is GeminiAccountBridge.Reply.Failed -> error(
                 if (reply.reason == "signed_out") "The user's Gemini account is signed out." else reply.reason,
@@ -126,6 +133,8 @@ class MyGeminiCompanionTool(
         )
 
         /** Asking to switch or adjust a smart-home device. */
+        val SAVED_PLACE = Regex("""\b(work|office|job|home|house|commute)\b""", RegexOption.IGNORE_CASE)
+
         val HOME_CONTROL = Regex(
             """\b(turn|switch|power|dim|brighten|set|lock|unlock|open|close|start|stop|run|change)\b.{0,40}\b(lights?|lamps?|plugs?|outlets?|switch(es)?|thermostats?|heat(ing|er)?|a/?c|air ?con\w*|fans?|blinds?|shades?|curtains?|doors?|locks?|garage|vacuum|tv|speakers?|google home|nest)\b""" +
                 """|\b(lights?|lamps?|thermostat|fan|tv)\b.{0,20}\b(on|off)\b""",
