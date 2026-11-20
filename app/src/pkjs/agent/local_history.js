@@ -14,8 +14,16 @@
  * limitations under the License.
  */
 
+// Per-conversation memory for the phone runtime. Earlier turns are replayed to
+// Gemini as real user/model turns (not pasted into one prompt), and each model
+// turn carries a short note of the actions it took, so follow-ups like
+// "cancel that" or "make it 10 minutes instead" have something to refer to.
+
 var PREFIX = 'billy-local-thread:';
-var MAX_TURNS = 6;
+var INDEX_KEY = 'billy-local-thread-index';
+var MAX_TURNS = 8;
+var MAX_THREADS = 12;
+var MAX_TEXT = 700;
 
 function randomHex(count) {
     var out = '';
@@ -41,9 +49,9 @@ function load(threadId) {
     }
     try {
         var raw = localStorage.getItem(PREFIX + threadId);
-        return raw ? JSON.parse(raw) : [];
+        var turns = raw ? JSON.parse(raw) : [];
+        return Array.isArray(turns) ? turns : [];
     } catch (e) {
-        console.log('Failed to load local thread: ' + e.message);
         return [];
     }
 }
@@ -54,9 +62,22 @@ function save(threadId, turns) {
     }
     try {
         localStorage.setItem(PREFIX + threadId, JSON.stringify(turns.slice(-MAX_TURNS)));
+        var index = JSON.parse(localStorage.getItem(INDEX_KEY) || '[]').filter(function(id) {
+            return id !== threadId;
+        });
+        index.push(threadId);
+        while (index.length > MAX_THREADS) {
+            localStorage.removeItem(PREFIX + index.shift());
+        }
+        localStorage.setItem(INDEX_KEY, JSON.stringify(index));
     } catch (e) {
         console.log('Failed to save local thread: ' + e.message);
     }
+}
+
+function clip(text) {
+    text = String(text || '');
+    return text.length > MAX_TEXT ? text.substring(0, MAX_TEXT) + '...' : text;
 }
 
 exports.ensureThreadId = function(session) {
@@ -66,31 +87,32 @@ exports.ensureThreadId = function(session) {
     session.threadId = createThreadId();
     session.handleMessage({data: 't' + session.threadId});
     return session.threadId;
-}
+};
 
-exports.buildInput = function(threadId, prompt) {
-    var turns = load(threadId);
-    if (turns.length === 0) {
-        return prompt;
-    }
-    var lines = ['Recent local conversation context:'];
-    turns.forEach(function(turn) {
-        lines.push('User: ' + turn.user);
-        lines.push('Billy: ' + turn.assistant);
+// Earlier turns as Gemini contents.
+exports.contents = function(threadId) {
+    var contents = [];
+    load(threadId).forEach(function(turn) {
+        var modelText = clip(turn.model || turn.assistant || '');
+        if (turn.actions && turn.actions.length) {
+            modelText += '\n[Actions taken: ' + turn.actions.join('; ') + ']';
+        }
+        contents.push({role: 'user', parts: [{text: clip(turn.user)}]});
+        contents.push({role: 'model', parts: [{text: modelText || '(no reply)'}]});
     });
-    lines.push('Current user request: ' + prompt);
-    return lines.join('\n');
-}
+    return contents;
+};
 
-exports.recordTurn = function(threadId, userPrompt, assistantText) {
+exports.recordTurn = function(threadId, userText, modelText, actions) {
     var turns = load(threadId);
     turns.push({
-        user: userPrompt,
-        assistant: assistantText
+        user: clip(userText),
+        model: clip(modelText),
+        actions: (actions || []).slice(0, 6)
     });
     save(threadId, turns);
-}
+};
 
 exports.hasTurns = function(threadId) {
     return load(threadId).length > 0;
-}
+};

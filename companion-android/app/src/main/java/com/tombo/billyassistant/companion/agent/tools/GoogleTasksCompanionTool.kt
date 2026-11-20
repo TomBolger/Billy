@@ -63,47 +63,50 @@ class GoogleTasksCompanionTool(
                 showCompleted = args.optBoolean("show_completed", false),
                 dueMaxMillis = args.optionalLong("due_max_millis"),
                 maxResults = args.optionalInt("max_results") ?: 10,
-            ).toExecution(finalOnSuccess = true)
+            ).toExecution(tasksApiTools, finalOnSuccess = true)
             "create_google_task" -> tasksApiTools.createTask(
                 title = args.optString("title"),
                 notes = args.optString("notes").ifBlank { null },
                 dueMillis = args.optionalLong("due_millis"),
-            ).toExecution(finalOnSuccess = true)
+            ).toExecution(tasksApiTools, finalOnSuccess = true)
             "complete_google_task" -> tasksApiTools.completeTask(
                 titleOrId = args.optString("title_or_id").ifBlank { null },
                 taskListId = args.optString("task_list_id").ifBlank { null },
                 taskId = args.optString("task_id").ifBlank { null },
-            ).toExecution(finalOnSuccess = true)
+            ).toExecution(tasksApiTools, finalOnSuccess = true)
             else -> null
         }
     }
 }
 
-private fun GoogleTasksResult.toExecution(finalOnSuccess: Boolean = false): CompanionToolExecution {
+private fun GoogleTasksResult.toExecution(api: GoogleTasksApiTools, finalOnSuccess: Boolean = false): CompanionToolExecution {
     val response = toJson()
     if (response.optString("status") == "needs_clarification") {
         val tasks = response.optJSONArray("tasks") ?: JSONArray()
-        val pending = mutableListOf<PendingTaskCompletion>()
-        val labels = mutableListOf<String>()
-        for (i in 0 until minOf(tasks.length(), 4)) {
+        val choices = mutableListOf<PendingActions.Choice>()
+        for (i in 0 until minOf(tasks.length(), 3)) {
             val task = tasks.optJSONObject(i) ?: continue
             val title = task.optString("title").ifBlank { "(untitled task)" }
-            pending += PendingTaskCompletion(
-                taskListId = task.optString("task_list_id"),
-                taskListTitle = task.optString("task_list_title"),
-                taskId = task.optString("task_id"),
-                title = title,
-            )
-            labels += title
+            val listId = task.optString("task_list_id")
+            val taskId = task.optString("task_id")
+            choices += PendingActions.Choice(title) {
+                PendingOutcome(
+                    when (val done = api.completeExactTask(taskListId = listId, taskId = taskId)) {
+                        is GoogleTasksResult.Success -> done.summary
+                        is GoogleTasksResult.NeedsScope -> done.summary
+                        is GoogleTasksResult.Rejected -> done.reason
+                        is GoogleTasksResult.Failed -> done.reason
+                    },
+                )
+            }
         }
-        if (pending.isNotEmpty()) {
-            val token = PendingTaskCompletions.put(pending)
+        if (choices.isNotEmpty()) {
             return CompanionToolExecution(
-                response = response.put("task_complete_token", token),
-                clarificationCard = ClarificationCard(
-                    question = response.optString("summary").ifBlank { "Which task?" },
-                    context = "task_complete_token=$token",
-                    options = labels,
+                response = response,
+                clarificationCard = PendingActions.offer(
+                    response.optString("summary").ifBlank { "Which task?" },
+                    choices,
+                    cancelLabel = null,
                 ),
             )
         }

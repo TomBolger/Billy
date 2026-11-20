@@ -22,6 +22,7 @@
 #include "../util/memory/pressure.h"
 #include "../util/logging.h"
 #include "image_manager.h"
+#include "../converse/conversation_manager.h"
 
 typedef struct {
   int image_id;
@@ -157,6 +158,7 @@ static bool prv_foreach_destroy(void *object, void *context) {
 }
 
 static void prv_inbox_received(DictionaryIterator *iterator, void *context) {
+  if (!conversation_manager_accepts_response(iterator)) { return; }
   Tuple *tuple = dict_find(iterator, MESSAGE_KEY_IMAGE_ID);
   if (!tuple) {
     return;
@@ -181,6 +183,7 @@ static void prv_inbox_received(DictionaryIterator *iterator, void *context) {
 }
 
 static void prv_handle_new_image(int image_id, size_t size, DictionaryIterator *iterator) {
+  if (prv_find_image(image_id)) { return; }
   Tuple *tuple = dict_find(iterator, MESSAGE_KEY_IMAGE_WIDTH);
   int16_t width = tuple->value->int32;
   tuple = dict_find(iterator, MESSAGE_KEY_IMAGE_HEIGHT);
@@ -235,6 +238,7 @@ static void prv_handle_image_complete(int image_id) {
     BOBBY_LOG(APP_LOG_LEVEL_WARNING, "Got complete for unknown image id %d", image_id);
     return;
   }
+  if (image->status == ImageStatusCompleted) { return; }
   if (!image->data) {
     BOBBY_LOG(APP_LOG_LEVEL_INFO, "Got complete for image we couldn't allocate; destroying.");
     prv_destroy_image(image);

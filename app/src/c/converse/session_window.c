@@ -34,6 +34,17 @@
 #include "report_window.h"
 
 #define PADDING 5
+// Round screens: keep the chat inside the circle. Content starts lower and can
+// scroll up past the bottom edge, so every line reaches the wide middle.
+#if PBL_ROUND
+#define ROUND_INSET_X (PBL_DISPLAY_WIDTH >= 260 ? 28 : 20)
+#define ROUND_PAD_TOP (PBL_DISPLAY_WIDTH >= 260 ? 22 : 16)
+#define ROUND_PAD_BOTTOM (PBL_DISPLAY_WIDTH >= 260 ? 44 : 34)
+#else
+#define ROUND_INSET_X 0
+#define ROUND_PAD_TOP 0
+#define ROUND_PAD_BOTTOM 0
+#endif
 #define CLARIFICATION_DICTATE_OPTION "Dictate..."
 
 struct SessionWindow {
@@ -87,6 +98,21 @@ static void prv_start_dictation(SessionWindow *sw);
 static SessionWindow* prv_active_session_window(void);
 static bool prv_submit_clarification_answer(SessionWindow *sw, const char *answer_text, const char *display_override);
 
+// The conversation currently on screen, so a prompt typed on the phone can
+// continue it instead of starting a new one.
+static SessionWindow *s_open_session = NULL;
+
+bool session_window_continue(const char *prompt) {
+  SessionWindow *sw = s_open_session;
+  if (!sw || !prompt || window_stack_get_top_window() != sw->window) {
+    return false;
+  }
+  prv_refresh_timeout(sw);
+  conversation_manager_add_input(sw->manager, prompt);
+  sw->query_time = time(NULL);
+  return true;
+}
+
 void session_window_push(int timeout, char *starting_prompt) {
   Window *window = bwindow_create();
   SessionWindow *sw = bmalloc(sizeof(SessionWindow));
@@ -137,6 +163,7 @@ static void prv_window_load(Window *window) {
   GRect window_bounds = layer_get_frame(window_get_root_layer(window));
   GSize window_size = window_bounds.size;
   SessionWindow *sw = window_get_user_data(window);
+  s_open_session = sw;
   sw->dictation_pending = true;
   BOBBY_LOG(APP_LOG_LEVEL_INFO, "created SessionWindow %p.", sw);
   sw->manager = conversation_manager_create();
@@ -154,9 +181,11 @@ static void prv_window_load(Window *window) {
   bobby_status_bar_config(sw->status_layer);
   layer_add_child(root_layer, (Layer *)sw->status_layer);
 
-  sw->content_height = 0;
+  sw->content_height = ROUND_PAD_TOP;
   sw->last_prompt_end_offset = 0;
   sw->scroll_indicator_down = blayer_create(GRect(0, window_size.h - STATUS_BAR_LAYER_HEIGHT, window_size.w, STATUS_BAR_LAYER_HEIGHT));
+  // Full width even on round screens: status bands run edge to edge, and every
+  // other segment is inset by ROUND_INSET_X when it's added.
   sw->scroll_layer = bscroll_layer_create(GRect(0, STATUS_BAR_LAYER_HEIGHT, window_size.w, window_size.h - STATUS_BAR_LAYER_HEIGHT));
   scroll_layer_set_shadow_hidden(sw->scroll_layer, true);
   ContentIndicator* indicator = scroll_layer_get_content_indicator(sw->scroll_layer);
@@ -225,6 +254,9 @@ static void prv_window_disappear(Window *window) {
 static void prv_window_unload(Window *window) {
   SessionWindow *sw = (SessionWindow *)window_get_user_data(window);
   window_set_user_data(window, (void*)0);
+  if (s_open_session == sw) {
+    s_open_session = NULL;
+  }
   prv_destroy(sw);
 }
 
@@ -253,7 +285,7 @@ static void prv_dictation_status_callback(DictationSession *session, DictationSe
 
 static void prv_set_scroll_height(SessionWindow* sw) {
   GSize old_size = scroll_layer_get_content_size(sw->scroll_layer);
-  GSize new_size = GSize(old_size.w, sw->content_height + PADDING);
+  GSize new_size = GSize(old_size.w, sw->content_height + PADDING + ROUND_PAD_BOTTOM);
   if (old_size.h >= new_size.h) {
     return;
   }
@@ -356,7 +388,8 @@ static void prv_conversation_manager_handler(bool entry_added, void* context) {
     free(sw->segment_layers);
     sw->segment_layers = new_block;
   }
-  SegmentLayer* layer = segment_layer_create(GRect(0, prv_content_height(sw), holder_size.w, 10), entry, conversation_assistant_just_started(conversation));
+  const int16_t inset_x = segment_layer_is_full_bleed(entry) ? 0 : ROUND_INSET_X;
+  SegmentLayer* layer = segment_layer_create(GRect(inset_x, prv_content_height(sw), holder_size.w - inset_x * 2, 10), entry, conversation_assistant_just_started(conversation));
   sw->segment_layers[sw->segment_count++] = layer;
   // It's possible that the content height changed *while the layer was being created*. In case this happened, move the
   // layer back to where it should be. Because segment layers are expected to adjust their own frame during

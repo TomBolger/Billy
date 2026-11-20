@@ -395,7 +395,7 @@ sealed interface GoogleTasksResult {
     ) : GoogleTasksResult
 
     data class NeedsScope(val scopes: List<String>) : GoogleTasksResult {
-        override val summary: String = "Grant Google Tasks access in the companion app."
+        override val summary: String = "Google Tasks needs Google set up: open Billy Companion and tap Set up Google."
     }
 
     data class Rejected(val reason: String) : GoogleTasksResult {

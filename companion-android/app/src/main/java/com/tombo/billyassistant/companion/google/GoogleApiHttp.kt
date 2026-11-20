@@ -50,7 +50,13 @@ class GoogleApiHttp {
             if (responseCode in 200..299) {
                 GoogleHttpResult.Success(responseCode, responseText)
             } else {
-                GoogleHttpResult.HttpError(responseCode, extractGoogleError(responseText))
+                GoogleHttpResult.HttpError(responseCode, extractGoogleError(responseText).let { reason ->
+                    if (responseCode == 403 && com.tombo.billyassistant.companion.agent.tools.serviceDisabled(reason + responseText)) {
+                        "This Google service isn't turned on in your Google project. In Billy Companion, open Set up Google and do step 2 again."
+                    } else {
+                        reason
+                    }
+                })
             }
         } catch (e: Exception) {
             GoogleHttpResult.Failed(e.message ?: e.javaClass.simpleName)

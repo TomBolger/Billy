@@ -21,6 +21,7 @@
 #include "legal_window.h"
 #include "reminders_menu.h"
 #include "feedback_window.h"
+#include "settings_menu.h"
 #include "../util/style.h"
 #include "../util/memory/malloc.h"
 #include "../util/memory/sdk.h"
@@ -37,11 +38,12 @@ static void prv_push_about_screen(int index, void* context);
 static void prv_push_legal_screen(int index, void* context);
 static void prv_push_reminders_screen(int index, void* context);
 static void prv_push_feedback_screen(int index, void* context);
+static void prv_push_settings_screen(int index, void* context);
 
 static SimpleMenuSection s_menu_section = {
   .num_items = 0,
 };
-static SimpleMenuItem s_menu_items[7];
+static SimpleMenuItem s_menu_items[8];
 
 typedef struct {
   SimpleMenuLayer *menu_layer;
@@ -85,21 +87,26 @@ static void prv_window_load(Window* window) {
       .icon = bgbitmap_create_with_resource(RESOURCE_ID_MENU_ICON_QUOTA),
     };
     s_menu_items[4] = (SimpleMenuItem) {
+      .title = "Settings",
+      .callback = prv_push_settings_screen,
+      .icon = bgbitmap_create_with_resource(RESOURCE_ID_MENU_ICON_SETTINGS),
+    };
+    s_menu_items[5] = (SimpleMenuItem) {
       .title = "Feedback",
       .callback = prv_push_feedback_screen,
       .icon = bgbitmap_create_with_resource(RESOURCE_ID_MENU_ICON_FEEDBACK),
     };
-    s_menu_items[5] = (SimpleMenuItem) {
+    s_menu_items[6] = (SimpleMenuItem) {
       .title = "About",
       .callback = prv_push_about_screen,
       .icon = bgbitmap_create_with_resource(RESOURCE_ID_MENU_ICON_ABOUT),
     };
-    s_menu_items[6] = (SimpleMenuItem) {
+    s_menu_items[7] = (SimpleMenuItem) {
       .title = "Legal",
       .callback = prv_push_legal_screen,
       .icon = bgbitmap_create_with_resource(RESOURCE_ID_MENU_ICON_LEGAL),
     };
-    s_menu_section.num_items = 7;
+    s_menu_section.num_items = 8;
     s_menu_section.items = s_menu_items;
   }
 
@@ -152,6 +159,10 @@ static void prv_push_reminders_screen(int index, void* context) {
 
 static void prv_push_feedback_screen(int index, void* context) {
   feedback_window_push();
+}
+
+static void prv_push_settings_screen(int index, void* context) {
+  settings_menu_push();
 }
 
 static void prv_push_about_screen(int index, void* context) {

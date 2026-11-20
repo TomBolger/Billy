@@ -238,7 +238,7 @@ sealed interface GoogleGmailResult {
     ) : GoogleGmailResult
 
     data class NeedsScope(val scopes: List<String>) : GoogleGmailResult {
-        override val summary: String = "Grant Gmail access in the companion app."
+        override val summary: String = "Gmail needs Google set up: open Billy Companion and tap Set up Google."
     }
 
     data class Rejected(val reason: String) : GoogleGmailResult {

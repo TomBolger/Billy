@@ -65,7 +65,7 @@ static void prv_window_load(Window* window) {
   scroll_layer_set_click_config_onto_window(data->scroll_layer, window);
   scroll_layer_set_shadow_hidden(data->scroll_layer, true);
   data->usage_layer = usage_layer_create(GRect(10, 5, bounds.size.w - 20, 20));
-  data->explanation_layer = btext_layer_create(GRect(10, 25, bounds.size.w - 20, 750));
+  data->explanation_layer = btext_layer_create(GRect(10 + ROUND_SIDE_INSET, 25 + ROUND_END_PAD, bounds.size.w - 20 - ROUND_SIDE_INSET * 2, 750));
   text_layer_set_font(data->explanation_layer, fonts->text_font);
   scroll_layer_add_child(data->scroll_layer, (Layer *)data->explanation_layer);
   scroll_layer_add_child(data->scroll_layer, (Layer *)data->usage_layer);
@@ -139,7 +139,7 @@ static void prv_app_message_received(DictionaryIterator* iter, void* context) {
   GSize text_size = text_layer_get_content_size(data->explanation_layer);
   text_size.h += 5;
   text_layer_set_size(data->explanation_layer, text_size);
-  scroll_layer_set_content_size(data->scroll_layer, GSize(bounds.size.w, text_size.h + 25));
+  scroll_layer_set_content_size(data->scroll_layer, GSize(bounds.size.w, text_size.h + 25 + ROUND_END_PAD * 2));
   usage_layer_set_percentage(data->usage_layer, (int16_t)percentage);
   vector_sequence_layer_stop(data->loading_layer);
   layer_remove_from_parent(data->loading_layer);

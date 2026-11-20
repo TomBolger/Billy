@@ -50,7 +50,7 @@ function cleanupExpiredReminders() {
   return activeReminders;
 }
 
-function addReminder(text, time) {
+function addReminder(text, time, callback) {
   // Clean up expired reminders first
   cleanupExpiredReminders();
   
@@ -76,22 +76,16 @@ function addReminder(text, time) {
     }]
   };
 
-  // Insert into timeline first - if this fails it will throw
-  timeline.insertUserPin(pin);
-
-  // Store reminder locally
-  var reminders = loadReminders();
-  reminders.push({
-    id: reminderId,
-    time: date,
-    what: text
+  timeline.insertUserPin(pin, function(error) {
+    if (error) { if (callback) { callback(error); } return; }
+    var reminders = loadReminders();
+    reminders.push({id: reminderId, time: date, what: text});
+    saveReminders(reminders);
+    if (callback) { callback(null, reminderId); }
   });
-  saveReminders(reminders);
-  
-  return reminderId;
 }
 
-function deleteReminder(id) {
+function deleteReminder(id, callback) {
   // Clean up expired reminders first
   cleanupExpiredReminders();
   
@@ -105,16 +99,15 @@ function deleteReminder(id) {
   }
   
   if (reminderIndex === -1) {
-    return false;
+    if (callback) { callback(new Error('Reminder not found.')); }
+    return;
   }
-  
-  // Remove from timeline first - if this fails it will throw
-  timeline.deleteUserPin(id);
-
-  // Remove from local storage
-  reminders.splice(reminderIndex, 1);
-  saveReminders(reminders);
-  return true;
+  timeline.deleteUserPin(id, function(error) {
+    if (error) { if (callback) { callback(error); } return; }
+    // Reload: another reminder may have changed while this request was pending.
+    saveReminders(loadReminders().filter(function(r) { return r.id !== id; }));
+    if (callback) { callback(null); }
+  });
 }
 
 function getAllReminders() {

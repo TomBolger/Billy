@@ -15,6 +15,12 @@ class GoogleAccessTokenProvider(
         if (requiredScopes.isEmpty()) {
             return GoogleAccessTokenResult.Failed("No Google API scopes were requested.")
         }
+        // The user's own Google Cloud project (the normal path for everyone).
+        if (OwnGoogleProject.isConnected(context)) {
+            return OwnGoogleProject.accessToken(context, requiredScopes)
+        }
+        // Otherwise: Android sign-in through the developer's project, which
+        // Google only allows for accounts listed as its testers.
 
         return try {
             val request = AuthorizationRequest.builder()

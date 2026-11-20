@@ -43,6 +43,19 @@ static const int16_t SPEECH_BUBBLE_WIDE_FONT_MIN_WIDTH = 188;
 static const int16_t SPEECH_BUBBLE_WIDE_FONT_MIN_HEIGHT = 170;
 #endif
 
+#if PBL_ROUND
+// Round screens: the goat sits low and to the left in screen coordinates, so its
+// body runs off the edge of the circle instead of ending in visible edges. The
+// bubble keeps clear of the curved left edge.
+#if PBL_DISPLAY_WIDTH >= 260
+static const GPoint ROUND_MASCOT_ORIGIN = {2, 156};
+static const int16_t ROUND_BUBBLE_LEFT = 34;
+#else
+static const GPoint ROUND_MASCOT_ORIGIN = {-3, 110};
+static const int16_t ROUND_BUBBLE_LEFT = 24;
+#endif
+#endif
+
 static void prv_update_layer(Layer *layer, GContext *ctx);
 static GTextAttributes *prv_create_text_attributes(TalkingHorseLayer *layer);
 static GRangeHorizontal prv_perimeter_callback(const GPerimeter *perimeter, const GSize *ctx_size, GRangeVertical vertical_range, uint16_t inset);
@@ -53,6 +66,27 @@ static int16_t prv_get_max_text_height(GRect bounds);
 static int16_t prv_get_tail_anchor_x(GSize mascot_bounds);
 static int16_t prv_get_tail_backset(GSize mascot_bounds);
 
+
+// Where the goat is drawn, in the layer's own coordinates.
+static GRect prv_mascot_rect(Layer *layer, GSize mascot) {
+#if PBL_ROUND
+  GRect frame = layer_get_frame(layer);
+  return GRect(ROUND_MASCOT_ORIGIN.x - frame.origin.x, ROUND_MASCOT_ORIGIN.y - frame.origin.y, mascot.w, mascot.h);
+#else
+  GRect bounds = layer_get_bounds(layer);
+  return GRect(0, bounds.size.h - mascot.h, mascot.w, mascot.h);
+#endif
+}
+
+// Left limit for the bubble, in the layer's own coordinates.
+static int16_t prv_bubble_left_limit(Layer *layer) {
+#if PBL_ROUND
+  int16_t limit = ROUND_BUBBLE_LEFT - layer_get_frame(layer).origin.x;
+  return limit > SPEECH_BUBBLE_MARGIN_X ? limit : SPEECH_BUBBLE_MARGIN_X;
+#else
+  return SPEECH_BUBBLE_MARGIN_X;
+#endif
+}
 
 TalkingHorseLayer *talking_horse_layer_create(GRect frame) {
   Layer *layer = blayer_create_with_data(frame, sizeof(TalkingHorseLayerData));
@@ -71,7 +105,9 @@ TalkingHorseLayer *talking_horse_layer_create(GRect frame) {
 void talking_horse_layer_destroy(TalkingHorseLayer *layer) {
   TalkingHorseLayerData *data = layer_get_data(layer);
   gbitmap_destroy(data->mascot);
-  graphics_text_attributes_destroy(data->text_attributes);
+  if (data->text_attributes) {
+    graphics_text_attributes_destroy(data->text_attributes);
+  }
   if (data->font_is_custom) {
     fonts_unload_custom_font(data->font);
   }
@@ -82,8 +118,16 @@ void talking_horse_layer_set_text(TalkingHorseLayer *layer, const char *text) {
   TalkingHorseLayerData *data = layer_get_data(layer);
   data->text = text;
   GRect bounds = layer_get_bounds(layer);
-  const int16_t max_text_width = prv_get_max_text_width(bounds);
-  const int16_t max_text_height = prv_get_max_text_height(bounds);
+  const int16_t max_text_width = prv_get_max_text_width(bounds) - (prv_bubble_left_limit(layer) - SPEECH_BUBBLE_MARGIN_X);
+  int16_t max_text_height = prv_get_max_text_height(bounds);
+#if PBL_ROUND
+  // Keep the bubble (and room for its tail) above the goat.
+  const GRect mascot_rect = prv_mascot_rect(layer, gbitmap_get_bounds(data->mascot).size);
+  const int16_t above_goat = mascot_rect.origin.y - SPEECH_BUBBLE_TOP - SPEECH_BUBBLE_TEXT_EXTRA_HEIGHT - SPEECH_BUBBLE_CORNER_OFFSET - 8;
+  if (above_goat > 1 && above_goat < max_text_height) {
+    max_text_height = above_goat;
+  }
+#endif
   data->text_size = graphics_text_layout_get_content_size_with_attributes(text, data->font, GRect(0, SPEECH_BUBBLE_TOP, max_text_width, max_text_height), GTextOverflowModeWordWrap, GTextAlignmentLeft, data->text_attributes);
   data->text_size.w = prv_clamp_int16(data->text_size.w, 1, max_text_width);
   data->text_size.h = prv_clamp_int16(data->text_size.h, 1, max_text_height);
@@ -97,19 +141,21 @@ static void prv_update_layer(Layer *layer, GContext *ctx) {
   GSize mascot_bounds = gbitmap_get_bounds(data->mascot).size;
 
   const int16_t text_height = data->text_size.h + SPEECH_BUBBLE_TEXT_EXTRA_HEIGHT;
-  const int16_t max_bubble_width = size.w - SPEECH_BUBBLE_MARGIN_X * 2;
+  const GRect mascot_rect = prv_mascot_rect(layer, mascot_bounds);
+  const int16_t mascot_bottom = mascot_rect.origin.y + mascot_rect.size.h;
+  const int16_t max_bubble_width = size.w - SPEECH_BUBBLE_MARGIN_X - prv_bubble_left_limit(layer);
   const int16_t min_bubble_width = max_bubble_width < SPEECH_BUBBLE_MIN_WIDTH ? max_bubble_width : SPEECH_BUBBLE_MIN_WIDTH;
   const int16_t bubble_width = prv_clamp_int16(data->text_size.w + SPEECH_BUBBLE_CORNER_OFFSET * 2, min_bubble_width, max_bubble_width);
   const int16_t bubble_left = size.w - SPEECH_BUBBLE_MARGIN_X - bubble_width;
-  const int16_t tail_anchor_x = prv_get_tail_anchor_x(mascot_bounds);
+  const int16_t tail_anchor_x = mascot_rect.origin.x + prv_get_tail_anchor_x(mascot_bounds);
   const int16_t tail_backset = prv_get_tail_backset(mascot_bounds);
 
-  GPoint tail_origin = GPoint(tail_anchor_x - bubble_left, size.h - 30 - SPEECH_BUBBLE_TOP);
+  GPoint tail_origin = GPoint(tail_anchor_x - bubble_left, mascot_bottom - 30 - SPEECH_BUBBLE_TOP);
   // When the text is three lines long, the tail runs into the bubble, so we need to move it.
   if (tail_origin.y < text_height + SPEECH_BUBBLE_CORNER_OFFSET) {
-    tail_origin = GPoint(tail_anchor_x - bubble_left, size.h - 20 - SPEECH_BUBBLE_TOP);
+    tail_origin = GPoint(tail_anchor_x - bubble_left, mascot_bottom - 20 - SPEECH_BUBBLE_TOP);
   }
-  tail_origin.x = prv_clamp_int16(tail_origin.x, SPEECH_BUBBLE_MARGIN_X - bubble_left, size.w - SPEECH_BUBBLE_MARGIN_X - bubble_left);
+  tail_origin.x = prv_clamp_int16(tail_origin.x, prv_bubble_left_limit(layer) - bubble_left, size.w - SPEECH_BUBBLE_MARGIN_X - bubble_left);
   tail_origin.y = prv_clamp_int16(tail_origin.y, text_height + SPEECH_BUBBLE_CORNER_OFFSET, size.h - SPEECH_BUBBLE_TOP - SPEECH_BUBBLE_BOTTOM_MARGIN);
 
   GPath bubble_path = {
@@ -142,10 +188,11 @@ static void prv_update_layer(Layer *layer, GContext *ctx) {
   gpath_draw_outline(ctx, &bubble_path);
 
   graphics_context_set_text_color(ctx, GColorBlack);
-  GRect text_bounds = GRect(bubble_left + SPEECH_BUBBLE_CORNER_OFFSET, SPEECH_BUBBLE_TOP + SPEECH_BUBBLE_CORNER_OFFSET - 5, bubble_width - SPEECH_BUBBLE_CORNER_OFFSET * 2, data->text_size.h);
+  // A little extra height so the last line isn't cut off; the bubble was sized from the same layout.
+  GRect text_bounds = GRect(bubble_left + SPEECH_BUBBLE_CORNER_OFFSET, SPEECH_BUBBLE_TOP + SPEECH_BUBBLE_CORNER_OFFSET - 5, bubble_width - SPEECH_BUBBLE_CORNER_OFFSET * 2, data->text_size.h + 10);
   graphics_draw_text(ctx, data->text, data->font, text_bounds, GTextOverflowModeWordWrap, GTextAlignmentLeft, data->text_attributes);
   graphics_context_set_compositing_mode(ctx, GCompOpSet);
-  graphics_draw_bitmap_in_rect(ctx, data->mascot, GRect(0, size.h - mascot_bounds.h, mascot_bounds.w, mascot_bounds.h));
+  graphics_draw_bitmap_in_rect(ctx, data->mascot, mascot_rect);
 }
 
 static GFont prv_load_font_for_bounds(GRect bounds, bool *is_custom) {
@@ -157,7 +204,8 @@ static GFont prv_load_font_for_bounds(GRect bounds, bool *is_custom) {
   }
   return fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
 #else
-  return fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  // Small screens: the goat leaves little room beside the bubble.
+  return fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
 #endif
 }
 
@@ -191,6 +239,12 @@ static int16_t prv_get_tail_backset(GSize mascot_bounds) {
 }
 
 static GTextAttributes* prv_create_text_attributes(TalkingHorseLayer *layer) {
+#if PBL_ROUND
+  // The goat sits below the bubble here, so the text doesn't need to flow around it
+  // (flowing it made lines shift right and spill out of the bubble).
+  (void)layer;
+  return NULL;
+#endif
   TalkingHorseLayerData *data = layer_get_data(layer);
   GTextAttributes *attributes = graphics_text_attributes_create();
   attributes->flow_data.perimeter.impl = &data->perimeter;
@@ -206,9 +260,11 @@ static GRangeHorizontal prv_perimeter_callback(const GPerimeter *perimeter, cons
   Layer *layer = data->layer;
   // The top right of the mascot is this far from the bottom of the layer, and we need it in screen space.
   GSize mascot_bounds = gbitmap_get_bounds(data->mascot).size;
-  const int16_t mascot_size = mascot_bounds.h;
-  GRect bounds = layer_get_bounds(layer);
-  GPoint wrap_point = layer_convert_point_to_screen(layer, GPoint(mascot_size, bounds.size.h - mascot_size));
+  GRect mascot_rect = prv_mascot_rect(layer, mascot_bounds);
+  GPoint wrap_point = layer_convert_point_to_screen(layer, GPoint(mascot_rect.origin.x + mascot_rect.size.w, mascot_rect.origin.y));
+  if (wrap_point.x < 0) {
+    wrap_point.x = 0;
+  }
   // We know the mascot is at the bottom of our layer, so we don't bother worrying about text being rendered past it.
   if (vertical_range.origin_y + vertical_range.size_h < wrap_point.y) {
     // nothing to do here - implement the inset while we're here, though.
