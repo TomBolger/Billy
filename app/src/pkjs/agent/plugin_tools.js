@@ -77,7 +77,7 @@ exports.NAMES = [READ, ACT, LIST];
 function readDeclaration(lines) {
     return {
         name: READ,
-        description: 'Read live data from the phone through Pebble plugins. Use it for the phone\'s own calendar (calendar/event: next 10 events within a week), ' +
+        description: 'Read live data from the phone through Pebble plugins. Use it for the phone\'s own calendar (calendar/event: the next 7 days), ' +
             'phone battery and connectivity (phone/phone_state), what\'s playing (music/track), recent notifications (notifications/notification, newest first), ' +
             'apps and watchfaces on the watch (watch/app), the watch\'s settings, and any third-party plugin. Available now:\n' +
             (lines.sources.join('\n') || '(none)'),

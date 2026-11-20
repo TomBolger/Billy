@@ -53,6 +53,10 @@ Everything runs on your own accounts; nobody has to invite you.
    YouTube. It can't control Google Home devices: Google doesn't allow that
    from the Gemini website. The sign-in stays on the phone.
 
+With Pebble app 2.0 or newer, Billy also uses Pebble plugins: the phone's own
+calendar (iPhone too), music, find-my-phone, opening watch apps, watch
+settings and any plugins you install. The Pebble app asks before each one.
+
 Personal context can also be imported as a Profile Pack; see
 `docs/BILLY_PROFILE_PACK_TEMPLATE.md`.
 

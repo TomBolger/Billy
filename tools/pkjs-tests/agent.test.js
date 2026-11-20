@@ -706,6 +706,7 @@ var FAKE_PLUGINS = [
         sources: [{category: 'phone', items: ['find_my_phone'], properties: {ringing: ['boolean']}}]}
 ];
 
+var lastCalendarLimit = null;
 function withPlugins(fn) {
     var invoked = [];
     var subscriptions = 0;
@@ -715,8 +716,10 @@ function withPlugins(fn) {
         subscriptions++;
         setTimeout(function() {
             if (config.category === 'calendar') {
+                lastCalendarLimit = config.limit;
                 config.onData({pluginUuid: FAKE_PLUGINS[0].uuid, instances: [{instanceId: '0', properties: {
                     name: {shortText: {text: 'Dentist'}, longText: {text: 'Dentist'}},
+                    description: {longText: {text: 'Bring the insurance card'}},
                     starts_at: {timestamp: {value: inNow}}, ends_at: {timestamp: {value: inNow + 1800}}}}]});
             } else if (config.category === 'music') {
                 config.onData({instances: [{instanceId: 'track', properties: {title: {shortText: {text: 'Song'}}, artwork: {image: {pixels: 'xx'}}}}]});
@@ -809,6 +812,8 @@ test("plugins: the phone's calendar answers without calendar links", async funct
         assert.strictEqual(fr.response.status, 'ok', JSON.stringify(fr.response));
         assert.strictEqual(fr.response.events.length, 1);
         assert.strictEqual(fr.response.events[0].title, 'Dentist');
+        assert.strictEqual(fr.response.events[0].description, 'Bring the insurance card');
+        assert(lastCalendarLimit > 10, 'asks the phone calendar for more than its default 10 events');
     });
 });
 
@@ -837,6 +842,22 @@ test('an out-of-date Billy Companion gets a once-a-day reminder on the watch', f
     delete Pebble.showSimpleNotificationOnPebble;
     assert.deepStrictEqual(shown, ['Update Billy Companion']);
     localStorage.removeItem('billyCompanionUpdateNagAt');
+});
+
+test('every declared permission says why, and only Gemini is required', function() {
+    var appinfo = JSON.parse(require('fs').readFileSync(path.join(PKJS, '../../package.json'), 'utf8'));
+    var perms = appinfo.pebble.usesPermissions;
+    assert(perms.length > 0);
+    perms.forEach(function(p) {
+        assert(typeof p === 'object' && p.name, 'entry must be an object: ' + JSON.stringify(p));
+        assert(p.reason && /^To /.test(p.reason) && p.reason.length < 90, 'reason for ' + p.name);
+        assert.strictEqual(typeof p.required, 'boolean', 'required for ' + p.name);
+    });
+    var required = perms.filter(function(p) { return p.required; });
+    assert.deepStrictEqual(required.map(function(p) { return p.parameters.domains[0]; }), ['googleapis.com']);
+    ['ShowNotifications', 'ReadApps', 'LaunchApps', 'Calendar'].forEach(function(name) {
+        assert(perms.some(function(p) { return p.name === name; }), 'missing ' + name);
+    });
 });
 
 (async function() {

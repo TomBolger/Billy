@@ -1,17 +1,18 @@
 /**
- * Pebble plugins (preview, Pebble app 1.16+): data and actions other apps and
+ * Pebble plugins (Pebble app 2.0+): data and actions other apps and
  * the Pebble app itself offer on the phone, such as the phone's calendar,
  * notifications, music, battery, find-my-phone, opening watch apps, and
  * third-party plugins like Todoist or Hue.
  *
- * Everything here is inert unless the user turned plugins on in the Pebble
- * app; then enumeratePlugins() returns what's installed.
+ * Plugins are on for everyone from Pebble app 2.0; on older apps
+ * enumeratePlugins() is missing or empty and everything here stays inert.
  * See https://developer.repebble.com/guides/plugins/preview/
  */
 
 var READ_TIMEOUT_MS = 12000;   // a first read may wait for the user to allow a permission
 var ACTION_TIMEOUT_MS = 15000;
 var MAX_INSTANCES = 15;
+var MAX_LIMIT = 200;   // the most a source returns (Pebble app 2.0)
 var MAX_TEXT = 160;
 
 var BUILT_IN = {
@@ -65,7 +66,7 @@ function explainError(err, what) {
     var code = (err && err.code) || 'UNKNOWN';
     var message = (err && err.message) || '';
     if (code === 'PERMISSION_DENIED') {
-        return 'Billy isn\'t allowed to read ' + what + ' yet. In the Pebble app, allow it on Billy\'s page (Apps, Billy, Permissions), then ask again.' +
+        return 'Billy isn\'t allowed to use ' + what + ' yet. Answer the permission request in the Pebble app, or allow it on Billy\'s page there (Apps, Billy), then ask again.' +
             (message ? ' (' + message + ')' : '');
     }
     if (code === 'PLUGIN_UNAVAILABLE') {
@@ -84,9 +85,9 @@ exports.explainError = explainError;
 /**
  * Reads a source once: callback(null, envelope) or callback({code, message}).
  */
-exports.read = function(category, item, properties, callback) {
+exports.read = function(category, item, properties, callback, limit) {
     if (!supported()) {
-        callback({code: 'PLUGIN_UNAVAILABLE', message: 'Plugins are off. Turn them on in the Pebble app: Settings, Plugins.'});
+        callback({code: 'PLUGIN_UNAVAILABLE', message: 'This needs Pebble plugins: update the Pebble app to version 2.0 or newer.'});
         return;
     }
     var finished = false;
@@ -115,6 +116,9 @@ exports.read = function(category, item, properties, callback) {
         if (properties && properties.length) {
             request.properties = properties;
         }
+        if (limit) {
+            request.limit = Math.max(1, Math.min(MAX_LIMIT, limit));
+        }
         subscription = Pebble.subscribeToSource(request);
         if (finished && subscription) {
             try { subscription.unsubscribe(); } catch (e) { /* ignore */ }
@@ -127,7 +131,7 @@ exports.read = function(category, item, properties, callback) {
 /** Runs an action: callback({ok, text, code, message}). */
 exports.invoke = function(pluginUuid, action, args, callback) {
     if (!supported() || typeof Pebble.invokeAction !== 'function') {
-        callback({ok: false, code: 'PLUGIN_UNAVAILABLE', message: 'Plugins are off. Turn them on in the Pebble app: Settings, Plugins.'});
+        callback({ok: false, code: 'PLUGIN_UNAVAILABLE', message: 'This needs Pebble plugins: update the Pebble app to version 2.0 or newer.'});
         return;
     }
     var finished = false;

@@ -9,6 +9,9 @@ var config = require('../config');
 var ical = require('../lib/ical');
 var plugins = require('./plugins');
 
+// Pebble's calendar plugin gives the next 10 events unless asked for more (up to 200).
+var PHONE_CALENDAR_LIMIT = 100;
+
 var CACHE_MS = 10 * 60 * 1000;
 var cache = {};
 
@@ -26,7 +29,7 @@ exports.links = function() {
 exports.getDeclarations = function() {
     return [{
         name: 'get_calendar_events',
-        description: "Read the user's calendar: the phone's own calendar (through Pebble plugins, next 10 events within a week) and any calendar links in Billy settings. Use for \"what's on my calendar\", \"when is my next meeting\", \"am I free Friday\". Read-only: Billy can't add or change events in this mode; offer a reminder instead.",
+        description: "Read the user's calendar: the phone's own calendar (through Pebble plugins: events in the next 7 days, with descriptions) and any calendar links in Billy settings. Use for \"what's on my calendar\", \"when is my next meeting\", \"am I free Friday\". Read-only: Billy can't add or change events in this mode; offer a reminder instead.",
         parameters: {
             type: 'object',
             properties: {
@@ -98,7 +101,7 @@ exports.execute = function(session, name, args, callback) {
             warnings.push("the phone's calendar could not be read (" + phoneError + ')');
         }
         if (phoneCalendar && !phoneError && end.getTime() - Date.now() > 7 * 86400000) {
-            warnings.push("the phone's calendar only shows the next 10 events within a week");
+            warnings.push("the phone's calendar only reaches 7 days ahead");
         }
         var nothingRead = (links.length === 0 || linkFailures.length === links.length) && (!phoneCalendar || phoneError);
         callback({
@@ -112,6 +115,7 @@ exports.execute = function(session, name, args, callback) {
                     end: new Date(o.end).toString(),
                     all_day: o.allDay,
                     location: o.location,
+                    description: o.description || undefined,
                     calendar: o.calendar,
                     repeating: o.repeating
                 };
@@ -148,6 +152,7 @@ exports.execute = function(session, name, args, callback) {
                         allDay: !!(p.all_day && p.all_day.boolean && p.all_day.boolean.value),
                         location: text('location'),
                         calendar: text('calendar'),
+                        description: text('description').substring(0, 300),
                         repeating: false
                     };
                 }).filter(function(o) {
@@ -155,7 +160,7 @@ exports.execute = function(session, name, args, callback) {
                 });
             }
             finished();
-        });
+        }, PHONE_CALENDAR_LIMIT);
     } else {
         finished();
     }

@@ -45,29 +45,128 @@
         "name": "Internet",
         "parameters": {
           "domains": [
-            "googleapis.com",
-            "open-meteo.com",
+            "googleapis.com"
+          ]
+        },
+        "reason": "To ask Gemini your questions",
+        "required": true
+      },
+      {
+        "name": "Internet",
+        "parameters": {
+          "domains": [
+            "open-meteo.com"
+          ]
+        },
+        "reason": "To get the weather forecast",
+        "required": false
+      },
+      {
+        "name": "Internet",
+        "parameters": {
+          "domains": [
             "openstreetmap.org",
-            "openstreetmap.de",
+            "openstreetmap.de"
+          ]
+        },
+        "reason": "To find places and draw maps",
+        "required": false
+      },
+      {
+        "name": "Internet",
+        "parameters": {
+          "domains": [
             "wikipedia.org",
-            "wikimedia.org",
-            "rebble.io",
+            "wikimedia.org"
+          ]
+        },
+        "reason": "To show a picture when you ask to see something",
+        "required": false
+      },
+      {
+        "name": "Internet",
+        "parameters": {
+          "domains": [
+            "rebble.io"
+          ]
+        },
+        "reason": "To add the reminders you ask for to your timeline",
+        "required": false
+      },
+      {
+        "name": "Internet",
+        "parameters": {
+          "domains": [
             "google.com",
             "icloud.com",
             "office365.com",
             "outlook.com",
             "live.com"
           ]
-        }
+        },
+        "reason": "To read the calendar links you paste into Billy's settings",
+        "required": false
       },
-      "Location",
-      "Timeline",
-      "Calendar",
-      "Notifications",
-      "ReadMusic",
-      "ControlMusic",
-      "LaunchApps",
-      "FindMyPhone"
+      {
+        "name": "Location",
+        "reason": "To answer with your local weather, places and directions",
+        "required": false
+      },
+      {
+        "name": "Timeline",
+        "reason": "To put the reminders you ask for on your timeline",
+        "required": false
+      },
+      {
+        "name": "Calendar",
+        "reason": "To answer questions about your phone's calendar",
+        "required": false
+      },
+      {
+        "name": "Notifications",
+        "reason": "To read your recent notifications when you ask about them",
+        "required": false
+      },
+      {
+        "name": "ReadMusic",
+        "reason": "To tell you what's playing",
+        "required": false
+      },
+      {
+        "name": "ControlMusic",
+        "reason": "To play, pause or skip music when you ask",
+        "required": false
+      },
+      {
+        "name": "ReadApps",
+        "reason": "To find the watch app or watchface you ask to open",
+        "required": false
+      },
+      {
+        "name": "LaunchApps",
+        "reason": "To open watch apps and watchfaces when you ask",
+        "required": false
+      },
+      {
+        "name": "ReadWatchSettings",
+        "reason": "To check a watch setting when you ask",
+        "required": false
+      },
+      {
+        "name": "WriteWatchSettings",
+        "reason": "To change a watch setting when you ask",
+        "required": false
+      },
+      {
+        "name": "FindMyPhone",
+        "reason": "To ring your phone when you ask Billy to find it",
+        "required": false
+      },
+      {
+        "name": "ShowNotifications",
+        "reason": "To tell you when Billy Companion on your phone needs an update",
+        "required": false
+      }
     ],
     "messageKeys": [
       "CHAT",

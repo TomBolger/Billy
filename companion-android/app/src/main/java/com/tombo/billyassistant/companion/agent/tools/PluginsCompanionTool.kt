@@ -5,7 +5,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Pebble plugins (preview): the phone's calendar, music, notifications,
+ * Pebble plugins (Pebble app 2.0+): the phone's calendar, music, notifications,
  * find-my-phone, watch apps and settings, and third-party plugins such as
  * Todoist or Hue. PebbleKit Android can't use plugins yet, so these run in the
  * Pebble phone JS through the watch relay (app/src/pkjs/agent/plugin_tools.js),
@@ -27,8 +27,8 @@ class PluginsCompanionTool(
                     .put("name", READ)
                     .put(
                         "description",
-                        "Read live data from the phone and watch through Pebble plugins: the phone's own calendar (calendar/event: next 10 events " +
-                            "within a week), phone battery and connectivity (phone/phone_state), what's playing (music/track), apps and watchfaces on " +
+                        "Read live data from the phone and watch through Pebble plugins: the phone's own calendar (calendar/event: the next 7 days" +
+                            "), phone battery and connectivity (phone/phone_state), what's playing (music/track), apps and watchfaces on " +
                             "the watch (watch/app), the watch's settings, and third-party plugins. Prefer your own tools when they do the same job " +
                             "(Google Calendar, notifications, phone status). Available now:\n" + catalog.sources.joinToString("\n").ifBlank { "(none)" },
                     )
